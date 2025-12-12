@@ -1,66 +1,64 @@
-use gpui::{
-    App, AppContext, Application, Bounds, Context, Entity, InteractiveElement, MouseUpEvent, ParentElement, Render, Styled, Window, WindowBounds, WindowOptions, blue, div, px, red, size, white, yellow
-};
+use std::path::PathBuf;
 
-struct MainWindow {
-    counters: Vec<Entity<Counter>>
-}
+use gpui::*;
+use gpui_component::{button::*, *};
 
-impl Render for MainWindow {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+mod gpui_tokio;
+
+pub struct HelloWorld;
+
+impl Render for HelloWorld {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .bg(blue())
+            .v_flex()
+            .gap_2()
             .size_full()
-            .flex()
-            .gap_x_2()
-            .children(self.counters.clone())
+            .items_center()
+            .justify_center()
+            .child("Hello, World!")
+            .child(
+                Button::new("ok")
+                    .primary()
+                    .label("Let's Go!")
+                    .on_click(|_, _, _| println!("Clicked!")),
+            )
     }
 }
 
-struct Counter {
-    count: usize,
-}
+pub fn init_theme(cx: &mut App) {
+    let theme_name = SharedString::from("Tokyo Night");
 
-impl Counter {
-    fn on_mouse_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.count += 1;
-
-        cx.notify();
+    if let Err(err) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
+        if let Some(theme) = ThemeRegistry::global(cx)
+            .themes()
+            .get(&theme_name)
+            .cloned()
+        {
+            Theme::global_mut(cx).apply_config(&theme);
+        }
+    }) {
+        tracing::error!("Failed to watch themes directory: {}", err);
     }
 }
-
-impl Render for Counter {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
-        div()
-            .bg(yellow())
-            .text_color(blue())
-            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_mouse_click))
-            .child(format!("{} times pressed!", self.count))
-    }
-}
-
-
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| {
-                let counters = (0..4).map(|i| cx.new(|_| Counter {
-                    count: i
-                })).collect();
+    let app = Application::new();
 
-                cx.new(|_| MainWindow { counters })
-            },
-        )
-        .unwrap();
+    app.run(move |cx| {
+        gpui_component::init(cx);
+        gpui_tokio::init(cx);
+
+        init_theme(cx);
+
+        cx.spawn(async move |cx| {
+            cx.open_window(WindowOptions::default(), |window, cx| {
+                let view = cx.new(|_| HelloWorld);
+                // This first level on the window, should be a Root.
+                cx.new(|cx| Root::new(view, window, cx))
+            })?;
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach();
     });
 }
