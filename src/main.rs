@@ -2,26 +2,27 @@ use std::path::PathBuf;
 
 use gpui::*;
 use gpui_component::{button::*, *};
+use gpui_component_assets::Assets;
 
+mod screens;
 mod gpui_tokio;
 
-pub struct HelloWorld;
+use screens::login::LoginScreen;
 
-impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .gap_2()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("Hello, World!")
-            .child(
-                Button::new("ok")
-                    .primary()
-                    .label("Let's Go!")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
+enum Screen {
+    Login(Entity<LoginScreen>),
+}
+
+pub struct MainWindow {
+    current_screen: Screen,
+}
+
+impl Render for MainWindow {
+    fn render(&mut self, _: &mut Window, ctx: &mut Context<Self>) -> impl IntoElement {
+        match &self.current_screen {
+            Screen::Login(screen) => screen.clone(),
+            _ => todo!(),
+        }
     }
 }
 
@@ -42,7 +43,8 @@ pub fn init_theme(cx: &mut App) {
 }
 
 fn main() {
-    let app = Application::new();
+    let app = Application::new()
+        .with_assets(Assets);
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -52,7 +54,10 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|_| HelloWorld);
+                let login_screen = cx.new(|cx| LoginScreen::new(window, cx));
+                let view = cx.new(|_| MainWindow {
+                    current_screen: Screen::Login(login_screen)
+                });
                 // This first level on the window, should be a Root.
                 cx.new(|cx| Root::new(view, window, cx))
             })?;
