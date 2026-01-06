@@ -39,6 +39,14 @@ impl ConnectionManger {
         self.conn = Some(connection);
     }
 
+    fn get(cx: &mut AsyncApp) -> Connection {
+        cx.read_global(|this: &Self, _| {
+            this.conn.as_ref()
+                .unwrap()
+                .clone()
+        }).unwrap()
+    }
+
     async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
         let connected = cx.read_global(|g: &Self, _| {
             g.is_connected()
@@ -46,7 +54,7 @@ impl ConnectionManger {
 
         if connected {
             // TODO: Change how we handle it
-            bail!("Already connected");
+            return Ok(());
         }
 
         let connection = Tokio::spawn(cx, Connection::new(server_ip))?

@@ -32,6 +32,7 @@ pub enum IconName {
     UserAvatar,
     PasswordLock,
     Server,
+    Loader,
     Eye
 }
 
@@ -42,6 +43,7 @@ impl IconNamed for IconName {
             IconName::PasswordLock => "icons/lock.svg",
             IconName::Server => "icons/server.svg",
             IconName::Eye => "icons/eye.svg",
+            IconName::Loader => "icons/loader.svg",
         }.into()
     }
 }
