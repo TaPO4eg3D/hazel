@@ -1,13 +1,15 @@
 use gpui::{
-    App, AppContext, ClickEvent, Context, Div, Element, Entity, IntoElement, ParentElement, Render,
-    RenderOnce, Rgba, Styled, Window, div, px, red, rgb, white,
+    App, AppContext, ClickEvent, Context, Div, Element, Entity, IntoElement, ParentElement, Render, RenderOnce, Rgba, Styled, Window, div, prelude::FluentBuilder, px, red, rgb, white
 };
 use gpui_component::{
-    Disableable, Icon, Root, StyledExt, WindowExt,
+    ActiveTheme, Disableable, Icon, Root, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
-    label, text,
+    label,
+    spinner::Spinner,
+    text,
 };
+use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse};
 
 use crate::{ConnectionManger, assets::IconName, gpui_tokio::Tokio};
 
@@ -19,19 +21,18 @@ pub struct LoginScreen {
     /// Indicates if we're in the process
     /// of connecting to a server
     is_connecting: bool,
-
-    is_login_btn_active: bool,
+    is_form_valid: bool,
 }
 
 enum ConnectionResult {
     Connected,
-    Failed,
+    Failed(String),
 }
 
 impl LoginScreen {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let username = cx.new(|cx| InputState::new(window, cx));
-        let password = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let username = cx.new(|cx| InputState::new(window, cx).default_value("admin"));
+        let password = cx.new(|cx| InputState::new(window, cx).masked(true).default_value("admin"));
         let server_address =
             cx.new(|cx| InputState::new(window, cx).default_value("localhost:9898"));
 
@@ -48,7 +49,7 @@ impl LoginScreen {
             server_address,
 
             is_connecting: false,
-            is_login_btn_active: false,
+            is_form_valid: true,
         }
     }
 
@@ -64,7 +65,7 @@ impl LoginScreen {
             let password = entity.password.read(cx).value();
             let server_address = entity.server_address.read(cx).value();
 
-            entity.is_login_btn_active =
+            entity.is_form_valid =
                 !username.is_empty() && !password.is_empty() && !server_address.is_empty();
 
             cx.notify();
@@ -86,10 +87,10 @@ impl LoginScreen {
                     .update(|window, cx| {
                         match msg {
                             ConnectionResult::Connected => {
-                                window.push_notification("Success!", cx);
+                                window.push_notification("Successfull Login!", cx);
                             }
-                            ConnectionResult::Failed => {
-                                window.push_notification("Failed to connect!", cx);
+                            ConnectionResult::Failed(err) => {
+                                window.push_notification(format!("Failed to connect: {err}!"), cx);
                             }
                         };
                     })
@@ -101,17 +102,39 @@ impl LoginScreen {
 
         cx.spawn(async move |this, cx| {
             // TODO: Properly handle a case when we can't connect
-            // ConnectionManger::connect(cx, server_ip.into())
-            //     .await
-            //     .unwrap();
-            tx.send(ConnectionResult::Failed).await?;
+            ConnectionManger::connect(cx, server_ip.into())
+                .await?;
+
+            let (login, password) = this.read_with(cx, |this, cx| {
+                (
+                    this.username.read(cx).value(),
+                    this.password.read(cx).value()
+                )
+            })?;
+            let connection = ConnectionManger::get(cx);
+
+            let data: Result<
+                GetSessionKeyResponse,
+                GetSessionKeyError,
+            > = connection.execute("GetSessionKey", &GetSessionKeyPayload {
+                login: login.into(),
+                password: password.into(),
+            }).await?;
+
+            match data {
+                Ok(value) => {
+                    println!("{value:?}");
+
+                    tx.send(ConnectionResult::Connected).await?;
+                }
+                Err(err) => tx.send(ConnectionResult::Failed(format!("{err:?}"))).await?,
+            }
 
             this.update(cx, |this, cx| {
                 this.is_connecting = false;
                 cx.notify();
             })
             .ok();
-
 
             Ok::<_, anyhow::Error>(())
         })
@@ -146,6 +169,7 @@ impl Render for LoginScreen {
                     .child(div().text_color(white()).font_bold().child("USERNAME"))
                     .child(
                         Input::new(&self.username)
+                            .disabled(self.is_connecting)
                             .mt(px(12.))
                             .min_h(px(55.))
                             .prefix(Icon::new(IconName::UserAvatar)),
@@ -159,6 +183,7 @@ impl Render for LoginScreen {
                     )
                     .child(
                         Input::new(&self.password)
+                            .disabled(self.is_connecting)
                             .mt(px(12.))
                             .min_h(px(55.))
                             .prefix(Icon::new(IconName::PasswordLock))
@@ -176,6 +201,7 @@ impl Render for LoginScreen {
                             )
                             .child(
                                 Input::new(&self.server_address)
+                                    .disabled(self.is_connecting)
                                     .text_decoration_color(white())
                                     .min_h(px(55.))
                                     .mt(px(12.))
@@ -185,12 +211,15 @@ impl Render for LoginScreen {
                             .child(
                                 Button::new("ok")
                                     .h(px(55.))
-                                    .disabled(!self.is_login_btn_active)
+                                    .disabled(!self.is_form_valid || self.is_connecting)
                                     .primary()
                                     .mt_auto()
                                     .text_color(white())
                                     .font_bold()
+                                    .loading(self.is_connecting)
+                                    .loading_icon(Icon::new(IconName::Loader))
                                     .label("LOG IN")
+                                    .when(self.is_connecting, |this| this.label("Connecting..."))
                                     .on_click(cx.listener(Self::login_btn_click)),
                             ),
                     ),
