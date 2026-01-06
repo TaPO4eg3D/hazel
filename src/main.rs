@@ -1,13 +1,18 @@
 use std::path::PathBuf;
 
 use gpui::*;
-use gpui_component::{button::*, *};
-use gpui_component_assets::Assets;
+use gpui_component::{Root, Theme, ThemeRegistry};
 
-mod screens;
-mod gpui_tokio;
+use rpc::{client::Connection};
+use anyhow::{Result as AResult, bail};
+
+pub mod screens;
+pub mod gpui_tokio;
+pub mod assets;
 
 use screens::login::LoginScreen;
+
+use crate::{assets::Assets, gpui_tokio::Tokio};
 
 enum Screen {
     Login(Entity<LoginScreen>),
@@ -17,12 +22,59 @@ pub struct MainWindow {
     current_screen: Screen,
 }
 
+pub struct ConnectionManger {
+    conn: Option<Connection>,
+}
+
+impl ConnectionManger {
+    fn new() -> Self {
+        Self { conn: None }
+    }
+
+    fn is_connected(&self) -> bool {
+        self.conn.is_some()
+    }
+
+    fn update(&mut self, connection: Connection) {
+        self.conn = Some(connection);
+    }
+
+    async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
+        let connected = cx.read_global(|g: &Self, _| {
+            g.is_connected()
+        })?;
+
+        if connected {
+            // TODO: Change how we handle it
+            bail!("Already connected");
+        }
+
+        let connection = Tokio::spawn(cx, Connection::new(server_ip))?
+            .await??;
+
+        cx.update_global(|g: &mut Self, _| {
+            g.update(connection);
+        })?;
+
+        Ok(())
+    }
+}
+
+impl Global for ConnectionManger {}
+
 impl Render for MainWindow {
-    fn render(&mut self, _: &mut Window, ctx: &mut Context<Self>) -> impl IntoElement {
-        match &self.current_screen {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let screen = match &self.current_screen {
             Screen::Login(screen) => screen.clone(),
             _ => todo!(),
-        }
+        };
+
+        let notification_layer = Root::render_notification_layer(window, cx);
+
+        div()
+            .size_full()
+            .child(screen)
+            .children(notification_layer)
     }
 }
 
@@ -36,6 +88,8 @@ pub fn init_theme(cx: &mut App) {
             .cloned()
         {
             Theme::global_mut(cx).apply_config(&theme);
+        } else {
+            panic!("Theme is not found! Are you running the app not inside the root folder?")
         }
     }) {
         tracing::error!("Failed to watch themes directory: {}", err);
@@ -51,6 +105,8 @@ fn main() {
         gpui_tokio::init(cx);
 
         init_theme(cx);
+
+        cx.set_global(ConnectionManger::new());
 
         cx.spawn(async move |cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
