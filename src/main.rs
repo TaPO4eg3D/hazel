@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use gpui::*;
 use gpui_component::{Root, Theme, ThemeRegistry};
 
-use rpc::{client::Connection};
 use anyhow::{Result as AResult, bail};
+use rpc::client::Connection;
 
-pub mod screens;
-pub mod gpui_tokio;
 pub mod assets;
+pub mod gpui_tokio;
+pub mod screens;
 
 use screens::login::LoginScreen;
 
@@ -40,25 +40,19 @@ impl ConnectionManger {
     }
 
     fn get(cx: &mut AsyncApp) -> Connection {
-        cx.read_global(|this: &Self, _| {
-            this.conn.as_ref()
-                .unwrap()
-                .clone()
-        }).unwrap()
+        cx.read_global(|this: &Self, _| this.conn.as_ref().unwrap().clone())
+            .unwrap()
     }
 
     async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
-        let connected = cx.read_global(|g: &Self, _| {
-            g.is_connected()
-        })?;
+        let connected = cx.read_global(|g: &Self, _| g.is_connected())?;
 
         if connected {
             // TODO: Change how we handle it
             return Ok(());
         }
 
-        let connection = Tokio::spawn(cx, Connection::new(server_ip))?
-            .await??;
+        let connection = Tokio::spawn(cx, Connection::new(server_ip))?.await??;
 
         cx.update_global(|g: &mut Self, _| {
             g.update(connection);
@@ -79,10 +73,7 @@ impl Render for MainWindow {
 
         let notification_layer = Root::render_notification_layer(window, cx);
 
-        div()
-            .size_full()
-            .child(screen)
-            .children(notification_layer)
+        div().size_full().child(screen).children(notification_layer)
     }
 }
 
@@ -90,11 +81,7 @@ pub fn init_theme(cx: &mut App) {
     let theme_name = SharedString::from("Tokyo Night");
 
     if let Err(err) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
-        if let Some(theme) = ThemeRegistry::global(cx)
-            .themes()
-            .get(&theme_name)
-            .cloned()
-        {
+        if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
             Theme::global_mut(cx).apply_config(&theme);
         } else {
             panic!("Theme is not found! Are you running the app not inside the root folder?")
@@ -105,8 +92,7 @@ pub fn init_theme(cx: &mut App) {
 }
 
 fn main() {
-    let app = Application::new()
-        .with_assets(Assets);
+    let app = Application::new().with_assets(Assets);
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -120,7 +106,7 @@ fn main() {
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let login_screen = cx.new(|cx| LoginScreen::new(window, cx));
                 let view = cx.new(|_| MainWindow {
-                    current_screen: Screen::Login(login_screen)
+                    current_screen: Screen::Login(login_screen),
                 });
                 // This first level on the window, should be a Root.
                 cx.new(|cx| Root::new(view, window, cx))

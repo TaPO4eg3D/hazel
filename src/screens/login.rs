@@ -25,7 +25,8 @@ pub struct LoginScreen {
 }
 
 enum ConnectionResult {
-    Connected,
+    NewUser,
+    ExistingAcount,
     Failed(String),
 }
 
@@ -86,8 +87,11 @@ impl LoginScreen {
                 window
                     .update(|window, cx| {
                         match msg {
-                            ConnectionResult::Connected => {
-                                window.push_notification("Successfull Login!", cx);
+                            ConnectionResult::NewUser => {
+                                window.push_notification("Successfully registered!", cx);
+                            }
+                            ConnectionResult::ExistingAcount => {
+                                window.push_notification("Successfully logged in!", cx);
                             }
                             ConnectionResult::Failed(err) => {
                                 window.push_notification(format!("Failed to connect: {err}!"), cx);
@@ -125,7 +129,14 @@ impl LoginScreen {
                 Ok(value) => {
                     println!("{value:?}");
 
-                    tx.send(ConnectionResult::Connected).await?;
+                    match value {
+                        GetSessionKeyResponse::NewUser(_) => {
+                            tx.send(ConnectionResult::NewUser).await?;
+                        }
+                        GetSessionKeyResponse::ExistingUser(_) => {
+                            tx.send(ConnectionResult::ExistingAcount).await?;
+                        }
+                    }
                 }
                 Err(err) => tx.send(ConnectionResult::Failed(format!("{err:?}"))).await?,
             }
