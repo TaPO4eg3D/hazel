@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use gpui::*;
 use gpui_component::{Root, Theme, ThemeRegistry};
 
-use anyhow::{Result as AResult, bail};
+use anyhow::{Result as AResult};
 use rpc::client::Connection;
 
+pub mod db;
 pub mod assets;
 pub mod gpui_tokio;
 pub mod screens;
@@ -16,6 +17,7 @@ use crate::{assets::Assets, gpui_tokio::Tokio};
 
 enum Screen {
     Login(Entity<LoginScreen>),
+    MainWorkspace,
 }
 
 pub struct MainWindow {
@@ -78,7 +80,7 @@ impl Render for MainWindow {
 }
 
 pub fn init_theme(cx: &mut App) {
-    let theme_name = SharedString::from("Tokyo Night");
+    let theme_name = SharedString::from("Hazel Default");
 
     if let Err(err) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
         if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
@@ -87,7 +89,7 @@ pub fn init_theme(cx: &mut App) {
             panic!("Theme is not found! Are you running the app not inside the root folder?")
         }
     }) {
-        tracing::error!("Failed to watch themes directory: {}", err);
+        panic!("Failed to watch themes directory: {}", err);
     }
 }
 
@@ -98,8 +100,9 @@ fn main() {
         gpui_component::init(cx);
         gpui_tokio::init(cx);
 
-        init_theme(cx);
+        db::init(cx);
 
+        init_theme(cx);
         cx.set_global(ConnectionManger::new());
 
         cx.spawn(async move |cx| {
