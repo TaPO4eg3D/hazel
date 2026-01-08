@@ -1,14 +1,21 @@
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, IntoElement, ParentElement, ReadGlobal, Render, Styled, Window, div, prelude::FluentBuilder, px, rgb, white
+    AppContext, ClickEvent, Context, Entity, IntoElement, ParentElement, ReadGlobal, Render,
+    Styled, Window, div, prelude::FluentBuilder, px, rgb, white,
 };
 use gpui_component::{
     Disableable, Icon, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
-use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse};
+use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginPayload};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
-use crate::{ConnectionManger, assets::IconName, db::{DBConnectionManager, entity::registry}, gpui_tokio::Tokio};
+use crate::{
+    ConnectionManger,
+    assets::IconName,
+    db::{DBConnectionManager, entity::registry},
+    gpui_tokio::Tokio,
+};
 
 pub struct LoginScreen {
     username: Entity<InputState>,
@@ -28,15 +35,22 @@ enum ConnectionResult {
 }
 
 impl LoginScreen {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        is_connecting: bool,
+        server_address: Option<String>,
+    ) -> Self {
         let username = cx.new(|cx| InputState::new(window, cx).default_value("admin"));
         let password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
                 .default_value("admin")
         });
-        let server_address =
-            cx.new(|cx| InputState::new(window, cx).default_value("localhost:9898"));
+        let server_address = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(server_address.unwrap_or("localhost:9898".to_string()))
+        });
 
         cx.subscribe_in(&username, window, Self::watch_for_inputs)
             .detach();
@@ -50,7 +64,7 @@ impl LoginScreen {
             password,
             server_address,
 
-            is_connecting: false,
+            is_connecting,
             is_form_valid: true,
         }
     }
@@ -107,7 +121,7 @@ impl LoginScreen {
 
         cx.spawn(async move |this, cx| {
             // TODO: Properly handle a case when we can't connect
-            ConnectionManger::connect(cx, server_ip.into()).await?;
+            ConnectionManger::connect(cx, server_ip.clone().into()).await?;
 
             let (login, password) = this.read_with(cx, |this, cx| {
                 (
@@ -129,28 +143,47 @@ impl LoginScreen {
 
             match data {
                 Ok(value) => {
-                    println!("{value:?}");
-
-                    match value {
-                        GetSessionKeyResponse::NewUser(_) => {
+                    let session_key = match value {
+                        GetSessionKeyResponse::NewUser(key) => {
                             tx.send(ConnectionResult::NewUser).await?;
+                            key
                         }
-                        GetSessionKeyResponse::ExistingUser(_) => {
+                        GetSessionKeyResponse::ExistingUser(key) => {
                             tx.send(ConnectionResult::ExistingAcount).await?;
+                            key
                         }
-                    }
+                    };
+
+                    let db = DBConnectionManager::get(cx);
+                    let session_key_bytes = rmp_serde::to_vec(&session_key).unwrap();
+                    Tokio::spawn(cx, async move {
+                        let registry = DBConnectionManager::get_registry(&db).await;
+                        let mut registry: registry::ActiveModel = registry.into();
+
+                        registry.session_key = Set(Some(session_key_bytes));
+                        registry.connected_server = Set(Some(server_ip.into()));
+
+                        registry.update(&db).await
+                            .unwrap();
+                    })?
+                    .await?;
+
+                    let data: Result<GetSessionKeyResponse, GetSessionKeyError> = connection
+                        .execute(
+                            "Login",
+                            &LoginPayload {
+                                session_key,
+                            },
+                        )
+                        .await?;
+
+                    data.expect("We just logged in, it should not fail");
                 }
                 Err(err) => {
                     tx.send(ConnectionResult::Failed(format!("{err:?}")))
                         .await?
                 }
             }
-
-            let db = DBConnectionManager::get(cx)?;
-            Tokio::spawn(cx, async move {
-                let registry = DBConnectionManager::get_registry(&db).await;
-                let registry: registry::ActiveModel = registry.into();
-            })?.await?;
 
             this.update(cx, |this, cx| {
                 this.is_connecting = false;

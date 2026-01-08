@@ -7,7 +7,6 @@ use entity::registry::{self, Entity as Registry, Model as RegistryModel};
 
 pub mod entity;
 
-
 pub struct DBConnectionManager {
     db: DatabaseConnection,
 }
@@ -26,10 +25,10 @@ impl DBConnectionManager {
         Self { db }
     }
 
-    pub fn get<C: AppContext>(cx: &C) -> C::Result<DatabaseConnection> {
+    pub fn get(cx: &mut AsyncApp) -> DatabaseConnection {
         cx.read_global(|this: &Self, _| {
             this.db.clone()
-        })
+        }).unwrap()
     }
 
     pub async fn get_registry(db: &DatabaseConnection) -> RegistryModel {
@@ -54,11 +53,11 @@ impl DBConnectionManager {
 
 impl Global for DBConnectionManager {}
 
-pub fn init(cx: &mut App) {
-    cx.spawn(async move |cx| {
-        let manager = Tokio::spawn(cx, DBConnectionManager::new())?.await?;
-        
-        cx.update(|cx| cx.set_global(manager))
-    }).detach();
+pub async fn init(cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let manager = Tokio::spawn(cx, DBConnectionManager::new())?.await?;
+
+    cx.update(|cx| cx.set_global(manager)).unwrap();
+
+    Ok(())
 }
 
