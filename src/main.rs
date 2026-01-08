@@ -13,7 +13,7 @@ pub mod screens;
 
 use screens::login::LoginScreen;
 
-use crate::{assets::Assets, gpui_tokio::Tokio};
+use crate::{assets::Assets, db::{DBConnectionManager, entity::registry}, gpui_tokio::Tokio};
 
 enum Screen {
     Login(Entity<LoginScreen>),
@@ -44,6 +44,14 @@ impl ConnectionManger {
     fn get(cx: &mut AsyncApp) -> Connection {
         cx.read_global(|this: &Self, _| this.conn.as_ref().unwrap().clone())
             .unwrap()
+    }
+
+    async fn login(cx: &mut AsyncApp) {
+        Tokio::spawn(cx, async move {
+        })
+            .unwrap()
+            .await
+            .unwrap();
     }
 
     async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
@@ -100,20 +108,40 @@ fn main() {
         gpui_component::init(cx);
         gpui_tokio::init(cx);
 
-        db::init(cx);
-
         init_theme(cx);
         cx.set_global(ConnectionManger::new());
 
+        // Check if we're already authorized
         cx.spawn(async move |cx| {
+            db::init(cx).await
+                .unwrap();
+
+            let db = DBConnectionManager::get(cx);
+            let registry = Tokio::spawn(cx, async move {
+                DBConnectionManager::get_registry(&db).await
+            })?.await?;
+
+            // Open the window first to not block it if the server
+            // is slow to response on login
             cx.open_window(WindowOptions::default(), |window, cx| {
-                let login_screen = cx.new(|cx| LoginScreen::new(window, cx));
+                let login_screen = cx.new(|cx| LoginScreen::new(
+                    window,
+                    cx,
+                    registry.session_key.is_some(),
+                    registry.connected_server,
+                ));
                 let view = cx.new(|_| MainWindow {
                     current_screen: Screen::Login(login_screen),
                 });
-                // This first level on the window, should be a Root.
+
+                // For notifications and stuff, this should be the first
+                // element of the window (aka root)
                 cx.new(|cx| Root::new(view, window, cx))
-            })?;
+            }).unwrap();
+
+            if let Some(_session_key) = registry.session_key {
+                todo!("Implement Login");
+            }
 
             Ok::<_, anyhow::Error>(())
         })
