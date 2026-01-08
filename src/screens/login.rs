@@ -1,13 +1,13 @@
+
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, IntoElement, ParentElement, ReadGlobal, Render,
-    Styled, Window, div, prelude::FluentBuilder, px, rgb, white,
+    AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px, rgb, white
 };
 use gpui_component::{
     Disableable, Icon, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
-use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginPayload};
+use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError, LoginPayload};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 use crate::{
@@ -24,9 +24,11 @@ pub struct LoginScreen {
 
     /// Indicates if we're in the process
     /// of connecting to a server
-    is_connecting: bool,
+    pub is_connecting: bool,
     is_form_valid: bool,
 }
+
+impl EventEmitter<()> for LoginScreen {}
 
 enum ConnectionResult {
     NewUser,
@@ -139,7 +141,8 @@ impl LoginScreen {
                         password: password.into(),
                     },
                 )
-                .await?;
+                .await
+                .expect("invalid params");
 
             match data {
                 Ok(value) => {
@@ -168,25 +171,37 @@ impl LoginScreen {
                     })?
                     .await?;
 
-                    let data: Result<GetSessionKeyResponse, GetSessionKeyError> = connection
+                    let data: Result<(), LoginError> = connection
                         .execute(
                             "Login",
                             &LoginPayload {
                                 session_key,
                             },
                         )
-                        .await?;
+                        .await
+                        .expect("invalid params");
 
                     data.expect("We just logged in, it should not fail");
+
+                    // Notify parent component that we're logged in
+                    this.update(cx, |_, cx| {
+                        cx.emit(());
+                    }).unwrap();
                 }
                 Err(err) => {
-                    tx.send(ConnectionResult::Failed(format!("{err:?}")))
-                        .await?
+                    match err {
+                        GetSessionKeyError::UserAlreadyExists => {
+                            tx.send(ConnectionResult::Failed("incorrect password".to_string()))
+                                .await?;
+                        },
+                        _ => tx.send(ConnectionResult::Failed(format!("{err:?}"))).await?
+                    }
                 }
             }
 
             this.update(cx, |this, cx| {
                 this.is_connecting = false;
+
                 cx.notify();
             })
             .ok();
