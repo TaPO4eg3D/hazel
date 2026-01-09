@@ -8,6 +8,7 @@ pub struct WorkspaceScreen {
     voice_channels: Vec<u8>,
 
     text_channels_collapsed: bool,
+    voice_channels_collapsed: bool,
 }
 
 impl WorkspaceScreen {
@@ -20,8 +21,10 @@ impl WorkspaceScreen {
                     has_unread: i % 3 == 0,
                 }
             }).collect(),
-            text_channels_collapsed: false,
             voice_channels: Vec::new(),
+
+            text_channels_collapsed: false,
+            voice_channels_collapsed: false,
         }
     }
 }
@@ -69,7 +72,8 @@ impl Render for WorkspaceScreen {
                         div()
                             .px_6()
                             .child(
-                                CollapasableCard::new("TEXT CHANNELS")
+                                CollapasableCard::new("text-channels-card")
+                                    .title("TEXT CHANNELS")
                                     .collapsed(self.text_channels_collapsed)
                                     .on_toggle_click(cx.listener(|this, is_collapsed: &bool, _, cx| {
                                         this.text_channels_collapsed = *is_collapsed;
@@ -77,6 +81,18 @@ impl Render for WorkspaceScreen {
                                     }))
                                     .content(
                                         TextChannelsComponent::new(self.text_channels.clone())
+                                    ).pt_6()
+                            )
+                            .child(
+                                CollapasableCard::new("voice-channels-card")
+                                    .title("VOICE CHANNELS")
+                                    .collapsed(self.voice_channels_collapsed)
+                                    .on_toggle_click(cx.listener(|this, is_collapsed: &bool, _, cx| {
+                                        this.voice_channels_collapsed = *is_collapsed;
+                                        cx.notify();
+                                    }))
+                                    .content(
+                                        "Voice channels content"
                                     ).pt_6()
                             )
                             .size_full()

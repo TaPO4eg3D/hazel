@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Entity, IntoElement, ParentElement, Render, RenderOnce, SharedString, Style, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px, rgb
+    AnyElement, App, ElementId, Entity, IntoElement, ParentElement, Render, RenderOnce, SharedString, Style, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px, rgb
 };
 use gpui_component::{Icon, StyledExt, button::Button};
 
@@ -38,7 +38,9 @@ impl Styled for TextChannelsComponent {
 
 #[derive(IntoElement)]
 pub struct CollapasableCard {
-    title: SharedString,
+    id: ElementId,
+
+    title: Option<SharedString>,
     content: Option<AnyElement>,
 
     style: StyleRefinement,
@@ -56,14 +58,20 @@ impl Styled for CollapasableCard {
 }
 
 impl CollapasableCard {
-    pub fn new(title: impl Into<SharedString>) -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
-            title: title.into(),
+            id: id.into(),
+            title: None,
             content: None,
             style: StyleRefinement::default(),
             is_collapsed: false,
             on_toggle_click: None,
         }
+    }
+
+    pub fn title(mut self, value: impl Into<SharedString>) -> Self {
+        self.title = Some(value.into());
+        self
     }
 
     pub fn content(mut self, element: impl IntoElement) -> Self {
@@ -93,9 +101,9 @@ impl RenderOnce for CollapasableCard {
                 div()
                     .flex()
                     .items_center()
-                    .child(self.title.clone())
+                    .when_some(self.title, |this, title| this.child(title))
                     .child(
-                        Button::new("collapse")
+                        Button::new(self.id)
                             .icon({
                                 if self.is_collapsed {
                                     Icon::new(IconName::ChevronsUpDown)
