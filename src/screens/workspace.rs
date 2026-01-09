@@ -1,11 +1,13 @@
 use gpui::{ParentElement, Render, Styled, div, px, rgb, white};
-use gpui_component::{StyledExt, scroll::ScrollableElement};
+use gpui_component::{StyledExt, accordion::Accordion, scroll::ScrollableElement};
 
-use crate::components::left_sidear::{TextChannel, TextChannelsComponent};
+use crate::components::left_sidear::{CollapasableCard, TextChannel, TextChannelsComponent};
 
 pub struct WorkspaceScreen {
     text_channels: Vec<TextChannel>,
     voice_channels: Vec<u8>,
+
+    text_channels_collapsed: bool,
 }
 
 impl WorkspaceScreen {
@@ -18,6 +20,7 @@ impl WorkspaceScreen {
                     has_unread: i % 3 == 0,
                 }
             }).collect(),
+            text_channels_collapsed: false,
             voice_channels: Vec::new(),
         }
     }
@@ -66,8 +69,15 @@ impl Render for WorkspaceScreen {
                         div()
                             .px_6()
                             .child(
-                                TextChannelsComponent::new(self.text_channels.clone())
-                                    .pt(px(35.))
+                                CollapasableCard::new("TEXT CHANNELS")
+                                    .collapsed(self.text_channels_collapsed)
+                                    .on_toggle_click(cx.listener(|this, is_collapsed: &bool, _, cx| {
+                                        this.text_channels_collapsed = *is_collapsed;
+                                        cx.notify();
+                                    }))
+                                    .content(
+                                        TextChannelsComponent::new(self.text_channels.clone())
+                                    ).pt_6()
                             )
                             .size_full()
                             .overflow_y_scrollbar()

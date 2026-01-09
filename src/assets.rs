@@ -38,6 +38,7 @@ pub enum IconName {
     MessageCircleOff,
     MessageCircle,
     ChevronsDownUp,
+    ChevronsUpDown,
 }
 
 impl IconNamed for IconName {
@@ -47,6 +48,7 @@ impl IconNamed for IconName {
             IconName::MessageCircle => "icons/message-circle.svg",
             IconName::MessageCircleOff => "icons/message-circle-off.svg",
             IconName::ChevronsDownUp => "icons/chevrons-down-up.svg",
+            IconName::ChevronsUpDown => "icons/chevrons-up-down.svg",
             IconName::UserAvatar => "icons/user.svg",
             IconName::PasswordLock => "icons/lock.svg",
             IconName::Server => "icons/server.svg",
