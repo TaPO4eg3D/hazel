@@ -13,18 +13,19 @@ pub mod assets;
 pub mod db;
 pub mod gpui_tokio;
 pub mod screens;
+pub mod components;
 
 use screens::login::LoginScreen;
 
-use crate::{assets::Assets, db::DBConnectionManager, gpui_tokio::Tokio};
+use crate::{assets::Assets, db::DBConnectionManager, gpui_tokio::Tokio, screens::workspace::WorkspaceScreen};
 
 enum Screen {
     Login(Entity<LoginScreen>),
-    MainWorkspace,
+    MainWorkspace(Entity<WorkspaceScreen>),
 }
 
 pub struct MainWindow {
-    current_screen: Screen,
+    screen: Screen,
 }
 
 pub struct ConnectionManger {
@@ -75,9 +76,9 @@ impl Render for MainWindow {
 
         let mut root = div().size_full();
 
-        match &self.current_screen {
+        match &self.screen {
             Screen::Login(screen) => root = root.child(screen.clone()),
-            Screen::MainWorkspace => root = root.child("WORKSPACE"),
+            Screen::MainWorkspace(screen) => root = root.child(screen.clone()),
         };
 
         root.children(notification_layer)
@@ -131,13 +132,15 @@ fn main() {
                 });
 
                 let view = cx.new(|cx| {
-                    cx.subscribe(&login_screen, |this: &mut MainWindow, _, _: &(), _| {
-                        this.current_screen = Screen::MainWorkspace;
+                    cx.subscribe(&login_screen, |this: &mut MainWindow, _, _: &(), cx| {
+                        let workspace_screen = cx.new(|_| WorkspaceScreen::new());
+
+                        this.screen = Screen::MainWorkspace(workspace_screen);
                     })
                     .detach();
 
                     MainWindow {
-                        current_screen: Screen::Login(login_screen.clone()),
+                        screen: Screen::Login(login_screen.clone()),
                     }
                 });
 
@@ -177,8 +180,10 @@ fn main() {
                                         .expect("invalid params");
 
                                     if result.is_ok() {
-                                        view.update(cx, |this, _| {
-                                            this.current_screen = Screen::MainWorkspace;
+                                        view.update(cx, |this, cx| {
+                                            let workspace_screen = cx.new(|_| WorkspaceScreen::new());
+
+                                            this.screen = Screen::MainWorkspace(workspace_screen);
                                         }).ok();
                                     } else {
                                         login_screen.update(cx, |this, _| {

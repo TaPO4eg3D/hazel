@@ -33,12 +33,20 @@ pub enum IconName {
     PasswordLock,
     Server,
     Loader,
-    Eye
+    Eye,
+    Hash,
+    MessageCircleOff,
+    MessageCircle,
+    ChevronsDownUp,
 }
 
 impl IconNamed for IconName {
     fn path(self) -> SharedString {
         match self {
+            IconName::Hash => "icons/hash.svg",
+            IconName::MessageCircle => "icons/message-circle.svg",
+            IconName::MessageCircleOff => "icons/message-circle-off.svg",
+            IconName::ChevronsDownUp => "icons/chevrons-down-up.svg",
             IconName::UserAvatar => "icons/user.svg",
             IconName::PasswordLock => "icons/lock.svg",
             IconName::Server => "icons/server.svg",

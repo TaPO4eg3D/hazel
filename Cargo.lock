@@ -2784,6 +2784,7 @@ dependencies = [
  "rpc",
  "rust-embed",
  "sea-orm",
+ "smallvec",
  "smol",
  "tokio",
  "tracing",
