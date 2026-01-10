@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rpc = { path = "../hazel-server/rpc" }
+hazel_macros = { path = "./macros/" }
 
 # UI
 gpui = "0.2.2"
