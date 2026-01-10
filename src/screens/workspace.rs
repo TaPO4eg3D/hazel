@@ -5,7 +5,7 @@ use gpui_component::{
 
 use crate::{
     assets::IconName,
-    components::left_sidear::{
+    components::left_sidebar::{
         CollapasableCard, ControlPanel, TextChannel, TextChannelsComponent, VoiceChannel,
         VoiceChannelMember, VoiceChannelsComponent,
     },

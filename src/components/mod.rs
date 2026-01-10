@@ -1,3 +1,3 @@
 
-pub mod left_sidear;
+pub mod left_sidebar;
 
