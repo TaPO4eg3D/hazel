@@ -1,7 +1,9 @@
 use std::{fmt::format, sync::Arc};
 
 use gpui::{
-    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render, RenderOnce, SharedString, Style, StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder, px, red, rgb
+    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    RenderOnce, SharedString, Style, StyleRefinement, Styled, Window, div, percentage,
+    prelude::FluentBuilder, px, red, rgb, white,
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
 
@@ -122,15 +124,13 @@ impl RenderOnce for CollapasableCard {
                                     })
                                 }
                             })
-                            .ml_auto()
-                    )
+                            .ml_auto(),
+                    ),
             )
             .when(!self.is_collapsed, |this| {
-                this.when_some(self.content, |this, content| this.child(
-                    div()
-                        .mt_4()
-                        .child(content)
-                ))
+                this.when_some(self.content, |this, content| {
+                    this.child(div().mt_4().child(content))
+                })
             })
     }
 }
@@ -142,9 +142,7 @@ impl RenderOnce for TextChannelsComponent {
                 .child(
                     div()
                         .bg(rgb(0x0F111A))
-                        .hover(|style| style
-                            .border_color(rgb(0x7B5CFF))
-                            .border_2())
+                        .hover(|style| style.border_color(rgb(0x7B5CFF)).border_2())
                         .cursor_pointer()
                         .when(channel.is_active, |this| {
                             this.border_color(rgb(0x7B5CFF)).border_2()
@@ -163,7 +161,7 @@ impl RenderOnce for TextChannelsComponent {
                         )
                         .when(channel.is_muted, |this| {
                             this.child(Icon::new(IconName::MessageCircleOff).ml_auto().mr_3())
-                        })
+                        }),
                 )
                 // cuz we need to draw this dot above border
                 .when(channel.has_unread, |this| {
@@ -210,7 +208,7 @@ pub struct VoiceChannelsComponent {
 }
 
 impl Styled for VoiceChannelsComponent {
-    fn style(&mut self) ->  &mut StyleRefinement {
+    fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 }
@@ -226,14 +224,12 @@ impl VoiceChannelsComponent {
 
 #[derive(IntoElement)]
 struct IconRoundedButton {
-    content: Icon
+    content: Icon,
 }
 
 impl IconRoundedButton {
     fn new(content: Icon) -> Self {
-        Self {
-            content
-        }
+        Self { content }
     }
 }
 
@@ -258,44 +254,23 @@ impl RenderOnce for VoiceChannelsComponent {
                 div()
                     .flex()
                     .items_center()
-                    .child(
-                        div()
-                            .child(Icon::new(IconName::User))
-                    )
-                    .child(
-                        div()
-                            .ml_1()
-                            .mt(px(1.))
-                            .child(member.name.clone())
-                    )
+                    .child(div().child(Icon::new(IconName::User)))
+                    .child(div().ml_1().mt(px(1.)).child(member.name.clone()))
                     .child(
                         div()
                             .flex()
                             .gap_1()
                             .ml_1()
                             .when(member.is_talking, |this| {
-                                this.child(
-                                    Icon::new(IconName::Mic)
-                                        .text_color(rgb(0x4AC6FF))
-                                )
+                                this.child(Icon::new(IconName::Mic).text_color(rgb(0x4AC6FF)))
                             })
                             .when(member.is_streaming, |this| {
-                                this.child(
-                                    Icon::new(IconName::Cast)
-                                        .text_color(rgb(0x4AC6FF))
-                                )
-                            })
+                                this.child(Icon::new(IconName::Cast).text_color(rgb(0x4AC6FF)))
+                            }),
                     )
-                    .child(
-                        div()
-                            .ml_auto()
-                            .child(
-                                IconRoundedButton::new(
-                                    Icon::new(IconName::EllipsisVertical)
-                                        // .with_size(Size::Large)
-                                )
-                            )
-                    )
+                    .child(div().ml_auto().child(IconRoundedButton::new(
+                        Icon::new(IconName::EllipsisVertical), // .with_size(Size::Large)
+                    )))
             });
 
             div().child(
@@ -305,9 +280,7 @@ impl RenderOnce for VoiceChannelsComponent {
                     .text_size(px(16.))
                     .font_normal()
                     .rounded_lg()
-                    .hover(|style| style
-                        .border_color(rgb(0x7B5CFF))
-                        .border_2())
+                    .hover(|style| style.border_color(rgb(0x7B5CFF)).border_2())
                     .when(channel.is_active, |this| {
                         this.border_color(rgb(0x7B5CFF)).border_2()
                     })
@@ -318,35 +291,87 @@ impl RenderOnce for VoiceChannelsComponent {
                             .flex()
                             .items_center()
                             .child(Icon::new(IconName::AudioLines))
-                            .child(
-                                div()
-                                    .ml_2()
-                                    .child(channel.name.clone())
-                            )
-                            .child(
-                                div()
-                                    .ml_auto()
-                                    .child(Icon::new(IconName::Users))
-                            )
-                            .child(
-                                div()
-                                    .ml_1()
-                                    .child(format!("{}", channel.members.len()))
-                            )
+                            .child(div().ml_2().child(channel.name.clone()))
+                            .child(div().ml_auto().child(Icon::new(IconName::Users)))
+                            .child(div().ml_1().child(format!("{}", channel.members.len()))),
                     )
-                    .child(
-                        div()
-                            .py_2()
-                            .v_flex()
-                            .gap_1()
-                            .children(members)
-                    )
+                    .child(div().py_2().v_flex().gap_1().children(members)),
             )
         });
 
+        div().v_flex().gap_3().children(channels)
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ControlPanel {
+    style: StyleRefinement,
+}
+
+impl ControlPanel {
+    pub fn new() -> Self {
+        Self {
+            style: StyleRefinement::default(),
+        }
+    }
+}
+
+impl Default for ControlPanel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Styled for ControlPanel {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl RenderOnce for ControlPanel {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
-            .v_flex()
-            .gap_3()
-            .children(channels)
+            .bg(rgb(0x0F111A))
+            .child(
+                div()
+                    .px_2()
+                    .py_4()
+                    .flex()
+                    .child(
+                        IconRoundedButton::new(
+                            Icon::new(IconName::Cast)
+                                .with_size(Size::Large)
+                        )
+                    )
+                    .child(
+                        div()
+                            .child(
+                                IconRoundedButton::new(
+                                    Icon::new(IconName::MicOff)
+                                        .with_size(Size::Large)
+                                )
+                            ).ml_auto()
+                    )
+                    .child(
+                        IconRoundedButton::new(
+                            Icon::new(IconName::HeadphoneOff)
+                                .with_size(Size::Large)
+                        )
+                    )
+                    .child(
+                        div()
+                            .w(px(1.))
+                            .h(px(32.0))
+                            .bg(white())
+                            .mx_2()
+                    )
+                    .child(
+                        IconRoundedButton::new(
+                            Icon::new(IconName::Settings)
+                                .with_size(Size::Large)
+                        )
+                    )
+            )
+            .refine_style(&self.style)
     }
 }
