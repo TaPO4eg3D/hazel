@@ -242,7 +242,7 @@ impl Render for LoginScreen {
                             .disabled(self.is_connecting)
                             .mt(px(12.))
                             .min_h(px(55.))
-                            .prefix(Icon::new(IconName::UserAvatar)),
+                            .prefix(Icon::new(IconName::User)),
                     )
                     .child(
                         div()

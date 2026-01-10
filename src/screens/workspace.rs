@@ -1,11 +1,11 @@
 use gpui::{ParentElement, Render, Styled, div, px, rgb, white};
-use gpui_component::{StyledExt, accordion::Accordion, scroll::ScrollableElement};
+use gpui_component::{Icon, Sizable, Size, StyledExt, accordion::Accordion, scroll::ScrollableElement};
 
-use crate::components::left_sidear::{CollapasableCard, TextChannel, TextChannelsComponent};
+use crate::{assets::IconName, components::left_sidear::{CollapasableCard, TextChannel, TextChannelsComponent, VoiceChannel, VoiceChannelMember, VoiceChannelsComponent}};
 
 pub struct WorkspaceScreen {
     text_channels: Vec<TextChannel>,
-    voice_channels: Vec<u8>,
+    voice_channels: Vec<VoiceChannel>,
 
     text_channels_collapsed: bool,
     voice_channels_collapsed: bool,
@@ -14,14 +14,57 @@ pub struct WorkspaceScreen {
 impl WorkspaceScreen {
     pub fn new() -> Self {
         Self {
-            text_channels: (0..3).map(|i| {
+            text_channels: (0..2).map(|i| {
                 TextChannel {
                     name: format!("Text Channel {i}").into(),
+                    is_active: i == 0,
                     is_muted: i % 2 == 0,
                     has_unread: i % 3 == 0,
                 }
             }).collect(),
-            voice_channels: Vec::new(),
+            voice_channels: vec![
+                VoiceChannel {
+                    id: 1,
+                    is_active: true,
+                    name: "Counter Stike 2".into(),
+                    members: vec![
+                        VoiceChannelMember {
+                            id: 1,
+                            name: "TaPO4eg3D".into(),
+                            is_muted: false,
+                            is_talking: true,
+                            is_streaming: false,
+                        },
+                        VoiceChannelMember {
+                            id: 2,
+                            name: "syliakPro".into(),
+                            is_muted: false,
+                            is_talking: false,
+                            is_streaming: true,
+                        },
+                        VoiceChannelMember {
+                            id: 3,
+                            name: "PARAZAKATAFANNY".into(),
+                            is_muted: true,
+                            is_talking: false,
+                            is_streaming: false,
+                        },
+                        VoiceChannelMember {
+                            id: 4,
+                            name: "daniql1".into(),
+                            is_muted: false,
+                            is_talking: true,
+                            is_streaming: true,
+                        }
+                    ]
+                },
+                VoiceChannel {
+                    id: 2,
+                    name: "Default".into(),
+                    is_active: false,
+                    members: vec![],
+                }
+            ],
 
             text_channels_collapsed: false,
             voice_channels_collapsed: false,
@@ -52,7 +95,7 @@ impl Render for WorkspaceScreen {
                 div()
                     .bg(rgb(0x181B25))
                     .w_full()
-                    .max_w(px(340.))
+                    .max_w(px(380.))
                     // Server name header
                     .child(
                         div()
@@ -60,11 +103,14 @@ impl Render for WorkspaceScreen {
                             .py_4()
                             .px_6()
                             .flex()
-                            .child("SERVER NAME")
+                            .items_center()
+                            .child("HAZEL OFFICIAL")
                             .child(
                                 div()
                                     .ml_auto()
-                                    .child("+")
+                                    .child(
+                                        Icon::new(IconName::Settings)
+                                    )
                             )
                     )
                     // Main area
@@ -92,7 +138,7 @@ impl Render for WorkspaceScreen {
                                         cx.notify();
                                     }))
                                     .content(
-                                        "Voice channels content"
+                                        VoiceChannelsComponent::new(self.voice_channels.clone())
                                     ).pt_6()
                             )
                             .size_full()

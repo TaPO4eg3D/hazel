@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use gpui::*;
 use gpui_component::IconNamed;
+use hazel_macros::IconPath;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 
@@ -28,32 +29,23 @@ impl AssetSource for Assets {
     }
 }
 
+#[derive(IconPath)]
 pub enum IconName {
-    UserAvatar,
     PasswordLock,
     Server,
     Loader,
     Eye,
+    Mic,
+    Cast,
     Hash,
     MessageCircleOff,
     MessageCircle,
     ChevronsDownUp,
     ChevronsUpDown,
-}
-
-impl IconNamed for IconName {
-    fn path(self) -> SharedString {
-        match self {
-            IconName::Hash => "icons/hash.svg",
-            IconName::MessageCircle => "icons/message-circle.svg",
-            IconName::MessageCircleOff => "icons/message-circle-off.svg",
-            IconName::ChevronsDownUp => "icons/chevrons-down-up.svg",
-            IconName::ChevronsUpDown => "icons/chevrons-up-down.svg",
-            IconName::UserAvatar => "icons/user.svg",
-            IconName::PasswordLock => "icons/lock.svg",
-            IconName::Server => "icons/server.svg",
-            IconName::Eye => "icons/eye.svg",
-            IconName::Loader => "icons/loader.svg",
-        }.into()
-    }
+    AudioLines,
+    Settings,
+    User,
+    Users,
+    EllipsisVertical,
+    VolumeFull
 }
