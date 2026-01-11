@@ -1,4 +1,4 @@
-# Lil script to bind on a hotkey (for quick layout development)
+# A small convinience script to bind the client on a hotkey (for quick layout development)
 
 killall -q hazel_client
 cd /home/tapo4eg3d/Projects/hazel-client2/ || exit 1

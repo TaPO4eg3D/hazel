@@ -1,27 +1,42 @@
-[package]
-name = "hazel_client"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/rpc",
+    "crates/macros",
+    "crates/client",
+]
 
-[dependencies]
-rpc = { path = "../hazel-server/rpc" }
-hazel_macros = { path = "./macros/" }
+default-members = ["crates/client"]
 
-# UI
-gpui = "0.2.2"
-gpui-component = "0.5.0"
-rust-embed = "8.9.0"
-unicode-segmentation = "1.12.0"
+[workspace.dependencies]
+rpc = { path = "crates/rpc" }
+hazel_macros = { path = "crates/macros" }
 
-# Async
-smol = "2.0.2"
-tokio = { version = "1.48.0", features = ["rt-multi-thread"] }
-
+log = "0.4.28"
 anyhow = "1.0.100"
-tracing = "0.1.43"
+env_logger = "0.11.8"
 rmp-serde = "1.3.1"
-smallvec = "1.15.1"
 
-[dependencies.sea-orm]
-version = "2.0.0-rc"
-features = ["runtime-tokio-rustls", "sqlx-sqlite", "schema-sync", "entity-registry"]
+[workspace.dependencies.tokio]
+version = "1.49.0"
+features = [
+    "net",
+    "io-util",
+    "time",
+    "sync",
+    "rt-multi-thread",
+    "macros",
+]
+
+[workspace.dependencies.sea-orm]
+version = "2.0.0-rc.27"
+features = [
+    "sqlx-sqlite",
+    "entity-registry",
+    "schema-sync",
+    "runtime-tokio-rustls",
+]
+
+[workspace.dependencies.serde]
+version = "1.0.228"
+features = ["derive"]

@@ -168,8 +168,7 @@ impl LoginScreen {
 
                         registry.update(&db).await
                             .unwrap();
-                    })?
-                    .await?;
+                    }).await?;
 
                     let data: Result<(), LoginError> = connection
                         .execute(

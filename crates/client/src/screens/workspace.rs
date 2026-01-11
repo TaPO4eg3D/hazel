@@ -34,6 +34,7 @@ impl WorkspaceScreen {
             chat,
             text_channels: (0..40)
                 .map(|i| TextChannel {
+                    id: i,
                     name: format!("Text Channel {i}").into(),
                     is_active: i == 0,
                     is_muted: i % 2 == 0,

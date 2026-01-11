@@ -1,0 +1,22 @@
+[package]
+name = "rpc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+
+strum = { version = "0.27.2", features = ["derive"] }
+strum_macros = "0.27.2"
+bytes = "1.10.1"
+rmp-serde = "1.3.0"
+castaway = "0.2.4"
+thiserror = "2.0.17"
+dashmap = "6.1.0"
+uuid = { version = "1.18.1", features = ["v4"] }
+chrono = "0.4.42"
+sha2 = "0.10.9"
+hmac = "0.12.1"
