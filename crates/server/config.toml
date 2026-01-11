@@ -1,0 +1,11 @@
+addr = "127.0.0.1:9898"
+
+[[text_channels]]
+name = "Text Channel 1"
+
+[[text_channels]]
+name = "Text Channel 2"
+
+[[voice_channels]]
+name = "Voice Channel 1"
+max_participants = 10
