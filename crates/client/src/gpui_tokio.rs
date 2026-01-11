@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use gpui::{App, AppContext, AsyncApp, Global, ReadGlobal, Task};
+use gpui::{App, AppContext, Global, ReadGlobal, Task};
 
 pub use tokio::task::JoinError;
 
@@ -55,7 +55,7 @@ pub struct Tokio {}
 impl Tokio {
     /// Spawns the given future on Tokio's thread pool, and returns it via a GPUI task
     /// Note that the Tokio task will be cancelled if the GPUI task is dropped
-    pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<Result<R, JoinError>>>
+    pub fn spawn<C, Fut, R>(cx: &C, f: Fut) -> Task<Result<R, JoinError>>
     where
         C: AppContext,
         Fut: Future<Output = R> + Send + 'static,
@@ -77,7 +77,7 @@ impl Tokio {
 
     /// Spawns the given future on Tokio's thread pool, and returns it via a GPUI task
     /// Note that the Tokio task will be cancelled if the GPUI task is dropped
-    pub fn spawn_result<C, Fut, R>(cx: &C, f: Fut) -> C::Result<Task<anyhow::Result<R>>>
+    pub fn spawn_result<C, Fut, R>(cx: &C, f: Fut) -> Task<anyhow::Result<R>>
     where
         C: AppContext,
         Fut: Future<Output = anyhow::Result<R>> + Send + 'static,
@@ -99,12 +99,6 @@ impl Tokio {
 
     pub fn handle(cx: &App) -> tokio::runtime::Handle {
         GlobalTokio::global(cx).runtime.handle().clone()
-    }
-
-    pub fn async_handle(cx: &mut AsyncApp) -> tokio::runtime::Handle {
-        cx.read_global(|this: &GlobalTokio, _| {
-            this.runtime.handle().clone()
-        }).unwrap()
     }
 }
 

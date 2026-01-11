@@ -28,7 +28,7 @@ impl DBConnectionManager {
     pub fn get(cx: &mut AsyncApp) -> DatabaseConnection {
         cx.read_global(|this: &Self, _| {
             this.db.clone()
-        }).unwrap()
+        })
     }
 
     pub async fn get_registry(db: &DatabaseConnection) -> RegistryModel {
@@ -54,9 +54,9 @@ impl DBConnectionManager {
 impl Global for DBConnectionManager {}
 
 pub async fn init(cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let manager = Tokio::spawn(cx, DBConnectionManager::new())?.await?;
+    let manager = Tokio::spawn(cx, DBConnectionManager::new()).await?;
 
-    cx.update(|cx| cx.set_global(manager)).unwrap();
+    cx.update(|cx| cx.set_global(manager));
 
     Ok(())
 }

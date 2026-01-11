@@ -11,6 +11,7 @@ use crate::assets::IconName;
 
 #[derive(Clone)]
 pub struct TextChannel {
+    pub id: u64,
     pub name: SharedString,
 
     pub is_active: bool,
@@ -141,8 +142,10 @@ impl RenderOnce for TextChannelsComponent {
             div()
                 .child(
                     div()
+                        .id(ElementId::Integer(channel.id))
                         .bg(rgb(0x0F111A))
-                        .hover(|style| style.border_color(rgb(0x7B5CFF)).border_2())
+                        .border_2()
+                        .hover(|style| style.border_color(rgb(0x7B5CFF)))
                         .cursor_pointer()
                         .when(channel.is_active, |this| {
                             this.border_color(rgb(0x7B5CFF)).border_2()
@@ -178,7 +181,11 @@ impl RenderOnce for TextChannelsComponent {
                 })
         });
 
-        div().v_flex().gap_2().children(channels)
+        div()
+            .id("text-channels")
+            .v_flex()
+            .gap_2()
+            .children(channels)
     }
 }
 
@@ -223,27 +230,37 @@ impl VoiceChannelsComponent {
 }
 
 #[derive(IntoElement)]
-struct IconRoundedButton {
-    content: Icon,
+pub struct IconRoundedButton {
+    id: ElementId,
+    content: Option<Icon>,
 }
 
 impl IconRoundedButton {
-    fn new(content: Icon) -> Self {
-        Self { content }
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            content: None,
+        }
+    }
+
+    pub fn content(mut self, value: Icon) -> Self {
+        self.content = Some(value);
+        self
     }
 }
 
 impl RenderOnce for IconRoundedButton {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut hover_bg = cx.theme().secondary;
         hover_bg.a = 0.8;
 
         div()
+            .id(self.id.clone())
             .p_1()
             .hover(|style| style.bg(hover_bg))
             .cursor_pointer()
             .rounded_3xl()
-            .child(self.content)
+            .when_some(self.content, |this, content| this.child(content))
     }
 }
 
@@ -252,6 +269,7 @@ impl RenderOnce for VoiceChannelsComponent {
         let channels = self.channels.iter().map(|channel| {
             let members = channel.members.iter().map(|member| {
                 div()
+                    .id(ElementId::Integer(member.id))
                     .flex()
                     .items_center()
                     .child(div().child(Icon::new(IconName::User)))
@@ -268,19 +286,24 @@ impl RenderOnce for VoiceChannelsComponent {
                                 this.child(Icon::new(IconName::Cast).text_color(rgb(0x4AC6FF)))
                             }),
                     )
-                    .child(div().ml_auto().child(IconRoundedButton::new(
-                        Icon::new(IconName::EllipsisVertical), // .with_size(Size::Large)
-                    )))
+                    .child(
+                        div().ml_auto().child(
+                            IconRoundedButton::new("options")
+                                .content(Icon::new(IconName::EllipsisVertical)),
+                        ),
+                    )
             });
 
             div().child(
                 div()
+                    .id(ElementId::Integer(channel.id))
                     .p_3()
                     .bg(rgb(0x0F111A))
                     .text_size(px(16.))
                     .font_normal()
                     .rounded_lg()
-                    .hover(|style| style.border_color(rgb(0x7B5CFF)).border_2())
+                    .border_2()
+                    .hover(|style| style.border_color(rgb(0x7B5CFF)))
                     .when(channel.is_active, |this| {
                         this.border_color(rgb(0x7B5CFF)).border_2()
                     })
@@ -299,7 +322,11 @@ impl RenderOnce for VoiceChannelsComponent {
             )
         });
 
-        div().v_flex().gap_3().children(channels)
+        div()
+            .id("voice-channels")
+            .v_flex()
+            .gap_3()
+            .children(channels)
     }
 }
 
@@ -331,6 +358,7 @@ impl Styled for ControlPanel {
 impl RenderOnce for ControlPanel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
+            .id("control-panel")
             .bg(rgb(0x0F111A))
             .child(
                 div()
@@ -338,39 +366,26 @@ impl RenderOnce for ControlPanel {
                     .py_4()
                     .flex()
                     .child(
-                        IconRoundedButton::new(
-                            Icon::new(IconName::Cast)
-                                .with_size(Size::Large)
-                        )
+                        IconRoundedButton::new("cast")
+                            .content(Icon::new(IconName::Cast).with_size(Size::Large)),
                     )
                     .child(
                         div()
                             .child(
-                                IconRoundedButton::new(
-                                    Icon::new(IconName::MicOff)
-                                        .with_size(Size::Large)
-                                )
-                            ).ml_auto()
+                                IconRoundedButton::new("mic-mute")
+                                    .content(Icon::new(IconName::MicOff).with_size(Size::Large)),
+                            )
+                            .ml_auto(),
                     )
                     .child(
-                        IconRoundedButton::new(
-                            Icon::new(IconName::HeadphoneOff)
-                                .with_size(Size::Large)
-                        )
+                        IconRoundedButton::new("sound-mute")
+                            .content(Icon::new(IconName::HeadphoneOff).with_size(Size::Large)),
                     )
+                    .child(div().w(px(1.)).h(px(32.0)).bg(white()).mx_2())
                     .child(
-                        div()
-                            .w(px(1.))
-                            .h(px(32.0))
-                            .bg(white())
-                            .mx_2()
-                    )
-                    .child(
-                        IconRoundedButton::new(
-                            Icon::new(IconName::Settings)
-                                .with_size(Size::Large)
-                        )
-                    )
+                        IconRoundedButton::new("settings")
+                            .content(Icon::new(IconName::Settings).with_size(Size::Large)),
+                    ),
             )
             .refine_style(&self.style)
     }

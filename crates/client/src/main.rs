@@ -50,22 +50,21 @@ impl ConnectionManger {
 
     fn get(cx: &mut AsyncApp) -> Connection {
         cx.read_global(|this: &Self, _| this.conn.as_ref().unwrap().clone())
-            .unwrap()
     }
 
     async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
-        let connected = cx.read_global(|g: &Self, _| g.is_connected())?;
+        let connected = cx.read_global(|g: &Self, _| g.is_connected());
 
         if connected {
             // TODO: Change how we handle it
             return Ok(());
         }
 
-        let connection = Tokio::spawn(cx, Connection::new(server_ip))?.await??;
+        let connection = Tokio::spawn(cx, Connection::new(server_ip)).await??;
 
         cx.update_global(|g: &mut Self, _| {
             g.update(connection);
-        })?;
+        });
 
         Ok(())
     }
@@ -121,8 +120,7 @@ fn main() {
                 Tokio::spawn(
                     cx,
                     async move { DBConnectionManager::get_registry(&db).await },
-                )?
-                .await?;
+                ).await?;
 
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let login_screen = cx.new(|cx| {
@@ -192,11 +190,11 @@ fn main() {
                                     if result.is_ok() {
                                         view.update(cx, |this, cx| {
                                             this.current_screen = Screen::MainWorkspace;
-                                        }).ok();
+                                        });
                                     } else {
                                         login_screen.update(cx, |this, _| {
                                             this.is_connecting = false;
-                                        }).ok();
+                                        });
 
                                         tx.send("Stale session, please log in".into())
                                             .await.ok();
@@ -205,7 +203,7 @@ fn main() {
                                 Err(_) => {
                                     login_screen.update(cx, |this, _| {
                                         this.is_connecting = false;
-                                    }).ok();
+                                    });
 
                                     tx.send("Corrupted data, please log in again".into())
                                         .await.ok();
