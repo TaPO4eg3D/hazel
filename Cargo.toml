@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rpc",
     "crates/macros",
+    "crates/server",
     "crates/client",
 ]
 
