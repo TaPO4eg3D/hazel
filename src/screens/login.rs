@@ -256,7 +256,7 @@ impl Render for LoginScreen {
                             .disabled(self.is_connecting)
                             .mt(px(12.))
                             .min_h(px(55.))
-                            .prefix(Icon::new(IconName::PasswordLock))
+                            .prefix(Icon::new(IconName::Lock))
                             .mask_toggle(),
                     )
                     .child(

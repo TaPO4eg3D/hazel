@@ -31,7 +31,7 @@ impl AssetSource for Assets {
 
 #[derive(IconPath)]
 pub enum IconName {
-    PasswordLock,
+    Lock,
     Server,
     Loader,
     Eye,
