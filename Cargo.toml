@@ -5,6 +5,7 @@ members = [
     "crates/macros",
     "crates/server",
     "crates/client",
+    "crates/capture",
 ]
 
 default-members = ["crates/client"]

@@ -1,0 +1,10 @@
+[package]
+name = "capture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+
+libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
+pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
