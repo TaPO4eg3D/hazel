@@ -1,14 +1,14 @@
-use gpui::{ParentElement, Render, Styled, div, px, rgb, white};
+use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled, Window, div, px, rgb, white};
 use gpui_component::{
     Icon, Sizable, Size, StyledExt, accordion::Accordion, scroll::ScrollableElement, v_flex,
 };
 
 use crate::{
     assets::IconName,
-    components::left_sidebar::{
+    components::{chat::Chat, left_sidebar::{
         CollapasableCard, ControlPanel, TextChannel, TextChannelsComponent, VoiceChannel,
         VoiceChannelMember, VoiceChannelsComponent,
-    },
+    }},
 };
 
 pub struct WorkspaceScreen {
@@ -17,12 +17,22 @@ pub struct WorkspaceScreen {
 
     text_channels_collapsed: bool,
     voice_channels_collapsed: bool,
+
+    chat: Entity<Chat>,
 }
 
 impl WorkspaceScreen {
-    pub fn new() -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let chat = cx.new(|cx| {
+            Chat::new(window, cx)
+        });
+
         Self {
-            text_channels: (0..10)
+            chat,
+            text_channels: (0..40)
                 .map(|i| TextChannel {
                     name: format!("Text Channel {i}").into(),
                     is_active: i == 0,
@@ -77,12 +87,6 @@ impl WorkspaceScreen {
             text_channels_collapsed: false,
             voice_channels_collapsed: false,
         }
-    }
-}
-
-impl Default for WorkspaceScreen {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
