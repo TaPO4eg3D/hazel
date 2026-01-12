@@ -14,8 +14,10 @@ pub struct TextChannel {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
-    /// Addr and port to bind to
-    pub addr: String,
+    /// TCP address and port
+    pub tcp_addr: String,
+    /// UDP address and port
+    pub udp_addr: String,
 
     /// List of text channels that will be present on the server
     pub text_channels: Vec<TextChannel>,
