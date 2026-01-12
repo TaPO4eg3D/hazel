@@ -8,3 +8,5 @@ anyhow = { workspace = true }
 
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
+
+ringbuf = "0.4.8"
