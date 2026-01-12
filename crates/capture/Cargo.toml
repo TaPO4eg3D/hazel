@@ -5,8 +5,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
+arc-swap = "1.8.0"
+ffmpeg-next = "8.0.0"
 
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
+nnnoiseless = "0.5.2"
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 
 ringbuf = "0.4.8"

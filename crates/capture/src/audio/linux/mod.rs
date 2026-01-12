@@ -1,5 +1,3 @@
-use core::slice;
-
 use anyhow::Result as AResult;
 use libspa::param::{
     ParamType,
@@ -13,14 +11,17 @@ use pipewire::{
     spa::{self, pod::Pod},
     stream::{Stream, StreamBox, StreamListener},
 };
-use ringbuf::{HeapProd, HeapRb, traits::*};
+use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
 
 struct CaptureStreamData {
     format: AudioInfoRaw,
-    producer: HeapProd<f32>,
+
+    /// Ring Buffer that is used to loopback captured audio.
+    /// Mainly used to quickly test how your microphone sounds
+    loopback_producer: HeapProd<f32>,
 }
 
 struct CaptureStream<'a> {
@@ -75,7 +76,9 @@ impl<'a> CaptureStream<'a> {
             return;
         }
 
-        if let Some(slice) = data.data() && offset + size <= slice.len() {
+        if let Some(slice) = data.data()
+            && offset + size <= slice.len()
+        {
             let valid_bytes = &slice[offset..offset + size];
 
             let samples_f32 = unsafe {
@@ -85,11 +88,11 @@ impl<'a> CaptureStream<'a> {
                 )
             };
 
-            user_data.producer.push_slice(samples_f32);
+            user_data.loopback_producer.push_slice(samples_f32);
         }
     }
 
-    fn new(core: &'a pw::core::CoreRc, producer: HeapProd<f32>) -> AResult<Self> {
+    fn new(core: &'a pw::core::CoreRc, loopback_producer: HeapProd<f32>) -> AResult<Self> {
         let capture_stream = pw::stream::StreamBox::new(
             core,
             Self::STREAM_NAME,
@@ -126,7 +129,7 @@ impl<'a> CaptureStream<'a> {
 
         let stream_data = CaptureStreamData {
             format: Default::default(),
-            producer,
+            loopback_producer,
         };
 
         let listener = capture_stream
@@ -151,24 +154,62 @@ impl<'a> CaptureStream<'a> {
     }
 }
 
-pub struct Audio {}
+struct PlaybackStreamData {
+    /// Ring Buffer that is used to loopback captured audio.
+    /// Mainly used to quickly test how your microphone sounds
+    loopback_consumer: HeapCons<f32>,
+}
 
-impl Audio {
-    const PLAYBACK_STREAM_NAME: &'static str = "HAZEL Audio Playback";
+struct PlaybackStream<'a> {
+    stream: StreamBox<'a>,
+    stream_listener: StreamListener<PlaybackStreamData>,
+}
 
-    pub fn new() -> AResult<Self> {
-        pw::init();
+impl<'a> PlaybackStream<'a> {
+    const STREAM_NAME: &'static str = "HAZEL Audio Playback";
 
-        let mainloop = pw::main_loop::MainLoopRc::new(None)?;
-        let context = pw::context::ContextRc::new(&mainloop, None)?;
-        let core = context.connect_rc(None)?;
+    fn on_process(stream: &Stream, user_data: &mut PlaybackStreamData) {
+        let Some(mut buffer) = stream.dequeue_buffer() else {
+            return;
+        };
 
-        let ring = HeapRb::<f32>::new((DEFAULT_RATE * 2) as usize);
-        let (producer, consumer) = ring.split();
+        let datas = buffer.datas_mut();
+        if datas.is_empty() {
+            return;
+        }
+        let data = &mut datas[0];
 
+        let stride = std::mem::size_of::<f32>() * DEFAULT_CHANNELS as usize;
+
+        if let Some(slice) = data.data() {
+            let output_samples = unsafe {
+                std::slice::from_raw_parts_mut(
+                    slice.as_mut_ptr() as *mut f32,
+                    slice.len() / 4
+                )
+            };
+
+            let read_count = user_data.loopback_consumer.pop_slice(output_samples);
+
+            // Fill remaining buffer with silence (zeros) if we ran out of data
+            if read_count < output_samples.len() {
+                (read_count..output_samples.len()).for_each(|i| {
+                    output_samples[i] = 0.0;
+                });
+            }
+
+            let chunk = data.chunk_mut();
+
+            *chunk.offset_mut() = 0;
+            *chunk.stride_mut() = stride as i32;
+            *chunk.size_mut() = (output_samples.len() * 4) as u32;
+        }
+    }
+
+    fn new(core: &'a pw::core::CoreRc, loopback_consumer: HeapCons<f32>) -> AResult<Self> {
         let playback_stream = pw::stream::StreamBox::new(
-            &core,
-            Self::PLAYBACK_STREAM_NAME,
+            core,
+            Self::STREAM_NAME,
             properties! {
                 *pw::keys::MEDIA_TYPE => "Audio",
                 *pw::keys::MEDIA_ROLE => "Communication",
@@ -188,45 +229,13 @@ impl Audio {
         position[1] = libspa::sys::SPA_AUDIO_CHANNEL_FR;
         audio_info.set_position(position);
 
-        let _listener = playback_stream
-            .add_local_listener_with_user_data(consumer)
-            .process(|stream, consumer| {
-                let Some(mut buffer) = stream.dequeue_buffer() else {
-                    return;
-                };
+        let user_data = PlaybackStreamData {
+            loopback_consumer,
+        };
 
-                let datas = buffer.datas_mut();
-                if datas.is_empty() {
-                    return;
-                }
-                let data = &mut datas[0];
-
-                let stride = std::mem::size_of::<f32>() * DEFAULT_CHANNELS as usize;
-
-                if let Some(slice) = data.data() {
-                    let output_samples = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            slice.as_mut_ptr() as *mut f32,
-                            slice.len() / 4,
-                        )
-                    };
-
-                    let read_count = consumer.pop_slice(output_samples);
-
-                    // Fill remaining buffer with silence (zeros) if we ran out of data
-                    if read_count < output_samples.len() {
-                        (read_count..output_samples.len()).for_each(|i| {
-                            output_samples[i] = 0.0;
-                        });
-                    }
-
-                    let chunk = data.chunk_mut();
-
-                    *chunk.offset_mut() = 0;
-                    *chunk.stride_mut() = stride as i32;
-                    *chunk.size_mut() = (output_samples.len() * 4) as u32;
-                }
-            })
+        let listener = playback_stream
+            .add_local_listener_with_user_data(user_data)
+            .process(Self::on_process)
             .register()?;
 
         let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
@@ -252,7 +261,28 @@ impl Audio {
             &mut params,
         )?;
 
-        let _capture_stream = CaptureStream::new(&core, producer)?;
+        Ok(PlaybackStream {
+            stream: playback_stream,
+            stream_listener: listener,
+        })
+    }
+}
+
+pub struct Audio {}
+
+impl Audio {
+    pub fn new() -> AResult<Self> {
+        pw::init();
+
+        let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+        let context = pw::context::ContextRc::new(&mainloop, None)?;
+        let core = context.connect_rc(None)?;
+
+        let ring = HeapRb::<f32>::new((DEFAULT_RATE * 2) as usize);
+        let (loopback_producer, loopback_consumer) = ring.split();
+
+        let playback = PlaybackStream::new(&core, loopback_consumer)?;
+        let capture = CaptureStream::new(&core, loopback_producer)?;
 
         mainloop.run();
 

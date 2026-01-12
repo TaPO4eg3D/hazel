@@ -1,4 +1,5 @@
-addr = "127.0.0.1:9898"
+tcp_addr = "127.0.0.1:9898"
+udp_addr = "127.0.0.1:9899"
 
 [[text_channels]]
 name = "Text Channel 1"

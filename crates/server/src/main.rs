@@ -11,11 +11,12 @@ use sea_orm::{Database, DatabaseConnection};
 
 use entity::user::Model as User;
 
-use crate::{api::{auth, messages}, config::Config};
+use crate::{api::{auth, messages}, config::Config, streaming::open_udp_socket};
 
 mod api;
 mod config;
 mod entity;
+mod streaming;
 
 /// This state holds connected users to respective channels
 struct ChannelsState {
@@ -60,6 +61,7 @@ async fn init_state() -> AppState {
     }
 }
 
+
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -82,5 +84,11 @@ async fn main() {
     let router = messages::merge(router);
     let router = auth::merge(router);
 
-    serve(&config.addr, router).await;
+    let tcp_addr = config.tcp_addr.clone();
+    tokio::spawn(async move {
+        serve(&tcp_addr, router).await;
+    });
+
+    open_udp_socket(&config.udp_addr).await
+        .unwrap();
 }
