@@ -18,6 +18,7 @@ pub const DEFAULT_CHANNELS: u32 = 2;
 
 struct CaptureStreamData {
     format: AudioInfoRaw,
+    enable_loopback: bool,
 
     /// Ring Buffer that is used to loopback captured audio.
     /// Mainly used to quickly test how your microphone sounds
@@ -88,7 +89,9 @@ impl<'a> CaptureStream<'a> {
                 )
             };
 
-            user_data.loopback_producer.push_slice(samples_f32);
+            if user_data.enable_loopback {
+                user_data.loopback_producer.push_slice(samples_f32);
+            }
         }
     }
 
@@ -130,6 +133,7 @@ impl<'a> CaptureStream<'a> {
         let stream_data = CaptureStreamData {
             format: Default::default(),
             loopback_producer,
+            enable_loopback: false,
         };
 
         let listener = capture_stream
