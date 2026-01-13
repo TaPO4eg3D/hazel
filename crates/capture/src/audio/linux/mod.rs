@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use anyhow::Result as AResult;
 use libspa::param::{
     ParamType,
@@ -16,7 +18,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg::codec::encoder;
 use ffmpeg::{ChannelLayout, format};
-use ffmpeg_next::{self as ffmpeg, Frame, codec, frame};
+use ffmpeg_next::{self as ffmpeg, Frame, Packet, codec, frame};
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
@@ -24,6 +26,8 @@ pub const DEFAULT_CHANNELS: u32 = 2;
 struct CaptureStreamData {
     format: AudioInfoRaw,
     enable_loopback: bool,
+
+    encoder: AudioEncoder,
 
     /// Ring Buffer that is used to loopback captured audio.
     /// Mainly used to quickly test how your microphone sounds
@@ -37,7 +41,6 @@ struct CaptureStream<'a> {
     stream_listener: StreamListener<CaptureStreamData>,
 }
 
-
 struct AudioDecoder {
     codec: codec::audio::Audio,
     decoder: codec::decoder::Audio,
@@ -50,20 +53,56 @@ impl AudioDecoder {
 
         let codec = codec.audio().unwrap();
 
-        let mut decoder = context.decoder()
-            .audio().unwrap();
+        let mut decoder = context.decoder().audio().unwrap();
         decoder.set_channel_layout(ChannelLayout::STEREO);
 
+        Self { codec, decoder }
+    }
+}
+
+pub struct FrameQueue {
+    buf: VecDeque<f32>,
+}
+
+impl FrameQueue {
+    pub fn new() -> Self {
         Self {
-            codec,
-            decoder,
+            buf: VecDeque::new(),
         }
+    }
+
+    #[inline]
+    pub fn push_samples(&mut self, input: &[f32]) {
+        self.buf.extend(input);
+    }
+
+    #[inline]
+    pub fn pop_frame(&mut self, out: &mut [f32]) -> bool {
+        if self.buf.len() < out.len() {
+            return false;
+        }
+
+        for v in out.iter_mut() {
+            *v = self.buf.pop_front().unwrap();
+        }
+
+        true
+    }
+
+    #[inline]
+    pub fn available(&self) -> usize {
+        self.buf.len()
     }
 }
 
 struct AudioEncoder {
     codec: codec::audio::Audio,
     encoder: encoder::audio::Encoder,
+
+    raw_frame: frame::audio::Audio,
+    encoded_packet: Packet,
+
+    frame_queue: FrameQueue,
 }
 
 impl AudioEncoder {
@@ -80,16 +119,36 @@ impl AudioEncoder {
         encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
 
         let encoder = encoder.open_as(codec).unwrap();
+        let frame_size = encoder.frame_size() as usize;
 
-        Self { codec, encoder }
+        Self {
+            codec,
+            encoder,
+            raw_frame: frame::audio::Audio::new(
+                format::Sample::F32(format::sample::Type::Packed),
+                frame_size,
+                ChannelLayout::STEREO,
+            ),
+            encoded_packet: Packet::empty(),
+            frame_queue: FrameQueue::new(),
+        }
     }
 
-    fn encode(&self, samples: &[u8]) {
-        let mut frame = frame::audio::Audio::new(
-            format::Sample::F32(format::sample::Type::Packed),
-            samples.len() / 2, // Samples per channel
-            ChannelLayout::STEREO,
-        );
+    fn encode(&mut self, samples: &[f32]) {
+        self.frame_queue.push_samples(samples);
+
+        loop {
+            let plane = self.raw_frame.plane_mut::<f32>(0);
+            if !self.frame_queue.pop_frame(plane) {
+                break;
+            }
+
+            self.encoder.send_frame(&self.raw_frame).unwrap();
+
+            while self.encoder.receive_packet(&mut self.encoded_packet).is_ok() {
+                self.encoded_packet.set_stream(0);
+            }
+        }
     }
 }
 
@@ -145,15 +204,17 @@ impl<'a> CaptureStream<'a> {
         {
             let valid_bytes = &slice[offset..offset + size];
 
-            let samples_f32 = unsafe {
+            let samples = unsafe {
                 std::slice::from_raw_parts(
                     valid_bytes.as_ptr() as *const f32,
                     valid_bytes.len() / size_of::<f32>(),
                 )
             };
 
+            user_data.encoder.encode(samples);
+
             if user_data.enable_loopback {
-                user_data.loopback_producer.push_slice(samples_f32);
+                user_data.loopback_producer.push_slice(samples);
             }
         }
     }
@@ -196,6 +257,7 @@ impl<'a> CaptureStream<'a> {
         let stream_data = CaptureStreamData {
             format: Default::default(),
             loopback_producer,
+            encoder: AudioEncoder::new(),
             enable_loopback: true,
         };
 
@@ -252,7 +314,7 @@ impl<'a> PlaybackStream<'a> {
             let output_samples = unsafe {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
-            
+
             let read_count = user_data.loopback_consumer.pop_slice(output_samples);
 
             // Fill remaining buffer with silence (zeros) if we ran out of data
@@ -343,9 +405,6 @@ impl Audio {
 
         let ring = HeapRb::<f32>::new((DEFAULT_RATE * 2) as usize);
         let (loopback_producer, loopback_consumer) = ring.split();
-
-        let encoder = AudioEncoder::new();
-        let decoder = AudioDecoder::new();
 
         let playback = PlaybackStream::new(&core, loopback_consumer)?;
         let capture = CaptureStream::new(&core, loopback_producer)?;
