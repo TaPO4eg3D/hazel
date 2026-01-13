@@ -5,6 +5,7 @@ use libspa::param::{
     format::{MediaSubtype, MediaType},
     format_utils,
 };
+use nnnoiseless::dasp::sample::ToSample;
 use pipewire::{
     self as pw,
     properties::properties,
@@ -15,7 +16,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg::codec::encoder;
 use ffmpeg::{ChannelLayout, format};
-use ffmpeg_next::{self as ffmpeg, codec};
+use ffmpeg_next::{self as ffmpeg, Frame, codec, frame};
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
@@ -36,38 +37,26 @@ struct CaptureStream<'a> {
     stream_listener: StreamListener<CaptureStreamData>,
 }
 
-fn create_decoder() {
-    let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
-    let context = ffmpeg::codec::context::Context::new_with_codec(codec);
-
-    let codec = codec.audio().unwrap();
-
-    let mut decoder = context.decoder().audio().unwrap();
-    decoder.set_channel_layout(ChannelLayout::STEREO);
-}
 
 struct AudioDecoder {
-    // codec: codec::audio::Audio,
-    // decoder: codec::decoder::Opened,
+    codec: codec::audio::Audio,
+    decoder: codec::decoder::Audio,
 }
 
 impl AudioDecoder {
     pub fn new() -> Self {
-        let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
+        let codec = codec::decoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
         let context = ffmpeg::codec::context::Context::new_with_codec(codec);
 
         let codec = codec.audio().unwrap();
 
-        let decoder = context.decoder().audio().unwrap();
-        // decoder.set_channel_layout(ChannelLayout::STEREO);
-
-        let decoder = {
-            decoder.open_as(codec).unwrap()
-        };
+        let mut decoder = context.decoder()
+            .audio().unwrap();
+        decoder.set_channel_layout(ChannelLayout::STEREO);
 
         Self {
-            // codec,
-            // decoder,
+            codec,
+            decoder,
         }
     }
 }
@@ -78,21 +67,13 @@ struct AudioEncoder {
 }
 
 impl AudioEncoder {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
         let context = ffmpeg::codec::context::Context::new_with_codec(codec);
 
         let codec = codec.audio().unwrap();
 
         let mut encoder = context.encoder().audio().unwrap();
-
-        for format in codec.formats().unwrap() {
-            println!("Found format: {format:?}");
-        }
-
-        for rate in codec.rates().unwrap() {
-            println!("Found rates: {rate:?}");
-        }
 
         encoder.set_rate(DEFAULT_RATE as i32);
         encoder.set_channel_layout(ChannelLayout::STEREO);
@@ -101,6 +82,14 @@ impl AudioEncoder {
         let encoder = encoder.open_as(codec).unwrap();
 
         Self { codec, encoder }
+    }
+
+    fn encode(&self, samples: &[u8]) {
+        let mut frame = frame::audio::Audio::new(
+            format::Sample::F32(format::sample::Type::Packed),
+            samples.len() / 2, // Samples per channel
+            ChannelLayout::STEREO,
+        );
     }
 }
 
@@ -207,7 +196,7 @@ impl<'a> CaptureStream<'a> {
         let stream_data = CaptureStreamData {
             format: Default::default(),
             loopback_producer,
-            enable_loopback: false,
+            enable_loopback: true,
         };
 
         let listener = capture_stream
@@ -263,7 +252,7 @@ impl<'a> PlaybackStream<'a> {
             let output_samples = unsafe {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
-
+            
             let read_count = user_data.loopback_consumer.pop_slice(output_samples);
 
             // Fill remaining buffer with silence (zeros) if we ran out of data
@@ -356,6 +345,7 @@ impl Audio {
         let (loopback_producer, loopback_consumer) = ring.split();
 
         let encoder = AudioEncoder::new();
+        let decoder = AudioDecoder::new();
 
         let playback = PlaybackStream::new(&core, loopback_consumer)?;
         let capture = CaptureStream::new(&core, loopback_producer)?;
