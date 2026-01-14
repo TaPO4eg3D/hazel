@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    io::{BufWriter, Write},
+};
 
 use anyhow::Result as AResult;
 use libspa::param::{
@@ -14,11 +17,11 @@ use pipewire::{
     spa::{self, pod::Pod},
     stream::{Stream, StreamBox, StreamListener},
 };
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
+use ringbuf::{HeapCons, HeapProd, HeapRb, LocalRb, storage::Heap, traits::*};
 
 use ffmpeg::codec::encoder;
 use ffmpeg::{ChannelLayout, format};
-use ffmpeg_next::{self as ffmpeg, Frame, Packet, codec, frame};
+use ffmpeg_next::{self as ffmpeg, Frame, Packet, codec, format::sample::Buffer, frame};
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
@@ -58,40 +61,59 @@ impl AudioDecoder {
 
         Self { codec, decoder }
     }
+
+    fn decode(&mut self) {
+        let packet = Packet::empty();
+    }
 }
 
-pub struct FrameQueue {
-    buf: VecDeque<f32>,
+trait VecDequeExt<T> {
+    /// Fill the passed buffer with content from the Deque.
+    /// If `partial` is set to:
+    ///     - true: the function tries to fill as much as possible
+    ///     - false: the function returns immediately if the Deque has not enough data
+    ///
+    /// Return: how much items are copied to the passed buffer
+    fn pop_slice(&mut self, out: &mut [T], partial: bool) -> usize;
 }
 
-impl FrameQueue {
-    pub fn new() -> Self {
+impl<T> VecDequeExt<T> for VecDeque<T> {
+    #[inline(always)]
+    fn pop_slice(&mut self, out: &mut [T], partial: bool) -> usize {
+        if !partial && self.len() < out.len() {
+            return 0;
+        }
+
+        let length = self.len().min(out.len());
+        for idx in 0..length {
+            out[idx] = self.pop_front().unwrap();
+        }
+
+        length
+    }
+}
+
+/// To simulate Packet over the network
+#[derive(Debug)]
+struct PacketPayload {
+    dts: Option<i64>,
+    pts: Option<i64>,
+
+    flags: i32,
+    data: Vec<u8>,
+}
+
+impl From<&Packet> for PacketPayload {
+    fn from(packet: &Packet) -> Self {
         Self {
-            buf: VecDeque::new(),
+            dts: packet.dts(),
+            pts: packet.pts(),
+
+        flags: packet.flags().bits(),
+        data: packet.data()
+            .unwrap_or_default()
+            .to_vec()
         }
-    }
-
-    #[inline]
-    pub fn push_samples(&mut self, input: &[f32]) {
-        self.buf.extend(input);
-    }
-
-    #[inline]
-    pub fn pop_frame(&mut self, out: &mut [f32]) -> bool {
-        if self.buf.len() < out.len() {
-            return false;
-        }
-
-        for v in out.iter_mut() {
-            *v = self.buf.pop_front().unwrap();
-        }
-
-        true
-    }
-
-    #[inline]
-    pub fn available(&self) -> usize {
-        self.buf.len()
     }
 }
 
@@ -102,11 +124,14 @@ struct AudioEncoder {
     raw_frame: frame::audio::Audio,
     encoded_packet: Packet,
 
-    frame_queue: FrameQueue,
+    frame_queue: VecDeque<f32>,
+
+    encoded_producer: HeapProd<PacketPayload>,
+    fill_encoded_buffer: bool,
 }
 
 impl AudioEncoder {
-    fn new() -> Self {
+    fn new(encoded_producer: HeapProd<PacketPayload>) -> Self {
         let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
         let context = ffmpeg::codec::context::Context::new_with_codec(codec);
 
@@ -129,24 +154,36 @@ impl AudioEncoder {
                 frame_size,
                 ChannelLayout::STEREO,
             ),
+            encoded_producer,
+            fill_encoded_buffer: true,
             encoded_packet: Packet::empty(),
-            frame_queue: FrameQueue::new(),
+            frame_queue: VecDeque::new(),
         }
     }
 
     fn encode(&mut self, samples: &[f32]) {
-        self.frame_queue.push_samples(samples);
+        self.frame_queue.extend(samples);
 
         loop {
             let plane = self.raw_frame.plane_mut::<f32>(0);
-            if !self.frame_queue.pop_frame(plane) {
+            if self.frame_queue.pop_slice(plane, false) == 0 {
                 break;
             }
 
             self.encoder.send_frame(&self.raw_frame).unwrap();
 
-            while self.encoder.receive_packet(&mut self.encoded_packet).is_ok() {
+            while self
+                .encoder
+                .receive_packet(&mut self.encoded_packet)
+                .is_ok()
+            {
                 self.encoded_packet.set_stream(0);
+
+                if self.fill_encoded_buffer {
+                    self.encoded_producer.try_push(
+                        (&self.encoded_packet).into()
+                    ).unwrap()
+                }
             }
         }
     }
@@ -219,7 +256,11 @@ impl<'a> CaptureStream<'a> {
         }
     }
 
-    fn new(core: &'a pw::core::CoreRc, loopback_producer: HeapProd<f32>) -> AResult<Self> {
+    fn new(
+        core: &'a pw::core::CoreRc,
+        loopback_producer: HeapProd<f32>,
+        encoded_producer: HeapProd<f32>,
+    ) -> AResult<Self> {
         let capture_stream = pw::stream::StreamBox::new(
             core,
             Self::STREAM_NAME,
@@ -257,7 +298,7 @@ impl<'a> CaptureStream<'a> {
         let stream_data = CaptureStreamData {
             format: Default::default(),
             loopback_producer,
-            encoder: AudioEncoder::new(),
+            encoder: AudioEncoder::new(encoded_producer),
             enable_loopback: true,
         };
 
@@ -292,6 +333,9 @@ struct PlaybackStreamData {
 struct PlaybackStream<'a> {
     stream: StreamBox<'a>,
     stream_listener: StreamListener<PlaybackStreamData>,
+
+    encoded_consumer: HeapCons<f32>,
+    decoder: AudioDecoder,
 }
 
 impl<'a> PlaybackStream<'a> {
@@ -332,7 +376,11 @@ impl<'a> PlaybackStream<'a> {
         }
     }
 
-    fn new(core: &'a pw::core::CoreRc, loopback_consumer: HeapCons<f32>) -> AResult<Self> {
+    fn new(
+        core: &'a pw::core::CoreRc,
+        loopback_consumer: HeapCons<f32>,
+        encoded_consumer: HeapCons<f32>,
+    ) -> AResult<Self> {
         let playback_stream = pw::stream::StreamBox::new(
             core,
             Self::STREAM_NAME,
@@ -388,6 +436,9 @@ impl<'a> PlaybackStream<'a> {
         Ok(PlaybackStream {
             stream: playback_stream,
             stream_listener: listener,
+
+            encoded_consumer,
+            decoder: AudioDecoder::new(),
         })
     }
 }
@@ -406,8 +457,19 @@ impl Audio {
         let ring = HeapRb::<f32>::new((DEFAULT_RATE * 2) as usize);
         let (loopback_producer, loopback_consumer) = ring.split();
 
-        let playback = PlaybackStream::new(&core, loopback_consumer)?;
-        let capture = CaptureStream::new(&core, loopback_producer)?;
+        let ring = HeapRb::<f32>::new((DEFAULT_RATE * 2) as usize);
+        let (encoded_producer, encoded_consumer) = ring.split();
+
+        let playback = PlaybackStream::new(
+            &core,
+            loopback_consumer,
+            encoded_consumer,
+        )?;
+        let capture = CaptureStream::new(
+            &core,
+            loopback_producer,
+            encoded_producer,
+        )?;
 
         mainloop.run();
 
