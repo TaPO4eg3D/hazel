@@ -90,6 +90,8 @@ impl AudioDecoder {
                 },
                 (false, 2) => {
                     // Already Packed stereo
+                    // TODO: Fix, it won't work because of the bug in `ffpeg-next`,
+                    // it does not account for channels when stereo is packed
                     let data = self.decoded_frame.plane::<f32>(0);
 
                     self.decoded_frames_queue.extend(data)
@@ -186,6 +188,8 @@ struct AudioEncoder {
 
     encoded_producer: HeapProd<PacketPayload>,
     fill_encoded_buffer: bool,
+
+    pts_counter: i64,
 }
 
 impl AudioEncoder {
@@ -201,7 +205,13 @@ impl AudioEncoder {
         encoder.set_channel_layout(ChannelLayout::STEREO);
         encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
 
+        encoder.set_bit_rate(128000);
+        encoder.set_time_base((1, DEFAULT_RATE as i32));
+
         let encoder = encoder.open_as(codec).unwrap();
+
+        // Just a note for myself, in case I forget that shit again:
+        // `frame_size` (means number of samples **PER** channel)
         let frame_size = encoder.frame_size() as usize;
 
         Self {
@@ -214,6 +224,7 @@ impl AudioEncoder {
             ),
             encoded_producer,
             fill_encoded_buffer: true,
+            pts_counter: 0,
             encoded_packet: Packet::empty(),
             frame_queue: VecDeque::new(),
         }
@@ -223,20 +234,34 @@ impl AudioEncoder {
         self.frame_queue.extend(samples);
 
         loop {
-            let plane = self.raw_frame.plane_mut::<f32>(0);
+            // Because of a bug in `ffpeg-next`, it does not account
+            // for channels when we have packed audio
+            let plane = unsafe {
+                std::slice::from_raw_parts_mut(
+                    (*self.raw_frame.as_mut_ptr())
+                        .data[0] as *mut f32,
+                    self.raw_frame.samples() * self.raw_frame.channels() as usize,
+                )
+            };
+
             if self.frame_queue.pop_slice(plane, false) == 0 {
                 break;
             }
 
+            self.raw_frame.set_pts(Some(self.pts_counter));
             self.encoder.send_frame(&self.raw_frame).unwrap();
+
+            let (new_pts, _) = self.pts_counter.overflowing_add(
+                self.encoder.frame_size() as i64,
+            );
+
+            self.pts_counter = new_pts;
 
             while self
                 .encoder
                 .receive_packet(&mut self.encoded_packet)
                 .is_ok()
             {
-                self.encoded_packet.set_stream(0);
-
                 if self.fill_encoded_buffer {
                     if self.encoded_packet.data().unwrap_or_default().is_empty() {
                         continue;
@@ -337,6 +362,8 @@ impl<'a> CaptureStream<'a> {
         audio_info.set_rate(DEFAULT_RATE);
         audio_info.set_channels(DEFAULT_CHANNELS);
 
+        // TODO: There's no point in capturing STEREO channel
+        // from the microphone, we're just wasting bandwidth
         let mut position = [0; spa::param::audio::MAX_CHANNELS];
         position[0] = libspa::sys::SPA_AUDIO_CHANNEL_FL;
         position[1] = libspa::sys::SPA_AUDIO_CHANNEL_FR;
@@ -430,12 +457,9 @@ impl<'a> PlaybackStream<'a> {
                 .decoded_frames_queue
                 .pop_slice(output_samples, true);
 
-            // Fill remaining buffer with silence (zeros) if we ran out of data
-            if read_count < output_samples.len() {
-                (read_count..output_samples.len()).for_each(|i| {
-                    output_samples[i] = 0.0;
-                });
-            }
+            // If chunk is not fully filled, fill it with silence
+            (read_count..output_samples.len())
+                .for_each(|i| output_samples[i] = 0.);
 
             let chunk = data.chunk_mut();
 
