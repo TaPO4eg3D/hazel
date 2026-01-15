@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    io::{BufWriter, Write},
-};
+use std::collections::VecDeque;
 
 use anyhow::Result as AResult;
 use libspa::param::{
@@ -10,18 +7,17 @@ use libspa::param::{
     format::{MediaSubtype, MediaType},
     format_utils,
 };
-use nnnoiseless::dasp::sample::ToSample;
 use pipewire::{
     self as pw,
     properties::properties,
     spa::{self, pod::Pod},
     stream::{Stream, StreamBox, StreamListener},
 };
-use ringbuf::{HeapCons, HeapProd, HeapRb, LocalRb, storage::Heap, traits::*};
+use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg::codec::encoder;
 use ffmpeg::{ChannelLayout, format};
-use ffmpeg_next::{self as ffmpeg, Frame, Packet, codec, format::sample::Buffer, frame};
+use ffmpeg_next::{self as ffmpeg, Packet, codec, frame};
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
@@ -62,7 +58,7 @@ impl AudioDecoder {
         let mut decoder = context.decoder().audio().unwrap();
         decoder.set_channel_layout(ChannelLayout::STEREO);
 
-        Self { 
+        Self {
             codec,
             decoder,
 
@@ -76,8 +72,39 @@ impl AudioDecoder {
             .unwrap();
 
         while self.decoder.receive_frame(&mut self.decoded_frame).is_ok() {
-            let plane = self.decoded_frame.plane::<f32>(0);
-            self.decoded_frames_queue.extend(plane);
+            let channels = self.decoded_frame.channels();
+            let format = self.decoded_frame.format();
+
+            let is_planar = format == format::Sample::F32(format::sample::Type::Planar);
+
+            match (is_planar, channels)  {
+                (true, 2) => {
+                    // Convert into F32::Packed
+                    let left = self.decoded_frame.plane::<f32>(0);
+                    let right = self.decoded_frame.plane::<f32>(1);
+
+                    for (l, r) in left.iter().zip(right.iter()) {
+                        self.decoded_frames_queue.push_back(*l);
+                        self.decoded_frames_queue.push_back(*r);
+                    }
+                },
+                (false, 2) => {
+                    // Already Packed stereo
+                    let data = self.decoded_frame.plane::<f32>(0);
+
+                    self.decoded_frames_queue.extend(data)
+                },
+                (_, 1) => {
+                    // Convert mono to stereo by duplicating
+                    let data = self.decoded_frame.plane::<f32>(0);
+
+                    for sample in data {
+                        self.decoded_frames_queue.push_back(*sample);
+                        self.decoded_frames_queue.push_back(*sample);
+                    }
+                },
+                _ => unimplemented!("Unhandled case: {:?}", (is_planar, channels)),
+            }
         }
     }
 }
@@ -248,7 +275,6 @@ impl<'a> CaptureStream<'a> {
         }
 
         let _ = user_data.format.parse(param);
-        println!("Capture format changed: {:?}", user_data.format);
     }
 
     fn on_process(stream: &Stream, user_data: &mut CaptureStreamData) {
@@ -399,8 +425,9 @@ impl<'a> PlaybackStream<'a> {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
 
-            // let read_count = user_data.loopback_consumer.pop_slice(output_samples);
-            let read_count = user_data.decoder.decoded_frames_queue
+            let read_count = user_data
+                .decoder
+                .decoded_frames_queue
                 .pop_slice(output_samples, true);
 
             // Fill remaining buffer with silence (zeros) if we ran out of data
@@ -445,7 +472,7 @@ impl<'a> PlaybackStream<'a> {
         position[1] = libspa::sys::SPA_AUDIO_CHANNEL_FR;
         audio_info.set_position(position);
 
-        let user_data = PlaybackStreamData { 
+        let user_data = PlaybackStreamData {
             loopback_consumer,
             encoded_consumer,
             decoder: AudioDecoder::new(),
