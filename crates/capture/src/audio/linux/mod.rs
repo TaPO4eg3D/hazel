@@ -202,16 +202,17 @@ impl AudioEncoder {
         let mut encoder = context.encoder().audio().unwrap();
 
         encoder.set_rate(DEFAULT_RATE as i32);
-        encoder.set_channel_layout(ChannelLayout::STEREO);
+        encoder.set_channel_layout(ChannelLayout::MONO);
         encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
 
+        // As recommended per: https://wiki.xiph.org/Opus_Recommended_Settings
         encoder.set_bit_rate(128000);
         encoder.set_time_base((1, DEFAULT_RATE as i32));
 
         let encoder = encoder.open_as(codec).unwrap();
 
         // Just a note for myself, in case I forget that shit again:
-        // `frame_size` (means number of samples **PER** channel)
+        // `frame_size` means number of samples **PER** channel
         let frame_size = encoder.frame_size() as usize;
 
         Self {
@@ -220,7 +221,7 @@ impl AudioEncoder {
             raw_frame: frame::audio::Audio::new(
                 format::Sample::F32(format::sample::Type::Packed),
                 frame_size,
-                ChannelLayout::STEREO,
+                ChannelLayout::MONO,
             ),
             encoded_producer,
             fill_encoded_buffer: true,
@@ -263,7 +264,9 @@ impl AudioEncoder {
                 .is_ok()
             {
                 if self.fill_encoded_buffer {
-                    if self.encoded_packet.data().unwrap_or_default().is_empty() {
+                    let encoded_data = self.encoded_packet.data().unwrap_or_default();
+
+                    if encoded_data.is_empty() {
                         continue;
                     }
 
@@ -360,13 +363,12 @@ impl<'a> CaptureStream<'a> {
         let mut audio_info = spa::param::audio::AudioInfoRaw::new();
         audio_info.set_format(AudioFormat::F32LE);
         audio_info.set_rate(DEFAULT_RATE);
-        audio_info.set_channels(DEFAULT_CHANNELS);
 
-        // TODO: There's no point in capturing STEREO channel
-        // from the microphone, we're just wasting bandwidth
+        // Microphone capture is most likely already in MONO,
+        // but we enforce it just to be sure
+        audio_info.set_channels(1);
         let mut position = [0; spa::param::audio::MAX_CHANNELS];
-        position[0] = libspa::sys::SPA_AUDIO_CHANNEL_FL;
-        position[1] = libspa::sys::SPA_AUDIO_CHANNEL_FR;
+        position[0] = libspa::sys::SPA_AUDIO_CHANNEL_MONO;
         audio_info.set_position(position);
 
         let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
