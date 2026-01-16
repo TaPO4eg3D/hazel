@@ -1,50 +1,98 @@
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-struct OpusPacket {
+#[derive(Debug)]
+pub struct FFMpegPacketPayload {
+    pub pts: i64,
+    pub flags: i32,
 
+    pub data: Vec<u8>,
+}
+
+impl FFMpegPacketPayload {
+    fn to_bytes(&self, buf: &mut BytesMut) {
+        buf.put_i64_le(self.pts);
+        buf.put_i32_le(self.flags);
+
+        buf.put(&self.data[..]);
+    }
+
+    fn parse(mut bytes: Bytes) -> Self {
+        let pts = bytes.get_i64_le();
+        let flags = bytes.get_i32_le();
+
+        let data_len = bytes.remaining();
+        let data = bytes.slice(0..data_len)
+            .to_vec();
+        
+        Self {
+            pts,
+            flags,
+            data,
+        }
+    }
 }
 
 pub enum UDPPacketType {
-    Opus(Bytes),
-    Ack,
+    Voice(FFMpegPacketPayload),
+    Stream(FFMpegPacketPayload),
+    Ping,
+    Pong,
 }
 
 impl UDPPacketType {
     pub fn from_byte(ty: u8, bytes: Bytes) -> Self {
         match ty {
-            0 => UDPPacketType::Opus(bytes),
-            1 => UDPPacketType::Ack,
+            0 => UDPPacketType::Voice(
+                FFMpegPacketPayload::parse(bytes)
+            ),
+            1 => UDPPacketType::Stream(
+                FFMpegPacketPayload::parse(bytes)
+            ),
+            2 => UDPPacketType::Ping,
+            3 => UDPPacketType::Pong,
             _ => todo!(),
         }
     }
 
-    pub fn to_byte(&self) -> u8 {
+    pub fn get_ty_byte(&self) -> u8 {
         match self {
-            UDPPacketType::Opus(_) => 1,
-            UDPPacketType::Ack => 1,
+            UDPPacketType::Voice(_) => 0,
+            UDPPacketType::Stream(_) => 1,
+            UDPPacketType::Ping => 2,
+            UDPPacketType::Pong => 3,
         }
     }
 
 }
 
 pub struct UDPPacket {
-    pub seq: u16,
     pub user_id: u32,
-
     pub payload: UDPPacketType,
 }
 
 impl UDPPacket {
+    pub fn to_bytes(&self, buf: &mut BytesMut) {
+        let ty = self.payload.get_ty_byte();
+        
+        buf.put_u8(ty);
+        buf.put_u32_le(self.user_id);
+
+        match &self.payload {
+            UDPPacketType::Voice(data) => {
+                data.to_bytes(buf);
+            }
+            _ => todo!(),
+        }
+    }
+
     pub fn parse(buf: &mut BytesMut) -> Self {
         let ty = buf.get_u8();
-        let seq = buf.get_u16_le();
         let user_id = buf.get_u32_le();
 
         let payload_len = buf.remaining();
         let payload = buf.copy_to_bytes(payload_len);
 
         Self {
-            seq,
             user_id,
             payload: UDPPacketType::from_byte(ty, payload),
         }
