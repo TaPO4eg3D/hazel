@@ -7,6 +7,7 @@ use libspa::param::{
     format::{MediaSubtype, MediaType},
     format_utils,
 };
+use nnnoiseless::DenoiseState;
 use pipewire::{
     self as pw,
     properties::properties,
@@ -23,16 +24,23 @@ pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
 
 struct CaptureStreamData {
-    format: AudioInfoRaw,
-    enable_loopback: bool,
-
     encoder: AudioEncoder,
+    format: AudioInfoRaw,
 
+    enable_loopback: bool,
     /// Ring Buffer that is used to loopback captured audio.
     /// Mainly used to quickly test how your microphone sounds
     /// TODO: Change RingBuffer type since both Capture and Playback live
     /// in the same thread
     loopback_producer: HeapProd<f32>,
+
+    enable_noise_reduction: bool,
+    denoise_state: Box<DenoiseState<'static>>,
+
+    rnnoise_queue: VecDeque<f32>,
+
+    rnnoise_in_buff: Vec<f32>,
+    rnnoise_out_buff: Vec<f32>,
 }
 
 struct CaptureStream<'a> {
@@ -305,7 +313,7 @@ impl<'a> CaptureStream<'a> {
         let _ = user_data.format.parse(param);
     }
 
-    fn on_process(stream: &Stream, user_data: &mut CaptureStreamData) {
+    fn on_process(stream: &Stream, this: &mut CaptureStreamData) {
         let Some(mut buffer) = stream.dequeue_buffer() else {
             return;
         };
@@ -330,17 +338,41 @@ impl<'a> CaptureStream<'a> {
         {
             let valid_bytes = &slice[offset..offset + size];
 
-            let samples = unsafe {
+            let captured_samples = unsafe {
                 std::slice::from_raw_parts(
                     valid_bytes.as_ptr() as *const f32,
                     valid_bytes.len() / size_of::<f32>(),
                 )
             };
 
-            user_data.encoder.encode(samples);
+            if this.enable_noise_reduction {
+                this.rnnoise_queue.extend(captured_samples);
 
-            if user_data.enable_loopback {
-                user_data.loopback_producer.push_slice(samples);
+                while this.rnnoise_queue.pop_slice(
+                    &mut this.rnnoise_in_buff, false
+                ) > 0 {
+                    // As described in the `process_frame` documentation
+                    for sample in this.rnnoise_in_buff.iter_mut() {
+                        *sample = (32767.5 * (*sample) - 0.5).round();
+                    }
+
+                    this.denoise_state.process_frame(
+                        &mut this.rnnoise_out_buff,
+                        &this.rnnoise_in_buff,
+                    );
+
+                    for sample in this.rnnoise_out_buff.iter_mut() {
+                        *sample = ((*sample) + 0.5) / 32767.5;
+                    }
+
+                    this.encoder.encode(&this.rnnoise_out_buff);
+                };
+            } else {
+                this.encoder.encode(captured_samples);
+            }
+
+            if this.enable_loopback {
+                this.loopback_producer.push_slice(captured_samples);
             }
         }
     }
@@ -387,9 +419,16 @@ impl<'a> CaptureStream<'a> {
 
         let stream_data = CaptureStreamData {
             format: Default::default(),
-            loopback_producer,
             encoder: AudioEncoder::new(encoded_producer),
+
             enable_loopback: false,
+            loopback_producer,
+
+            enable_noise_reduction: true,
+            denoise_state: DenoiseState::new(),
+            rnnoise_queue: VecDeque::new(),
+            rnnoise_in_buff: vec![0.0; DenoiseState::FRAME_SIZE],
+            rnnoise_out_buff: vec![0.0; DenoiseState::FRAME_SIZE],
         };
 
         let listener = capture_stream
