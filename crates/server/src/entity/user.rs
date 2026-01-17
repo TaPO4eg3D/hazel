@@ -1,6 +1,5 @@
-use std::marker::PhantomData;
+use rpc::{models::markers, tag_entity};
 
-use rpc::models::{common::Id, messages::User};
 use sea_orm::entity::prelude::*;
 
 #[sea_orm::model]
@@ -15,13 +14,6 @@ pub struct Model {
     pub banned: bool,
 }
 
-impl From<Model> for Id<User> {
-    fn from(value: Model) -> Self {
-        Id {
-            value: value.id,
-            _marker: PhantomData,
-        }
-    }
-}
+tag_entity!(Model, markers::User);
 
 impl ActiveModelBehavior for ActiveModel {}
