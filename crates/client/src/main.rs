@@ -11,9 +11,11 @@ use rpc::{
 
 pub mod assets;
 pub mod db;
-pub mod gpui_tokio;
 pub mod screens;
 pub mod components;
+
+pub mod gpui_tokio;
+pub mod gpui_audio;
 
 use screens::login::LoginScreen;
 
@@ -114,6 +116,7 @@ fn main() {
         // Check if we're already authorized
         cx.spawn(async move |cx| {
             db::init(cx).await.unwrap();
+            // gpui_audio::init(cx).await.unwrap();
 
             let db = DBConnectionManager::get(cx);
             let registry =
@@ -141,6 +144,9 @@ fn main() {
                 let view = cx.new(|cx| {
                     cx.subscribe(&login_screen, |this: &mut MainWindow, _, _: &(), cx| {
                         this.current_screen = Screen::MainWorkspace;
+                        this.workspace_screen.update(
+                            cx, WorkspaceScreen::fetch_channels
+                        );
                     })
                     .detach();
 
@@ -190,6 +196,9 @@ fn main() {
                                     if result.is_ok() {
                                         view.update(cx, |this, cx| {
                                             this.current_screen = Screen::MainWorkspace;
+                                            this.workspace_screen.update(
+                                                cx, WorkspaceScreen::fetch_channels
+                                            );
                                         });
                                     } else {
                                         login_screen.update(cx, |this, _| {
