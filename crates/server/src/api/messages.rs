@@ -12,8 +12,6 @@ async fn send_message(
         destination,
     }: SendMessagePayload,
 ) -> Result<(), String> {
-    println!("PENIS: {:?}, {:?}", content, destination);
-
     Ok(())
 }
 

@@ -30,7 +30,7 @@ pub enum LoginError {
     ServerError,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionKeyBody {
     pub user_id: i32,
     pub expires_at: i64,
@@ -52,7 +52,7 @@ impl SessionKeyBody {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionKey {
     pub body: SessionKeyBody,
     pub sign: Vec<u8>,

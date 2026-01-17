@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
+use clap::Parser;
 use gpui::*;
 use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
 
 use anyhow::Result as AResult;
 use rpc::{
     client::Connection,
-    models::auth::{LoginError, LoginPayload, SessionKey},
+    models::{auth::{LoginError, LoginPayload, SessionKey}, markers::{Id, UserId}},
 };
 
 pub mod assets;
@@ -33,13 +34,31 @@ pub struct MainWindow {
     workspace_screen: Entity<WorkspaceScreen>,
 }
 
+impl MainWindow {
+    fn set_workspace_screen(&mut self, cx: &mut App) {
+        self.current_screen = Screen::MainWorkspace;
+        self.workspace_screen.update(cx, |this, cx| {
+            this.fetch_channels(cx);
+            // TODO: Race condition?
+            this.watch_for_connections(cx);
+        });
+    }
+}
+
 pub struct ConnectionManger {
     conn: Option<Connection>,
+    user_id: Option<UserId>,
 }
 
 impl ConnectionManger {
     fn new() -> Self {
-        Self { conn: None }
+        Self { conn: None, user_id: None }
+    }
+
+    pub fn set_user_id(cx: &mut AsyncApp, id: UserId) {
+        cx.update_global(|g: &mut Self, _| {
+            g.user_id = Some(id);
+        });
     }
 
     fn is_connected(&self) -> bool {
@@ -103,7 +122,15 @@ pub fn init_theme(cx: &mut App) {
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    profile: Option<String>,
+}
+
 fn main() {
+    let args = Args::parse();
     let app = Application::new().with_assets(Assets);
 
     app.run(move |cx| {
@@ -115,8 +142,10 @@ fn main() {
 
         // Check if we're already authorized
         cx.spawn(async move |cx| {
-            db::init(cx).await.unwrap();
-            // gpui_audio::init(cx).await.unwrap();
+            let profile = args.profile.unwrap_or("default".into());
+
+            db::init(cx, profile).await.unwrap();
+            gpui_audio::init(cx).await.unwrap();
 
             let db = DBConnectionManager::get(cx);
             let registry =
@@ -143,10 +172,7 @@ fn main() {
 
                 let view = cx.new(|cx| {
                     cx.subscribe(&login_screen, |this: &mut MainWindow, _, _: &(), cx| {
-                        this.current_screen = Screen::MainWorkspace;
-                        this.workspace_screen.update(
-                            cx, WorkspaceScreen::fetch_channels
-                        );
+                        this.set_workspace_screen(cx);
                     })
                     .detach();
 
@@ -183,22 +209,21 @@ fn main() {
                                 
                                 return;
                             }
-                    
+
                             let connection = ConnectionManger::get(cx);
 
                             match rmp_serde::from_slice::<SessionKey>(&session_key) {
                                 Ok(session_key) => {
                                     let result: Result<(), LoginError> = connection
-                                        .execute("Login", &LoginPayload { session_key })
+                                        .execute("Login", &LoginPayload { session_key: session_key.clone() })
                                         .await
                                         .expect("invalid params");
 
+                                    ConnectionManger::set_user_id(cx, Id::new(session_key.body.user_id));
+
                                     if result.is_ok() {
                                         view.update(cx, |this, cx| {
-                                            this.current_screen = Screen::MainWorkspace;
-                                            this.workspace_screen.update(
-                                                cx, WorkspaceScreen::fetch_channels
-                                            );
+                                            this.set_workspace_screen(cx);
                                         });
                                     } else {
                                         login_screen.update(cx, |this, _| {

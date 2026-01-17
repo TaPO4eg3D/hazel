@@ -7,7 +7,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
-use rpc::models::auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError, LoginPayload};
+use rpc::models::{auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError, LoginPayload}, markers::Id};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 use crate::{
@@ -174,13 +174,18 @@ impl LoginScreen {
                         .execute(
                             "Login",
                             &LoginPayload {
-                                session_key,
+                                session_key: session_key.clone(),
                             },
                         )
                         .await
                         .expect("invalid params");
 
                     data.expect("We just logged in, it should not fail");
+
+                    ConnectionManger::set_user_id(
+                        cx,
+                        Id::new(session_key.body.user_id),
+                    );
 
                     // Notify parent component that we're logged in
                     this.update(cx, |_, cx| {

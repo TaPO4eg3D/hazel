@@ -6,7 +6,11 @@ use gpui_component::{
 };
 use rpc::{
     common::Empty,
-    models::{common::APIResult},
+    models::{
+        common::APIResult,
+        markers::VoiceChannelId,
+        voice::{JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate},
+    },
 };
 
 use crate::{
@@ -53,7 +57,71 @@ impl WorkspaceScreen {
         }
     }
 
-    pub fn fetch_channels(&mut self, cx: &mut Context<WorkspaceScreen>) {
+    pub fn on_voice_channel_select(
+        &mut self,
+        id: &VoiceChannelId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // self.voice_channels.iter_mut()
+        //     .for_each(|v| {
+        //         if v.id == *id {
+        //             return;
+        //         }
+        //
+        //         v.is_active = false
+        //     });
+
+        let Some(channel) = self
+            .voice_channels
+            .iter_mut()
+            .find(|channel| channel.id == *id)
+        else {
+            println!("Unexpected voice channel id: {}", id.value);
+            return;
+        };
+
+        if channel.is_active {
+            return;
+        }
+
+        channel.is_active = true;
+        cx.notify();
+
+        let id = *id;
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let data: APIResult<(), JoinVoiceChannelError> = connection
+                .execute(
+                    "JoinVoiceChannel",
+                    &JoinVoiceChannelPayload { channel_id: id },
+                )
+                .await
+                .expect("invalid params");
+
+            println!("{data:?}");
+
+            this.update(cx, |this, cx| {
+                this.fetch_channels(cx);
+            }).ok();
+        })
+        .detach();
+    }
+
+    pub fn watch_for_connections(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
+            while let Some(message) = subscription.recv().await {
+                println!("{message:?}");
+            }
+        })
+        .detach();
+    }
+
+    pub fn fetch_channels(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
@@ -62,33 +130,37 @@ impl WorkspaceScreen {
                 .await
                 .expect("invalid params");
 
+            println!("{data:?}");
+
             let Ok(data) = data else {
                 // TODO: Send notification
                 return;
             };
 
             this.update(cx, move |this, cx| {
-                this.voice_channels = data.into_iter().map(|channel| {
-                    VoiceChannel {
+                this.voice_channels = data
+                    .into_iter()
+                    .map(|channel| VoiceChannel {
                         id: channel.id,
                         name: channel.name.into(),
                         is_active: false,
-                        members: channel.members
+                        members: channel
+                            .members
                             .into_iter()
-                            .map(|member| {
-                                VoiceChannelMember {
-                                    id: member.id,
-                                    name: member.name.into(),
-                                    is_muted: false,
-                                    is_talking: false,
-                                    is_streaming: false,
-                                }
-                            }).collect(),
-                    }
-                }).collect();
+                            .map(|member| VoiceChannelMember {
+                                id: member.id,
+                                name: member.name.into(),
+                                is_muted: false,
+                                is_talking: false,
+                                is_streaming: false,
+                            })
+                            .collect(),
+                    })
+                    .collect();
 
                 cx.notify();
-            }).ok();
+            })
+            .ok();
         })
         .detach();
     }
@@ -159,9 +231,12 @@ impl Render for WorkspaceScreen {
                                                 cx.notify();
                                             },
                                         ))
-                                        .content(VoiceChannelsComponent::new(
-                                            self.voice_channels.clone(),
-                                        ))
+                                        .content(
+                                            VoiceChannelsComponent::new(
+                                                self.voice_channels.clone(),
+                                            )
+                                            .on_select(cx.listener(Self::on_voice_channel_select)),
+                                        )
                                         .pt_6()
                                         .mb_2(),
                                 ),

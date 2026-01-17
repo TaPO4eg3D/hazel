@@ -25,4 +25,4 @@ unicode-segmentation = "1.12.0"
 
 smol = "2.0.2"
 tracing = "0.1.43"
-clap = "4.5.54"
+clap = { version = "4.5.54", features = ["derive"] }
