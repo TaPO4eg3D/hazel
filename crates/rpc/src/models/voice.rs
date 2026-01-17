@@ -24,6 +24,18 @@ pub struct VoiceChannelUpdate {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct JoinVoiceChannelPayload {
+    pub channel_id: VoiceChannelId,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum JoinVoiceChannelError {
+    DoesNotExist,
+    ChannelIsFull,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
 pub enum VoiceChannelUpdateMessage {
     UserConnected(UserId),
     UserDisconnected(UserId),
