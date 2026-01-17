@@ -3,15 +3,19 @@ use std::sync::{Arc, RwLock};
 use dashmap::DashMap;
 
 use rpc::{
-    models::messages::{TextChannelId, UserId, VoiceChannelId},
-    server::{serve, RpcRouter, RpcWriter},
+    models::markers::{TextChannelId, UserId, VoiceChannelId},
+    server::{RpcRouter, RpcWriter, serve},
 };
 
 use sea_orm::{Database, DatabaseConnection};
 
 use entity::user::Model as User;
 
-use crate::{api::{auth, messages}, config::Config, streaming::open_udp_socket};
+use crate::{
+    api::{auth, messages, voice},
+    config::Config,
+    streaming::open_udp_socket,
+};
 
 mod api;
 mod config;
@@ -44,6 +48,12 @@ pub struct ConnectionStateInner {
     writer: RpcWriter,
 }
 
+impl ConnectionStateInner {
+    pub fn is_authenticated(&self) -> bool {
+        self.user.is_some()
+    }
+}
+
 pub type ConnectionState = Arc<RwLock<ConnectionStateInner>>;
 
 async fn init_state() -> AppState {
@@ -61,34 +71,28 @@ async fn init_state() -> AppState {
     }
 }
 
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let config = std::fs::read_to_string("./config.toml")
-        .expect("Config is not provided");
+    let config = std::fs::read_to_string("./config.toml").expect("Config is not provided");
 
-    let config = toml::from_str::<Config>(&config)
-        .expect("Invalid config");
+    let config = toml::from_str::<Config>(&config).expect("Invalid config");
 
     let state = init_state().await;
 
     let router = RpcRouter::new(state, |writer| {
-        Arc::new(RwLock::new(ConnectionStateInner {
-            user: None,
-            writer,
-        }))
+        Arc::new(RwLock::new(ConnectionStateInner { user: None, writer }))
     });
 
     let router = messages::merge(router);
     let router = auth::merge(router);
+    let router = voice::merge(router);
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {
         serve(&tcp_addr, router).await;
     });
 
-    open_udp_socket(&config.udp_addr).await
-        .unwrap();
+    open_udp_socket(&config.udp_addr).await.unwrap();
 }
