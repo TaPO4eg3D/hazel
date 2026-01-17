@@ -292,7 +292,7 @@ impl Connection {
         })
     }
 
-    pub async fn subscribe<Out>(&self, key: &str) -> Subscription<Out>
+    pub fn subscribe<Out>(&self, key: &str) -> Subscription<Out>
     where
         Out: DeserializeOwned
     {

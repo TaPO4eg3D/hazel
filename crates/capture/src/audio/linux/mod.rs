@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, sync::{Arc, atomic::AtomicBool}, thread};
+use std::{cell::LazyCell, collections::VecDeque, sync::{Arc, LazyLock, atomic::AtomicBool}, thread};
 
-use anyhow::Result as AResult;
+use anyhow::{Result as AResult, bail};
 use libspa::param::{
     ParamType,
     audio::{AudioFormat, AudioInfoRaw},

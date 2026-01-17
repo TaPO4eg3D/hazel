@@ -111,8 +111,9 @@ async fn main() {
 
             if let Some(user) = conn_state.user.as_ref() {
                 let id = user.tagged_id();
-
                 state.connected_clients.remove(&id);
+
+                log::info!("User ({}) disconnected", id.value);
             }
         })).await;
     });

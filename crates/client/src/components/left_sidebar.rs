@@ -1,9 +1,7 @@
 use std::{fmt::format, sync::Arc};
 
 use gpui::{
-    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    RenderOnce, SharedString, Style, StyleRefinement, Styled, Window, div, percentage,
-    prelude::FluentBuilder, px, red, rgb, white,
+    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder, px, red, rgb, white
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
 use rpc::models::markers::{UserId, VoiceChannelId};
@@ -213,6 +211,9 @@ pub struct VoiceChannel {
 pub struct VoiceChannelsComponent {
     channels: Vec<VoiceChannel>,
     style: StyleRefinement,
+
+    #[allow(clippy::type_complexity)]
+    on_select: Option<Arc<dyn Fn(&VoiceChannelId, &mut Window, &mut App) + Send + Sync>>,
 }
 
 impl Styled for VoiceChannelsComponent {
@@ -226,7 +227,14 @@ impl VoiceChannelsComponent {
         Self {
             channels,
             style: StyleRefinement::default(),
+            on_select: None,
         }
+    }
+
+    pub fn on_select(mut self, f: impl Fn(&VoiceChannelId, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+        self.on_select = Some(Arc::new(f));
+
+        self
     }
 }
 
@@ -307,6 +315,15 @@ impl RenderOnce for VoiceChannelsComponent {
                     .hover(|style| style.border_color(rgb(0x7B5CFF)))
                     .when(channel.is_active, |this| {
                         this.border_color(rgb(0x7B5CFF)).border_2()
+                    })
+                    .when_some(self.on_select.clone(), {
+                        let id = channel.id;
+
+                        move |this, on_select| {
+                            this.on_click(move |_, window, app| {
+                                on_select(&id, window, app);
+                            })
+                        }
                     })
                     .when(!channel.is_active, |this| this.cursor_pointer())
                     .v_flex()

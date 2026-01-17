@@ -85,7 +85,7 @@ impl UDPPacket {
         }
     }
 
-    pub fn parse(buf: &mut BytesMut) -> Self {
+    pub fn parse(buf: &mut Bytes) -> Self {
         let ty = buf.get_u8();
         let user_id = buf.get_i32_le();
 

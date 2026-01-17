@@ -12,8 +12,8 @@ pub struct DBConnectionManager {
 }
 
 impl DBConnectionManager {
-    pub async fn new() -> Self {
-        let db = Database::connect("sqlite://db.sqlite?mode=rwc")
+    pub async fn new(profile: String) -> Self {
+        let db = Database::connect(format!("sqlite://{}.sqlite?mode=rwc", profile))
             .await
             .unwrap();
 
@@ -53,8 +53,8 @@ impl DBConnectionManager {
 
 impl Global for DBConnectionManager {}
 
-pub async fn init(cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let manager = Tokio::spawn(cx, DBConnectionManager::new()).await?;
+pub async fn init(cx: &mut AsyncApp, profile: String) -> anyhow::Result<()> {
+    let manager = Tokio::spawn(cx, DBConnectionManager::new(profile)).await?;
 
     cx.update(|cx| cx.set_global(manager));
 
