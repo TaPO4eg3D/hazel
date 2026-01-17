@@ -1,14 +1,24 @@
-use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled, Window, div, px, rgb, white};
+use gpui::{
+    AppContext, Context, Entity, ParentElement, Render, Styled, Window, div, px, rgb, white,
+};
 use gpui_component::{
     Icon, Sizable, Size, StyledExt, accordion::Accordion, scroll::ScrollableElement, v_flex,
 };
+use rpc::{
+    common::Empty,
+    models::{common::APIResult},
+};
 
 use crate::{
+    ConnectionManger, MainWindow,
     assets::IconName,
-    components::{chat::Chat, left_sidebar::{
-        CollapasableCard, ControlPanel, TextChannel, TextChannelsComponent, VoiceChannel,
-        VoiceChannelMember, VoiceChannelsComponent,
-    }},
+    components::{
+        chat::Chat,
+        left_sidebar::{
+            CollapasableCard, ControlPanel, TextChannel, TextChannelsComponent, VoiceChannel,
+            VoiceChannelMember, VoiceChannelsComponent,
+        },
+    },
 };
 
 pub struct WorkspaceScreen {
@@ -22,17 +32,12 @@ pub struct WorkspaceScreen {
 }
 
 impl WorkspaceScreen {
-    pub fn new(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let chat = cx.new(|cx| {
-            Chat::new(window, cx)
-        });
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let chat = cx.new(|cx| Chat::new(window, cx));
 
         Self {
             chat,
-            text_channels: (0..40)
+            text_channels: (0..2)
                 .map(|i| TextChannel {
                     id: i,
                     name: format!("Text Channel {i}").into(),
@@ -41,53 +46,51 @@ impl WorkspaceScreen {
                     has_unread: i % 3 == 0,
                 })
                 .collect(),
-            voice_channels: vec![
-                VoiceChannel {
-                    id: 1,
-                    is_active: true,
-                    name: "Counter Stike 2".into(),
-                    members: vec![
-                        VoiceChannelMember {
-                            id: 1,
-                            name: "TaPO4eg3D".into(),
-                            is_muted: false,
-                            is_talking: true,
-                            is_streaming: false,
-                        },
-                        VoiceChannelMember {
-                            id: 2,
-                            name: "syliakPro".into(),
-                            is_muted: false,
-                            is_talking: false,
-                            is_streaming: true,
-                        },
-                        VoiceChannelMember {
-                            id: 3,
-                            name: "PARAZAKATAFANNY".into(),
-                            is_muted: true,
-                            is_talking: false,
-                            is_streaming: false,
-                        },
-                        VoiceChannelMember {
-                            id: 4,
-                            name: "daniql1".into(),
-                            is_muted: false,
-                            is_talking: true,
-                            is_streaming: true,
-                        },
-                    ],
-                },
-                VoiceChannel {
-                    id: 2,
-                    name: "Default".into(),
-                    is_active: false,
-                    members: vec![],
-                },
-            ],
+            voice_channels: vec![],
 
             text_channels_collapsed: false,
             voice_channels_collapsed: false,
         }
+    }
+
+    pub fn fetch_channels(&mut self, cx: &mut Context<WorkspaceScreen>) {
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let data: APIResult<Vec<rpc::models::voice::VoiceChannel>, ()> = connection
+                .execute("GetVoiceChannels", &Empty {})
+                .await
+                .expect("invalid params");
+
+            let Ok(data) = data else {
+                // TODO: Send notification
+                return;
+            };
+
+            this.update(cx, move |this, cx| {
+                this.voice_channels = data.into_iter().map(|channel| {
+                    VoiceChannel {
+                        id: channel.id,
+                        name: channel.name.into(),
+                        is_active: false,
+                        members: channel.members
+                            .into_iter()
+                            .map(|member| {
+                                VoiceChannelMember {
+                                    id: member.id,
+                                    name: member.name.into(),
+                                    is_muted: false,
+                                    is_talking: false,
+                                    is_streaming: false,
+                                }
+                            }).collect(),
+                    }
+                }).collect();
+
+                cx.notify();
+            }).ok();
+        })
+        .detach();
     }
 }
 
@@ -127,45 +130,42 @@ impl Render for WorkspaceScreen {
                     )
                     // Main area
                     .child(
-                        div()
-                            .size_full()
-                            .overflow_hidden()
-                            .child(
-                                v_flex()
-                                    .px_6()
-                                    .overflow_y_scrollbar()
-                                    .child(
-                                        CollapasableCard::new("text-channels-card")
-                                            .title("TEXT CHANNELS")
-                                            .collapsed(self.text_channels_collapsed)
-                                            .on_toggle_click(cx.listener(
-                                                |this, is_collapsed: &bool, _, cx| {
-                                                    this.text_channels_collapsed = *is_collapsed;
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .content(TextChannelsComponent::new(
-                                                self.text_channels.clone(),
-                                            ))
-                                            .pt_6(),
-                                    )
-                                    .child(
-                                        CollapasableCard::new("voice-channels-card")
-                                            .title("VOICE CHANNELS")
-                                            .collapsed(self.voice_channels_collapsed)
-                                            .on_toggle_click(cx.listener(
-                                                |this, is_collapsed: &bool, _, cx| {
-                                                    this.voice_channels_collapsed = *is_collapsed;
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .content(VoiceChannelsComponent::new(
-                                                self.voice_channels.clone(),
-                                            ))
-                                            .pt_6()
-                                            .mb_2()
-                                    ),
-                            ),
+                        div().size_full().overflow_hidden().child(
+                            v_flex()
+                                .px_6()
+                                .overflow_y_scrollbar()
+                                .child(
+                                    CollapasableCard::new("text-channels-card")
+                                        .title("TEXT CHANNELS")
+                                        .collapsed(self.text_channels_collapsed)
+                                        .on_toggle_click(cx.listener(
+                                            |this, is_collapsed: &bool, _, cx| {
+                                                this.text_channels_collapsed = *is_collapsed;
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .content(TextChannelsComponent::new(
+                                            self.text_channels.clone(),
+                                        ))
+                                        .pt_6(),
+                                )
+                                .child(
+                                    CollapasableCard::new("voice-channels-card")
+                                        .title("VOICE CHANNELS")
+                                        .collapsed(self.voice_channels_collapsed)
+                                        .on_toggle_click(cx.listener(
+                                            |this, is_collapsed: &bool, _, cx| {
+                                                this.voice_channels_collapsed = *is_collapsed;
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .content(VoiceChannelsComponent::new(
+                                            self.voice_channels.clone(),
+                                        ))
+                                        .pt_6()
+                                        .mb_2(),
+                                ),
+                        ),
                     )
                     .child(ControlPanel::new()),
             )

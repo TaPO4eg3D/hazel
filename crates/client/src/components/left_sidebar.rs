@@ -6,6 +6,7 @@ use gpui::{
     prelude::FluentBuilder, px, red, rgb, white,
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
+use rpc::models::markers::{UserId, VoiceChannelId};
 
 use crate::assets::IconName;
 
@@ -191,7 +192,7 @@ impl RenderOnce for TextChannelsComponent {
 
 #[derive(Clone)]
 pub struct VoiceChannelMember {
-    pub id: u64,
+    pub id: UserId,
     pub name: SharedString,
 
     pub is_muted: bool,
@@ -201,7 +202,7 @@ pub struct VoiceChannelMember {
 
 #[derive(Clone)]
 pub struct VoiceChannel {
-    pub id: u64,
+    pub id: VoiceChannelId,
     pub name: SharedString,
 
     pub is_active: bool,
@@ -269,7 +270,7 @@ impl RenderOnce for VoiceChannelsComponent {
         let channels = self.channels.iter().map(|channel| {
             let members = channel.members.iter().map(|member| {
                 div()
-                    .id(ElementId::Integer(member.id))
+                    .id(ElementId::Integer(member.id.value as u64))
                     .flex()
                     .items_center()
                     .child(div().child(Icon::new(IconName::User)))
@@ -296,7 +297,7 @@ impl RenderOnce for VoiceChannelsComponent {
 
             div().child(
                 div()
-                    .id(ElementId::Integer(channel.id))
+                    .id(ElementId::Integer(channel.id.value as u64))
                     .p_3()
                     .bg(rgb(0x0F111A))
                     .text_size(px(16.))

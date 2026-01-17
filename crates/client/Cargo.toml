@@ -10,6 +10,8 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 rmp-serde = { workspace = true }
 sea-orm = { workspace = true }
+capture = { workspace = true }
+streaming_common = { workspace = true }
 
 # UI
 # TODO: Keep it from these forks until this issue is resolved:
