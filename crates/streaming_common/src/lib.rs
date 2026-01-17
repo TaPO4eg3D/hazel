@@ -66,7 +66,7 @@ impl UDPPacketType {
 }
 
 pub struct UDPPacket {
-    pub user_id: u32,
+    pub user_id: i32,
     pub payload: UDPPacketType,
 }
 
@@ -75,7 +75,7 @@ impl UDPPacket {
         let ty = self.payload.get_ty_byte();
         
         buf.put_u8(ty);
-        buf.put_u32_le(self.user_id);
+        buf.put_i32_le(self.user_id);
 
         match &self.payload {
             UDPPacketType::Voice(data) => {
@@ -87,7 +87,7 @@ impl UDPPacket {
 
     pub fn parse(buf: &mut BytesMut) -> Self {
         let ty = buf.get_u8();
-        let user_id = buf.get_u32_le();
+        let user_id = buf.get_i32_le();
 
         let payload_len = buf.remaining();
         let payload = buf.copy_to_bytes(payload_len);
