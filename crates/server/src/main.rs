@@ -1,9 +1,9 @@
-use std::sync::{Arc, RwLock};
+use std::{net::SocketAddr, sync::{Arc, RwLock}};
 
 use dashmap::DashMap;
 
 use rpc::{
-    models::markers::{TextChannelId, UserId, VoiceChannelId},
+    models::markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
     server::{RpcRouter, RpcWriter, serve},
 };
 
@@ -23,18 +23,26 @@ mod entity;
 mod streaming;
 
 /// This state holds connected users to respective channels
-struct ChannelsState {
-    text_channels: DashMap<TextChannelId, Vec<UserId>>,
-    voice_channels: DashMap<VoiceChannelId, Vec<UserId>>,
+pub struct ChannelsState {
+    pub text_channels: DashMap<TextChannelId, Vec<UserId>>,
+    pub voice_channels: DashMap<VoiceChannelId, Vec<UserId>>,
+}
+
+#[derive(Clone)]
+pub struct UDPStreamState {
+    pub voice_channel: VoiceChannelId,
+    pub addr: SocketAddr,
 }
 
 #[derive(Clone)]
 pub struct AppState {
-    db: DatabaseConnection,
-    /// This HashMap holds every connected client
-    /// with the respective writer you can use to send messages
-    connected_clients: Arc<DashMap<UserId, RpcWriter>>,
-    channels: Arc<ChannelsState>,
+    pub db: DatabaseConnection,
+
+    pub channels: Arc<ChannelsState>,
+    pub connected_clients: Arc<DashMap<UserId, ConnectionState>>,
+
+    /// TODO: Implement garbage collection on this table
+    pub active_streams: Arc<papaya::HashMap<UserId, UDPStreamState>>
 }
 
 /// State specific for a single connection.
@@ -42,10 +50,11 @@ pub struct AppState {
 /// and anything like this
 #[derive(Debug)]
 pub struct ConnectionStateInner {
-    user: Option<User>,
+    pub user: Option<User>,
+    pub active_voice_channel: Option<VoiceChannelId>,
 
     /// This is mostly used to send notifications to the user
-    writer: RpcWriter,
+    pub writer: RpcWriter,
 }
 
 impl ConnectionStateInner {
@@ -67,6 +76,7 @@ async fn init_state() -> AppState {
             text_channels: DashMap::new(),
             voice_channels: DashMap::new(),
         }),
+        active_streams: Arc::new(papaya::HashMap::new()),
         connected_clients: Arc::new(DashMap::new()),
     }
 }
@@ -76,14 +86,20 @@ async fn main() {
     env_logger::init();
 
     let config = std::fs::read_to_string("./config.toml").expect("Config is not provided");
-
     let config = toml::from_str::<Config>(&config).expect("Invalid config");
 
     let state = init_state().await;
-
-    let router = RpcRouter::new(state, |writer| {
-        Arc::new(RwLock::new(ConnectionStateInner { user: None, writer }))
-    });
+    let router = {
+        let state = state.clone();
+    
+        RpcRouter::new(state, |writer| {
+            Arc::new(RwLock::new(ConnectionStateInner { 
+                user: None,
+                active_voice_channel: None,
+                writer,
+            }))
+        })
+    };
 
     let router = messages::merge(router);
     let router = auth::merge(router);
@@ -91,8 +107,17 @@ async fn main() {
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {
-        serve(&tcp_addr, router).await;
+        serve(&tcp_addr, router, Arc::new(|state, conn_state| {
+            // This function runs *after* the user is disconnected
+            let conn_state = conn_state.read().unwrap();
+
+            if let Some(user) = conn_state.user.as_ref() {
+                let id = user.tagged_id();
+
+                state.connected_clients.remove(&id);
+            }
+        })).await;
     });
 
-    open_udp_socket(&config.udp_addr).await.unwrap();
+    open_udp_socket(state, &config.udp_addr).await.unwrap();
 }

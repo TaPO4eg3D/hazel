@@ -72,11 +72,11 @@ impl RpcWriter {
     }
 }
 
-pub struct RpcRouter<S, C>
+pub struct RpcRouter<AppState, ConnState>
 {
-    state: S,
-    connection_hook: Arc<dyn Fn(RpcWriter) -> C + Send + Sync + 'static>,
-    routing_table: HashMap<String, DynHandler<C>>,
+    state: AppState,
+    on_connect_hook: Arc<dyn Fn(RpcWriter) -> ConnState + Send + Sync + 'static>,
+    routing_table: HashMap<String, DynHandler<ConnState>>,
 }
 
 pub trait Response {
@@ -97,18 +97,18 @@ impl<T: Serialize> Response for T {
     }
 }
 
-impl<S, C> RpcRouter<S, C>
+impl<AppState, ConnState> RpcRouter<AppState, ConnState>
 where
-    S: Clone + Send + Sync + 'static,
-    C: Clone + Send + Sync + 'static,
+    AppState: Clone + Send + Sync + 'static,
+    ConnState: Clone + Send + Sync + 'static,
 {
-    pub fn new<F>(state: S, f: F) -> Self
+    pub fn new<F>(state: AppState, f: F) -> Self
     where
-        F: Fn(RpcWriter) -> C + Send + Sync + 'static
+        F: Fn(RpcWriter) -> ConnState + Send + Sync + 'static
     {
         Self {
             state,
-            connection_hook: Arc::new(f),
+            on_connect_hook: Arc::new(f),
             routing_table: HashMap::new(),
         }
     }
@@ -117,12 +117,12 @@ where
     where
         In: DeserializeOwned + Send + 'static,
         Out: Response + Send,
-        F: Fn(S, C, In) -> Fut + Send + Sync + 'static,
+        F: Fn(AppState, ConnState, In) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Out> + Send + 'static,
     {
         let _key = key.to_string();
 
-        let wrapped: DynHandler<C> = {
+        let wrapped: DynHandler<ConnState> = {
             let state = self.state.clone();
             let handler = Arc::new(handler);
 
@@ -153,9 +153,13 @@ where
     }
 }
 
-async fn process_connection<S, C>(router: Arc<RpcRouter<S, C>>, stream: TcpStream) -> AResult<()>
+async fn process_connection<AppState, ConnState>(
+    router: Arc<RpcRouter<AppState, ConnState>>,
+    stream: TcpStream,
+) -> AResult<ConnState>
 where
-    C: Clone + Send + Sync + 'static
+    AppState: Clone + Send + Sync + 'static,
+    ConnState: Clone + Send + Sync + 'static
 {
     let mut buf = BytesMut::with_capacity(1024);
     let (mut reader, mut writer) = stream.into_split();
@@ -171,14 +175,14 @@ where
     });
 
     let rpc_writer = RpcWriter::new(tx);
-    let conn_state = (router.connection_hook)(rpc_writer.clone());
+    let conn_state = (router.on_connect_hook)(rpc_writer.clone());
 
     loop {
         if buf.is_empty() {
             let bytes_read = reader.read_buf(&mut buf).await?;
 
             if bytes_read == 0 {
-                return Ok(());
+                return Ok(conn_state);
             }
         }
 
@@ -201,10 +205,14 @@ where
     }
 }
 
-pub async fn serve<S, C>(addr: &str, router: RpcRouter<S, C>)
+pub async fn serve<AppState, ConnState>(
+    addr: &str,
+    router: RpcRouter<AppState, ConnState>,
+    on_disconnect: Arc<dyn Fn(AppState, ConnState) + Send + Sync>
+)
 where
-    S: Send + Sync + 'static,
-    C: Clone + Send + Sync + 'static
+    AppState: Clone + Send + Sync + 'static,
+    ConnState: Clone + Send + Sync + 'static
 {
     let listener = TcpListener::bind(addr)
         .await
@@ -218,9 +226,16 @@ where
                 println!("Got a connection: {addr}");
 
                 let router = Arc::clone(&router);
+                let on_disconnect = on_disconnect.clone();
 
                 tokio::spawn(async move {
-                    process_connection(router, stream).await.unwrap();
+                    let state = router.state.clone();
+
+                    let conn_state = process_connection(router, stream)
+                        .await
+                        .unwrap();
+
+                    on_disconnect(state, conn_state);
                 });
             }
             Err(_) => {

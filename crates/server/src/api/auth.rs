@@ -1,9 +1,9 @@
 use rpc::{
     common::Empty,
-    models::auth::{
+    models::{auth::{
         GetCurrentUserError, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
         LoginError, LoginPayload, SessionKey,
-    },
+    }, markers::TaggedEntity},
     server::RpcRouter,
 };
 
@@ -91,18 +91,23 @@ async fn login(
             LoginError::ServerError
         })?
         .ok_or(LoginError::UserNotFound)?;
+    let user_id = user.tagged_id();
 
-    let mut conn_state = conn_state.write().map_err(|err| {
-        log::error!(
-            "Failed to get a connection state: {:?} ({})",
-            session_key,
-            err,
-        );
+    {
+        let mut conn_state = conn_state.write().map_err(|err| {
+            log::error!(
+                "Failed to get a connection state: {:?} ({})",
+                session_key,
+                err,
+            );
 
-        LoginError::ServerError
-    })?;
+            LoginError::ServerError
+        })?;
 
-    conn_state.user = Some(user);
+        conn_state.user = Some(user);
+    }
+
+    state.connected_clients.insert(user_id, conn_state);
 
     Ok(())
 }
