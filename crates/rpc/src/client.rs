@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    marker::PhantomData,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use bytes::BytesMut;
 use dashmap::DashMap;
@@ -22,7 +26,10 @@ use crate::common::{parse_rpc_method, parse_uuid, process_payload};
 use anyhow::Result as AResult;
 
 type UuidMap = Arc<DashMap<Uuid, OneshotSender<Vec<u8>>>>;
-type KeyMap = Arc<DashMap<String, Vec<MPSCSender<Vec<u8>>>>>;
+
+type KeyMapInner = DashMap<String, Vec<(Uuid, MPSCSender<Vec<u8>>)>>;
+
+type KeyMap = Arc<KeyMapInner>;
 
 #[derive(Clone, Debug)]
 pub struct Connection {
@@ -36,6 +43,61 @@ pub struct Connection {
 }
 
 type TCPTraffic = (String, Vec<u8>);
+
+pub struct Subscription<T> {
+    uuid: Uuid,
+    event: String,
+
+    rx: MPSCReceiver<Vec<u8>>,
+
+    key_map: Weak<KeyMapInner>,
+
+    _marker: PhantomData<T>,
+}
+
+impl<T: DeserializeOwned> Subscription<T> {
+    fn new(event: &str, key_map: Weak<KeyMapInner>) -> (MPSCSender<Vec<u8>>, Self) {
+        let (tx, rx) = mpsc::channel(24);
+
+        (
+            tx,
+            Self {
+                uuid: Uuid::new_v4(),
+                event: event.into(),
+                rx,
+                key_map,
+                _marker: PhantomData,
+            },
+        )
+    }
+
+    pub async fn recv(&mut self) -> Option<T> {
+        let data = self.rx.recv().await?;
+
+        match rmp_serde::from_slice::<T>(&data) {
+            Ok(data) => Some(data),
+            Err(err) => {
+                log::error!("Invalid data: {err:?}");
+
+                None
+            }
+        }
+    }
+}
+
+impl<T> Drop for Subscription<T> {
+    fn drop(&mut self) {
+        let Some(key_map) = self.key_map.upgrade() else {
+            return;
+        };
+
+        let Some(mut subscriptions) = key_map.get_mut(&self.event) else {
+            return;
+        };
+
+        subscriptions.retain(|(uuid, _)| *uuid != self.uuid);
+    }
+}
 
 impl Connection {
     const TIMEOUT_SEC: usize = 10;
@@ -78,9 +140,7 @@ impl Connection {
             }
 
             // TODO: Handle errors properly
-            let (method, bytes_read) = parse_rpc_method(&mut buf, _reader)
-                .await
-                .expect("TODO");
+            let (method, bytes_read) = parse_rpc_method(&mut buf, _reader).await.expect("TODO");
             let (uuid, bytes_read) = parse_uuid(&mut buf, _reader, bytes_read + 1)
                 .await
                 .expect("TODO");
@@ -96,7 +156,7 @@ impl Connection {
             }
 
             if let Some(senders) = key_map.get(&method) {
-                for sender in senders.iter() {
+                for (_, sender) in senders.iter() {
                     _ = sender.send(payload_bytes.to_vec()).await;
                 }
             }
@@ -232,6 +292,28 @@ impl Connection {
         })
     }
 
+    pub async fn subscribe<Out>(&self, key: &str) -> Subscription<Out>
+    where
+        Out: DeserializeOwned
+    {
+        let key_map = Arc::downgrade(&self.key_map);
+        let (sender, subscription) = Subscription::new(key, key_map);
+
+        let uuid = subscription.uuid;
+        self.key_map
+            .entry(key.into())
+            .and_modify({
+                let sender = sender.clone();
+
+                move |v| {
+                    v.push((uuid, sender));
+                }
+            })
+            .or_insert_with(move || vec![(uuid, sender)]);
+
+        subscription
+    }
+
     pub async fn execute<In, Out>(&self, key: &str, payload: &In) -> AResult<Out>
     where
         In: Serialize,
@@ -266,8 +348,8 @@ impl Connection {
 
         // Waiting for the response
         // TODO: Add timeout?
-        let data = rx.await
-            .expect("Handler should not be dropped");
+        let data = rx.await.expect("Handler should not be dropped");
+        self.uuid_map.remove(&uuid);
 
         let data = rmp_serde::from_slice::<Out>(&data)?;
 
