@@ -40,9 +40,6 @@ pub struct AppState {
 
     pub channels: Arc<ChannelsState>,
     pub connected_clients: Arc<DashMap<UserId, ConnectionState>>,
-
-    /// TODO: Implement garbage collection on this table
-    pub active_streams: Arc<papaya::HashMap<UserId, UDPStreamState>>
 }
 
 /// State specific for a single connection.
@@ -52,6 +49,7 @@ pub struct AppState {
 pub struct ConnectionStateInner {
     pub user: Option<User>,
     pub active_voice_channel: Option<VoiceChannelId>,
+    pub active_stream: Option<SocketAddr>,
 
     /// This is mostly used to send notifications to the user
     pub writer: RpcWriter,
@@ -76,7 +74,6 @@ async fn init_state() -> AppState {
             text_channels: DashMap::new(),
             voice_channels: DashMap::new(),
         }),
-        active_streams: Arc::new(papaya::HashMap::new()),
         connected_clients: Arc::new(DashMap::new()),
     }
 }
@@ -96,6 +93,7 @@ async fn main() {
             Arc::new(RwLock::new(ConnectionStateInner { 
                 user: None,
                 active_voice_channel: None,
+                active_stream: None,
                 writer,
             }))
         })

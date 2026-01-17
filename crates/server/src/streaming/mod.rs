@@ -1,5 +1,5 @@
 use anyhow::Result as AResult;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use rpc::models::markers::{Id, User, UserId};
 use tokio::net::UdpSocket;
 
@@ -15,33 +15,75 @@ pub async fn open_udp_socket(
         .await
         .unwrap();
 
+    // TODO: Come up with a reasonable capacity
     let mut buf = BytesMut::with_capacity(4800 * 10);
 
-    let active_streams = state.active_streams.pin_owned();
     loop {
+        buf.clear();
+
         let (bytes_read, addr) = sock.recv_from(&mut buf).await?;
+
         if bytes_read == 0 {
             continue;
         }
 
-        let packet = UDPPacket::parse(&mut buf);
+        // To parse data but keep original bytes intact
+        let buf = buf.split().freeze();
+        let packet = {
+            let mut buf = buf.clone();
+
+            UDPPacket::parse(&mut buf)
+        };
         let user_id = Id::<User>::new(packet.user_id);
 
-        // match active_streams.get(&user_id) {
-        //     Some(stream) if stream.addr != addr => {
-        //         active_streams.update(user_id, |stream| {
-        //             let mut stream = stream.clone();
-        //             stream.addr = addr;
-        //
-        //             stream
-        //         });
-        //     },
-        //     None => {
-        //         active_streams.insert(user_id, );
-        //     }
-        //     _ => {},
-        // }
+        // TODO: Do something with it, it shouldn't be that bad
+        let (voice_channel, addr_differs) = match state.connected_clients.get(&user_id) {
+            Some(state) => {
+                let state = state.read()
+                    .unwrap();
 
-        buf.clear();
+                let Some(channel_id) = state.active_voice_channel else {
+                    continue;
+                };
+
+                if let Some(curr_addr) = state.active_stream {
+                    (channel_id, curr_addr != addr)
+                } else {
+                    (channel_id, true)
+                }
+            },
+            None => {
+                continue;
+            }
+        };
+
+        if addr_differs {
+            let Some(state) = state.connected_clients.get(&user_id) else {
+                continue;
+            };
+
+            // TODO: Has a potential to block, we **ABSOLUTELY** can't do it here
+            // but whatever, I just want it to work for now
+            let mut state = state.write()
+                .unwrap();
+
+            state.active_stream = Some(addr);
+        }
+
+        let Some(users) = state.channels.voice_channels.get(&voice_channel) else {
+            continue;
+        };
+        
+        for user in users.iter() {
+            if let Some(user) = state.connected_clients.get(user) {
+                let addr = { 
+                    user.read().unwrap().active_stream 
+                };
+
+                if let Some(addr) = addr {
+                    _ = sock.send_to(&buf[..bytes_read], addr).await;
+                }
+            }
+        }
     }
 }
