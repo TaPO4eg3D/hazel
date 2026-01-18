@@ -1,5 +1,6 @@
 use gpui::{
-    AppContext, Context, Entity, ParentElement, Render, Styled, Window, div, px, rgb, white,
+    AppContext, AsyncApp, Context, Entity, ParentElement, Render, Styled, WeakEntity, Window, div,
+    px, rgb, white,
 };
 use gpui_component::{
     Icon, Sizable, Size, StyledExt, accordion::Accordion, scroll::ScrollableElement, v_flex,
@@ -8,7 +9,7 @@ use rpc::{
     common::Empty,
     models::{
         common::APIResult,
-        markers::VoiceChannelId,
+        markers::{Id, VoiceChannelId},
         voice::{JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate},
     },
 };
@@ -57,27 +58,27 @@ impl WorkspaceScreen {
         }
     }
 
+    pub fn get_voice_channel(&self, id: VoiceChannelId) -> Option<&VoiceChannel> {
+        self.voice_channels
+            .iter()
+            .find(|channel| channel.id == id)
+    }
+
+    pub fn get_voice_channel_mut(&mut self, id: VoiceChannelId) -> Option<&mut VoiceChannel> {
+        self.voice_channels
+            .iter_mut()
+            .find(|channel| channel.id == id)
+    }
+
     pub fn on_voice_channel_select(
         &mut self,
         id: &VoiceChannelId,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // self.voice_channels.iter_mut()
-        //     .for_each(|v| {
-        //         if v.id == *id {
-        //             return;
-        //         }
-        //
-        //         v.is_active = false
-        //     });
-
-        let Some(channel) = self
-            .voice_channels
-            .iter_mut()
-            .find(|channel| channel.id == *id)
-        else {
+        let Some(channel) = self.get_voice_channel(*id) else {
             println!("Unexpected voice channel id: {}", id.value);
+
             return;
         };
 
@@ -85,14 +86,11 @@ impl WorkspaceScreen {
             return;
         }
 
-        channel.is_active = true;
-        cx.notify();
-
         let id = *id;
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let data: APIResult<(), JoinVoiceChannelError> = connection
+            let _: APIResult<(), JoinVoiceChannelError> = connection
                 .execute(
                     "JoinVoiceChannel",
                     &JoinVoiceChannelPayload { channel_id: id },
@@ -100,17 +98,20 @@ impl WorkspaceScreen {
                 .await
                 .expect("invalid params");
 
-            println!("{data:?}");
-
+            Self::fetch_channels_inner(&this, cx).await;
             this.update(cx, |this, cx| {
-                this.fetch_channels(cx);
+                if let Some(channel) = this.get_voice_channel_mut(id) {
+                    channel.is_active = true;
+                }
+
+                cx.notify();
             }).ok();
         })
         .detach();
     }
 
     pub fn watch_for_connections(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, cx| {
             let connection = ConnectionManger::get(cx);
 
             let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
@@ -121,48 +122,47 @@ impl WorkspaceScreen {
         .detach();
     }
 
-    pub fn fetch_channels(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let connection = ConnectionManger::get(cx);
+    async fn fetch_channels_inner(this: &WeakEntity<Self>, cx: &mut AsyncApp) {
+        let connection = ConnectionManger::get(cx);
 
-            let data: APIResult<Vec<rpc::models::voice::VoiceChannel>, ()> = connection
-                .execute("GetVoiceChannels", &Empty {})
-                .await
-                .expect("invalid params");
+        let data: APIResult<Vec<rpc::models::voice::VoiceChannel>, ()> = connection
+            .execute("GetVoiceChannels", &Empty {})
+            .await
+            .expect("invalid params");
 
-            println!("{data:?}");
+        let Ok(data) = data else {
+            // TODO: Send notification with an error
+            return;
+        };
 
-            let Ok(data) = data else {
-                // TODO: Send notification
-                return;
-            };
-
-            this.update(cx, move |this, cx| {
-                this.voice_channels = data
-                    .into_iter()
-                    .map(|channel| VoiceChannel {
-                        id: channel.id,
-                        name: channel.name.into(),
-                        is_active: false,
-                        members: channel
-                            .members
-                            .into_iter()
-                            .map(|member| VoiceChannelMember {
-                                id: member.id,
-                                name: member.name.into(),
-                                is_muted: false,
-                                is_talking: false,
-                                is_streaming: false,
-                            })
-                            .collect(),
-                    })
-                    .collect();
-
-                cx.notify();
-            })
-            .ok();
+        this.update(cx, move |this, _cx| {
+            this.voice_channels = data
+                .into_iter()
+                .map(|channel| VoiceChannel {
+                    id: channel.id,
+                    name: channel.name.into(),
+                    is_active: false,
+                    members: channel
+                        .members
+                        .into_iter()
+                        .map(|member| VoiceChannelMember {
+                            id: member.id,
+                            name: member.name.into(),
+                            is_muted: false,
+                            is_talking: false,
+                            is_streaming: false,
+                        })
+                        .collect(),
+                })
+                .collect();
         })
-        .detach();
+        .ok();
+    }
+
+    pub fn fetch_channels(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async |this, cx| {
+            Self::fetch_channels_inner(&this, cx).await;
+        }).detach();
     }
 }
 
@@ -171,7 +171,7 @@ const CARD_BG: u32 = 0x0F111A;
 impl Render for WorkspaceScreen {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         div()

@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::{Arc, RwLock}};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use dashmap::DashMap;
 
@@ -14,6 +17,7 @@ use entity::user::Model as User;
 use crate::{
     api::{auth, messages, voice},
     config::Config,
+    entity::voice_channel,
     streaming::open_udp_socket,
 };
 
@@ -26,6 +30,29 @@ mod streaming;
 pub struct ChannelsState {
     pub text_channels: DashMap<TextChannelId, Vec<UserId>>,
     pub voice_channels: DashMap<VoiceChannelId, Vec<UserId>>,
+}
+
+impl ChannelsState {
+    fn disonnect_user_from_voice_channel(
+        &self,
+        user_id: Option<UserId>,
+        channel_id: Option<VoiceChannelId>,
+    ) -> bool {
+        println!("IN: {:?}", (user_id, channel_id));
+
+        let (Some(user_id), Some(channel_id)) = (user_id, channel_id) else {
+            return false;
+        };
+
+        let Some(mut user_ids) = self.voice_channels.get_mut(&channel_id) else {
+            return false;
+        };
+
+        println!("DELETEING");
+        user_ids.retain(|id| *id != user_id);
+
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -42,6 +69,16 @@ pub struct AppState {
     pub connected_clients: Arc<DashMap<UserId, ConnectionState>>,
 }
 
+impl AppState {
+    fn disconnect(&self, user_id: Option<UserId>) {
+        let Some(user_id) = user_id else {
+            return;
+        };
+
+        self.connected_clients.remove(&user_id);
+    }
+}
+
 /// State specific for a single connection.
 /// This is the place where it makes sense to store auth data
 /// and anything like this
@@ -53,6 +90,34 @@ pub struct ConnectionStateInner {
 
     /// This is mostly used to send notifications to the user
     pub writer: RpcWriter,
+}
+
+impl ConnectionStateInner {
+    fn disconnect(&self, state: &AppState) {
+        self.disconnect_from_voice_channel(state);
+        state.disconnect(self.get_user_id());
+    }
+
+    pub fn get_user_id(&self) -> Option<UserId> {
+        self.user.as_ref().map(|user| user.tagged_id())
+    }
+
+    pub fn disconnect_from_voice_channel(&self, state: &AppState) {
+        _ = state
+            .channels
+            .disonnect_user_from_voice_channel(self.get_user_id(), self.active_voice_channel);
+
+        // writer
+        //     .write(
+        //         "VoiceChannelUpdate".into(),
+        //         VoiceChannelUpdate {
+        //             channel_id: payload.channel_id,
+        //             message: VoiceChannelUpdateMessage::UserConnected(current_user_id),
+        //         },
+        //         None,
+        //     )
+        //     .await;
+    }
 }
 
 impl ConnectionStateInner {
@@ -88,9 +153,9 @@ async fn main() {
     let state = init_state().await;
     let router = {
         let state = state.clone();
-    
+
         RpcRouter::new(state, |writer| {
-            Arc::new(RwLock::new(ConnectionStateInner { 
+            Arc::new(RwLock::new(ConnectionStateInner {
                 user: None,
                 active_voice_channel: None,
                 active_stream: None,
@@ -105,17 +170,17 @@ async fn main() {
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {
-        serve(&tcp_addr, router, Arc::new(|state, conn_state| {
-            // This function runs *after* the user is disconnected
-            let conn_state = conn_state.read().unwrap();
-
-            if let Some(user) = conn_state.user.as_ref() {
-                let id = user.tagged_id();
-                state.connected_clients.remove(&id);
-
-                log::info!("User ({}) disconnected", id.value);
-            }
-        })).await;
+        serve(
+            &tcp_addr,
+            router,
+            Arc::new(|state, conn_state| {
+                // This function runs *after* the user is disconnected
+                // aka we waited a bit for a reconnect but it didn't happen
+                let conn_state = conn_state.read().unwrap();
+                conn_state.disconnect(&state);
+            }),
+        )
+        .await;
     });
 
     open_udp_socket(state, &config.udp_addr).await.unwrap();
