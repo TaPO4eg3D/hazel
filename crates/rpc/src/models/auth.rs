@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
+use crate::common::Empty;
+
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -121,8 +123,6 @@ pub enum GetSessionKeyResponse {
 pub enum GetSessionKeyError {
     #[error("User with this login already exists")]
     UserAlreadyExists,
-    #[error("Server Error")]
-    ServerError,
 }
 
 #[rpc_method]
@@ -141,7 +141,7 @@ pub enum GetCurrentUserError {
 
 #[rpc_method]
 pub struct GetCurrentUser {
-    request: (),
+    request: Empty,
     response: Option<i32>,
     error: GetCurrentUserError,
 }
