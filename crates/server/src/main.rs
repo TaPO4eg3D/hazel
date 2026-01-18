@@ -28,6 +28,8 @@ mod config;
 mod entity;
 mod streaming;
 
+pub type GlobalRouter = RpcRouter<AppState, ConnectionState>;
+
 /// This state holds connected users to respective channels
 pub struct ChannelsState {
     pub text_channels: DashMap<TextChannelId, Vec<UserId>>,
