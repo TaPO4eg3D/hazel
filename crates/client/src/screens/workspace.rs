@@ -1,3 +1,5 @@
+use std::{net::SocketAddr, str::FromStr};
+
 use gpui::{
     AppContext, AsyncApp, Context, Entity, ParentElement, Render, Styled, WeakEntity, Window, div,
     px, rgb, white,
@@ -28,6 +30,7 @@ use crate::{
             VoiceChannelMember, VoiceChannelsComponent,
         },
     },
+    gpui_audio::Streaming,
 };
 
 pub struct WorkspaceScreen {
@@ -100,6 +103,14 @@ impl WorkspaceScreen {
                 cx.notify();
             })
             .ok();
+
+            let user_id = ConnectionManger::get_user_id(cx).unwrap();
+
+            Streaming::connect(
+                cx,
+                user_id,
+                SocketAddr::from_str("127.0.0.1:9899").unwrap(),
+            );
         })
         .detach();
     }

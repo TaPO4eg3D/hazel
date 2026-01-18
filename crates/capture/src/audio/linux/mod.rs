@@ -1,6 +1,7 @@
-use std::{cell::LazyCell, collections::VecDeque, sync::{Arc, LazyLock, atomic::AtomicBool}, thread};
+use std::{cell::LazyCell, collections::VecDeque, net::UdpSocket, sync::{self, Arc, LazyLock, atomic::AtomicBool}, thread};
 
 use anyhow::{Result as AResult, bail};
+use bytes::BytesMut;
 use libspa::param::{
     ParamType,
     audio::{AudioFormat, AudioInfoRaw},
@@ -38,6 +39,9 @@ struct CaptureStreamData {
     /// in the same thread
     loopback_producer: HeapProd<f32>,
 
+    /// Producer of encoded packets
+    packet_producer: std::sync::mpsc::Sender<FFMpegPacketPayload>,
+
     enable_noise_reduction: bool,
     denoise_state: Box<DenoiseState<'static>>,
 
@@ -52,16 +56,18 @@ struct CaptureStream<'a> {
     stream_listener: StreamListener<CaptureStreamData>,
 }
 
-struct AudioDecoder {
+pub struct AudioDecoder {
     codec: codec::audio::Audio,
     decoder: codec::decoder::Audio,
+
+    packet_consumer: std::sync::mpsc::Receiver<FFMpegPacketPayload>,
 
     decoded_frame: frame::Audio,
     decoded_frames_queue: VecDeque<f32>,
 }
 
 impl AudioDecoder {
-    pub fn new() -> Self {
+    pub fn new(packet_consumer: std::sync::mpsc::Receiver<FFMpegPacketPayload>) -> Self {
         let codec = codec::decoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
         let context = ffmpeg::codec::context::Context::new_with_codec(codec);
 
@@ -74,12 +80,20 @@ impl AudioDecoder {
             codec,
             decoder,
 
+            packet_consumer,
+
             decoded_frame: frame::Audio::empty(),
             decoded_frames_queue: VecDeque::new(),
         }
     }
 
-    fn decode(&mut self, packet: Packet) {
+    fn decode(&mut self) {
+        while let Ok(packet) = self.packet_consumer.try_recv() {
+            self.decode_inner(packet.to_packet());
+        }
+    }
+
+    fn decode_inner(&mut self, packet: Packet) {
         self.decoder.send_packet(&packet)
             .unwrap();
 
@@ -131,9 +145,11 @@ trait VecDequeExt<T> {
     ///
     /// Return: how much items are copied to the passed buffer
     fn pop_slice(&mut self, out: &mut [T], partial: bool) -> usize;
+
+    fn pop_slice_with(&mut self, out: &mut [T], partial: bool, f: impl Fn(T, T) -> T) -> usize;
 }
 
-impl<T> VecDequeExt<T> for VecDeque<T> {
+impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
     #[inline(always)]
     fn pop_slice(&mut self, out: &mut [T], partial: bool) -> usize {
         if !partial && self.len() < out.len() {
@@ -143,6 +159,21 @@ impl<T> VecDequeExt<T> for VecDeque<T> {
         let length = self.len().min(out.len());
         (0..length).for_each(|idx| {
             out[idx] = self.pop_front().unwrap();
+        });
+
+        length
+    }
+
+    #[inline(always)]
+    fn pop_slice_with(&mut self, out: &mut [T], partial: bool, f: impl Fn(T, T) -> T) -> usize {
+        if !partial && self.len() < out.len() {
+            return 0;
+        }
+
+        let length = self.len().min(out.len());
+        (0..length).for_each(|idx| {
+            let value = self.pop_front().unwrap();
+            out[idx] = f(out[idx], value);
         });
 
         length
@@ -188,19 +219,26 @@ impl StreamingCompatInto for Packet {
 struct AudioEncoder {
     encoder: encoder::audio::Encoder,
 
+    /// Buffer for raw samples, reused
     raw_frame: frame::audio::Audio,
+
+    /// Buffer for encoded data, reused
     encoded_packet: Packet,
 
+    /// Queue of samples, waiting minimum number
+    /// of samples that encoder requires
     frame_queue: VecDeque<f32>,
 
-    encoded_producer: HeapProd<FFMpegPacketPayload>,
-    fill_encoded_buffer: bool,
+    /// Buffer of packets that are ready to be sent over
+    /// the network
+    packet_buff: VecDeque<FFMpegPacketPayload>,
 
+    /// Count number of frames for decoder
     pts_counter: i64,
 }
 
 impl AudioEncoder {
-    fn new(encoded_producer: HeapProd<FFMpegPacketPayload>) -> Self {
+    fn new() -> Self {
         let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
         let context = ffmpeg::codec::context::Context::new_with_codec(codec);
 
@@ -229,9 +267,8 @@ impl AudioEncoder {
                 frame_size,
                 ChannelLayout::MONO,
             ),
-            encoded_producer,
-            fill_encoded_buffer: true,
             pts_counter: 0,
+            packet_buff: VecDeque::new(),
             encoded_packet: Packet::empty(),
             frame_queue: VecDeque::new(),
         }
@@ -269,17 +306,13 @@ impl AudioEncoder {
                 .receive_packet(&mut self.encoded_packet)
                 .is_ok()
             {
-                if self.fill_encoded_buffer {
-                    let encoded_data = self.encoded_packet.data().unwrap_or_default();
+                let encoded_data = self.encoded_packet.data().unwrap_or_default();
 
-                    if encoded_data.is_empty() {
-                        continue;
-                    }
-
-                    self.encoded_producer
-                        .try_push(self.encoded_packet.to_payload())
-                        .unwrap()
+                if encoded_data.is_empty() {
+                    continue;
                 }
+
+                self.packet_buff.push_back(self.encoded_packet.to_payload())
             }
         }
     }
@@ -347,6 +380,7 @@ impl<'a> CaptureStream<'a> {
                 )
             };
 
+            // Encode everything we've captured
             if this.enable_noise_reduction {
                 this.rnnoise_queue.extend(captured_samples);
 
@@ -376,13 +410,17 @@ impl<'a> CaptureStream<'a> {
             if this.enable_loopback {
                 this.loopback_producer.push_slice(captured_samples);
             }
+
+            while let Some(packet) = this.encoder.packet_buff.pop_front() {
+                _ = this.packet_producer.send(packet);
+            }
         }
     }
 
     fn new(
         core: &'a pw::core::CoreRc,
+        packet_producer: std::sync::mpsc::Sender<FFMpegPacketPayload>,
         loopback_producer: HeapProd<f32>,
-        encoded_producer: HeapProd<FFMpegPacketPayload>,
         capture: Arc<AtomicBool>,
     ) -> AResult<Self> {
         let capture_stream = pw::stream::StreamBox::new(
@@ -423,10 +461,12 @@ impl<'a> CaptureStream<'a> {
         let stream_data = CaptureStreamData {
             capture,
             format: Default::default(),
-            encoder: AudioEncoder::new(encoded_producer),
+            encoder: AudioEncoder::new(),
 
             enable_loopback: false,
             loopback_producer,
+
+            packet_producer,
 
             enable_noise_reduction: true,
             denoise_state: DenoiseState::new(),
@@ -457,13 +497,27 @@ impl<'a> CaptureStream<'a> {
     }
 }
 
+/// Struct that represents a connected user
+/// to a voice chat
+pub struct PlaybackClientState {
+    pub user_id: i32,
+    pub decoder: AudioDecoder,
+
+    pub is_talking: Arc<AtomicBool>,
+}
+
+pub enum PlaybackClientMessage {
+    AddClient(PlaybackClientState),
+    RemoveClient(i32),
+}
+
 struct PlaybackStreamData {
     /// Ring Buffer that is used to loopback captured audio.
     /// Mainly used to quickly test how your microphone sounds
     loopback_consumer: HeapCons<f32>,
-    encoded_consumer: HeapCons<FFMpegPacketPayload>,
 
-    decoder: AudioDecoder,
+    clients: Vec<PlaybackClientState>,
+    client_reciever: std::sync::mpsc::Receiver<PlaybackClientMessage>,
 }
 
 struct PlaybackStream<'a> {
@@ -475,6 +529,18 @@ impl<'a> PlaybackStream<'a> {
     const STREAM_NAME: &'static str = "HAZEL Audio Playback";
 
     fn on_process(stream: &Stream, user_data: &mut PlaybackStreamData) {
+        // Check if have new clients we must listen to, or remove one
+        if let Ok(msg) = user_data.client_reciever.try_recv() {
+            match msg {
+                PlaybackClientMessage::AddClient(client) => {
+                    user_data.clients.push(client);
+                },
+                PlaybackClientMessage::RemoveClient(id) => {
+                    user_data.clients.retain(|client| client.user_id != id);
+                }
+            }
+        }
+
         let Some(mut buffer) = stream.dequeue_buffer() else {
             return;
         };
@@ -489,22 +555,31 @@ impl<'a> PlaybackStream<'a> {
 
         if let Some(slice) = data.data() {
             // Decode all queued encoded packets
-            while let Some(payload) = user_data.encoded_consumer.try_pop() {
-                user_data.decoder.decode(payload.to_packet());
+            for client in user_data.clients.iter_mut() {
+                client.decoder.decode()
             }
 
             let output_samples = unsafe {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
 
-            let read_count = user_data
-                .decoder
-                .decoded_frames_queue
-                .pop_slice(output_samples, true);
+            // Cleanup to ensure we don't mix garbage
+            output_samples
+                .iter_mut()
+                .for_each(|i| *i = 0.);
 
-            // If chunk is not fully filled, fill it with silence
-            (read_count..output_samples.len())
-                .for_each(|i| output_samples[i] = 0.);
+            // Mix multiple clients into a single stream
+            let mut max_read_count = 0;
+            for client in user_data.clients.iter_mut() {
+                let read_count = client
+                    .decoder
+                    .decoded_frames_queue
+                    .pop_slice_with(output_samples, true, |old, new| {
+                        (old + new).min(1.)
+                    });
+
+                max_read_count = max_read_count.max(read_count);
+            }
 
             let chunk = data.chunk_mut();
 
@@ -517,7 +592,7 @@ impl<'a> PlaybackStream<'a> {
     fn new(
         core: &'a pw::core::CoreRc,
         loopback_consumer: HeapCons<f32>,
-        encoded_consumer: HeapCons<FFMpegPacketPayload>,
+        client_reciever: std::sync::mpsc::Receiver<PlaybackClientMessage>,
     ) -> AResult<Self> {
         let playback_stream = pw::stream::StreamBox::new(
             core,
@@ -543,8 +618,8 @@ impl<'a> PlaybackStream<'a> {
 
         let user_data = PlaybackStreamData {
             loopback_consumer,
-            encoded_consumer,
-            decoder: AudioDecoder::new(),
+            clients: vec![],
+            client_reciever,
         };
 
         let listener = playback_stream
@@ -582,26 +657,26 @@ impl<'a> PlaybackStream<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Audio {
     capture: Arc<AtomicBool>,
+    clients_sender: std::sync::mpsc::Sender<PlaybackClientMessage>,
+}
 
-    encoded_producer: HeapProd<FFMpegPacketPayload>,
-    capture_consumer: HeapCons<FFMpegPacketPayload>,
+pub struct RegisteredClient {
+    pub user_id: i32,
+    pub packet_sender: std::sync::mpsc::Sender<FFMpegPacketPayload>,
+    pub is_talking: Arc<AtomicBool>,
 }
 
 impl Audio {
-    pub fn new() -> AResult<Self> {
+    pub fn new() -> AResult<(Self, std::sync::mpsc::Receiver<FFMpegPacketPayload>)> {
         // To test not encoded capture (when tweaking settings for example)
         let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
         let (loopback_producer, loopback_consumer) = ring.split();
 
-        // This data should be consumed by network
-        let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
-        let (capture_producer, capture_consumer) = ring.split();
-
-        // This data produced by network and consumed by playback stream
-        let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
-        let (encoded_producer, encoded_consumer) = ring.split();
+        let (packet_sender, packet_reciever) = std::sync::mpsc::channel();
+        let (clients_sender, clients_reciever) = std::sync::mpsc::channel();
 
         let capture = Arc::new(AtomicBool::new(false));
 
@@ -616,27 +691,52 @@ impl Audio {
 
             let _capture = CaptureStream::new(
                 &core,
+                packet_sender,
                 loopback_producer,
-                capture_producer,
                 _capture,
             )?;
-            let _playback = PlaybackStream::new(&core, loopback_consumer, encoded_consumer)?;
+            let _playback = PlaybackStream::new(
+                &core,
+                loopback_consumer,
+                clients_reciever,
+            )?;
 
             mainloop.run();
 
             Ok::<_, anyhow::Error>(())
         });
 
-        Ok(Audio {
+        Ok((Audio {
             capture,
-
-            encoded_producer,
-            capture_consumer,
-        })
+            clients_sender,
+        }, packet_reciever))
     }
 
-    pub fn play_stream_packet(&mut self, packet: FFMpegPacketPayload) -> bool {
-        self.encoded_producer.try_push(packet).is_ok()
+    pub fn remove_client(&self, client: RegisteredClient) {
+        _ = self.clients_sender.send(PlaybackClientMessage::RemoveClient(
+            client.user_id
+        ));
+    }
+
+    pub fn register_client(&self, user_id: i32) -> RegisteredClient {
+        let (packet_sender, packet_consumer) = std::sync::mpsc::channel();
+
+        let is_talking = Arc::new(AtomicBool::new(false));
+        let decoder = AudioDecoder::new(packet_consumer);
+
+        let state = PlaybackClientState {
+            user_id,
+            decoder,
+            is_talking: is_talking.clone(),
+        };
+
+        _ = self.clients_sender.send(PlaybackClientMessage::AddClient(state));
+
+        RegisteredClient {
+            user_id,
+            packet_sender,
+            is_talking,
+        }
     }
 
     pub fn is_capturing(&self) -> bool {

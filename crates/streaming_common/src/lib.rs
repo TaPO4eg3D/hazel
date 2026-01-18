@@ -9,14 +9,14 @@ pub struct FFMpegPacketPayload {
 }
 
 impl FFMpegPacketPayload {
-    fn to_bytes(&self, buf: &mut BytesMut) {
+    pub fn to_bytes(&self, buf: &mut BytesMut) {
         buf.put_i64_le(self.pts);
         buf.put_i32_le(self.flags);
 
         buf.put(&self.data[..]);
     }
 
-    fn parse(mut bytes: Bytes) -> Self {
+    pub fn parse(mut bytes: Bytes) -> Self {
         let pts = bytes.get_i64_le();
         let flags = bytes.get_i32_le();
 
@@ -32,6 +32,7 @@ impl FFMpegPacketPayload {
     }
 }
 
+#[derive(Debug)]
 pub enum UDPPacketType {
     Voice(FFMpegPacketPayload),
     Stream(FFMpegPacketPayload),
@@ -65,6 +66,7 @@ impl UDPPacketType {
 
 }
 
+#[derive(Debug)]
 pub struct UDPPacket {
     pub user_id: i32,
     pub payload: UDPPacketType,
