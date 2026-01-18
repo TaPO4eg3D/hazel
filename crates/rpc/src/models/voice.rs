@@ -1,7 +1,8 @@
+use rpc_macros::rpc_method;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::models::markers::{UserId, VoiceChannelId};
+use crate::{common::Empty, models::markers::{UserId, VoiceChannelId}};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VoiceChannelMember {
@@ -34,6 +35,13 @@ pub enum JoinVoiceChannelError {
     ChannelIsFull,
 }
 
+#[rpc_method]
+pub struct JoinVoiceChannel {
+    request: JoinVoiceChannelPayload,
+    response: (),
+    error: JoinVoiceChannelError,
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum VoiceChannelUpdateMessage {
@@ -46,4 +54,11 @@ pub enum VoiceChannelUpdateMessage {
 pub enum GetVoiceChannelsError {
     #[error("Unauthorized access")]
     Unauthorized,
+}
+
+#[rpc_method]
+pub struct GetVoiceChannels {
+    request: Empty,
+    response: Vec<VoiceChannel>,
+    error: (),
 }
