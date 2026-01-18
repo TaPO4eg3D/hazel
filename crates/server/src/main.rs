@@ -6,7 +6,10 @@ use std::{
 use dashmap::DashMap;
 
 use rpc::{
-    models::markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
+    models::{
+        markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
+        voice::{VoiceChannelUpdate, VoiceChannelUpdateMessage},
+    },
     server::{RpcRouter, RpcWriter, serve},
 };
 
@@ -17,7 +20,6 @@ use entity::user::Model as User;
 use crate::{
     api::{auth, messages, voice},
     config::Config,
-    entity::voice_channel,
     streaming::open_udp_socket,
 };
 
@@ -38,8 +40,6 @@ impl ChannelsState {
         user_id: Option<UserId>,
         channel_id: Option<VoiceChannelId>,
     ) -> bool {
-        println!("IN: {:?}", (user_id, channel_id));
-
         let (Some(user_id), Some(channel_id)) = (user_id, channel_id) else {
             return false;
         };
@@ -48,7 +48,6 @@ impl ChannelsState {
             return false;
         };
 
-        println!("DELETEING");
         user_ids.retain(|id| *id != user_id);
 
         true
@@ -82,7 +81,7 @@ impl AppState {
 /// State specific for a single connection.
 /// This is the place where it makes sense to store auth data
 /// and anything like this
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionStateInner {
     pub user: Option<User>,
     pub active_voice_channel: Option<VoiceChannelId>,
@@ -93,9 +92,28 @@ pub struct ConnectionStateInner {
 }
 
 impl ConnectionStateInner {
-    fn disconnect(&self, state: &AppState) {
-        self.disconnect_from_voice_channel(state);
+    /// Disconnect the user from the server and notify everyone involved
+    async fn disconnect(&self, state: &AppState) {
+        let user_id = self.get_user_id();
+        let channel_id = self.active_voice_channel;
+
         state.disconnect(self.get_user_id());
+        self.disconnect_from_voice_channel(state);
+
+        let (Some(user_id), Some(channel_id)) = (user_id, channel_id) else {
+            return;
+        };
+
+        self.writer
+            .write(
+                "VoiceChannelUpdate".into(),
+                VoiceChannelUpdate {
+                    channel_id,
+                    message: VoiceChannelUpdateMessage::UserDisconnected(user_id),
+                },
+                None,
+            )
+            .await;
     }
 
     pub fn get_user_id(&self) -> Option<UserId> {
@@ -106,17 +124,6 @@ impl ConnectionStateInner {
         _ = state
             .channels
             .disonnect_user_from_voice_channel(self.get_user_id(), self.active_voice_channel);
-
-        // writer
-        //     .write(
-        //         "VoiceChannelUpdate".into(),
-        //         VoiceChannelUpdate {
-        //             channel_id: payload.channel_id,
-        //             message: VoiceChannelUpdateMessage::UserConnected(current_user_id),
-        //         },
-        //         None,
-        //     )
-        //     .await;
     }
 }
 
@@ -168,18 +175,19 @@ async fn main() {
     let router = auth::merge(router);
     let router = voice::merge(router);
 
+
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {
-        serve(
-            &tcp_addr,
-            router,
-            Arc::new(|state, conn_state| {
-                // This function runs *after* the user is disconnected
-                // aka we waited a bit for a reconnect but it didn't happen
-                let conn_state = conn_state.read().unwrap();
-                conn_state.disconnect(&state);
-            }),
-        )
+        serve(&tcp_addr, router, |state, conn_state| {
+            // This function runs *after* the user is disconnected
+            // aka we waited a bit for a reconnect but it didn't happen
+
+            Box::pin(async move {
+                let conn_state = conn_state.read().unwrap().clone();
+
+                conn_state.disconnect(&state).await;
+            })
+        })
         .await;
     });
 

@@ -208,17 +208,20 @@ where
 pub async fn serve<AppState, ConnState>(
     addr: &str,
     router: RpcRouter<AppState, ConnState>,
-    on_disconnect: Arc<dyn Fn(AppState, ConnState) + Send + Sync>
+    on_disconnect: impl Fn(AppState, ConnState) -> Pin<
+        Box<dyn Future<Output = ()> + Send + Sync>
+    > + Send + Sync + 'static,
 )
 where
     AppState: Clone + Send + Sync + 'static,
-    ConnState: Clone + Send + Sync + 'static
+    ConnState: Clone + Send + Sync + 'static,
 {
     let listener = TcpListener::bind(addr)
         .await
         .expect("Failed to open a TCP Listener");
 
     let router = Arc::new(router);
+    let on_disconnect = Arc::new(on_disconnect);
 
     loop {
         match listener.accept().await {
@@ -235,7 +238,7 @@ where
                         .await
                         .unwrap();
 
-                    on_disconnect(state, conn_state);
+                    on_disconnect(state, conn_state).await;
                 });
             }
             Err(_) => {
