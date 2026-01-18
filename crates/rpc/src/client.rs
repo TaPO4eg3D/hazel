@@ -77,7 +77,7 @@ impl<T: DeserializeOwned> Subscription<T> {
         match rmp_serde::from_slice::<T>(&data) {
             Ok(data) => Some(data),
             Err(err) => {
-                log::error!("Invalid data: {err:?}");
+                println!("Invalid data: {err:?}");
 
                 None
             }

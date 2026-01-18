@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
-use crate::common::Empty;
+use crate::{common::Empty, models::markers::UserId};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -139,9 +139,21 @@ pub enum GetCurrentUserError {
     ServerError,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserInfo {
+    pub id: UserId,
+    pub username: String,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetUserPayload {
+    pub id: UserId,
+}
+
 #[rpc_method]
-pub struct GetCurrentUser {
-    request: Empty,
-    response: Option<i32>,
+pub struct GetUserInfo {
+    request: GetUserPayload,
+    response: Option<UserInfo>,
     error: GetCurrentUserError,
 }

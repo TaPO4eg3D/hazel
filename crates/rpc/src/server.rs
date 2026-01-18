@@ -67,7 +67,7 @@ impl RpcWriter {
             response.extend_from_slice(&body_len.to_le_bytes());
             response.extend_from_slice(&body_bytes);
 
-            _ = self.inner.send(response).await;
+            let _ = self.inner.send(response).await;
         }
     }
 }

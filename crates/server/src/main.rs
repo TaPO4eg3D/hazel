@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry};
 
 use rpc::{
     models::{
@@ -106,16 +106,22 @@ impl ConnectionStateInner {
             return;
         };
 
-        self.writer
-            .write(
-                "VoiceChannelUpdate".into(),
-                VoiceChannelUpdate {
-                    channel_id,
-                    message: VoiceChannelUpdateMessage::UserDisconnected(user_id),
-                },
-                None,
-            )
-            .await;
+        let writers = state.connected_clients.iter()
+            .map(|user| user.read().unwrap().writer.clone())
+            .collect::<Vec<_>>();
+
+        for writer in writers {
+            writer
+                .write(
+                    "VoiceChannelUpdate".into(),
+                    VoiceChannelUpdate {
+                        channel_id,
+                        message: VoiceChannelUpdateMessage::UserDisconnected(user_id),
+                    },
+                    None,
+                )
+                .await;
+        }
     }
 
     pub fn get_user_id(&self) -> Option<UserId> {

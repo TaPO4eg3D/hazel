@@ -1,14 +1,10 @@
-use rpc::{
-    models::{
+use rpc::models::{
         auth::{
-            GetCurrentUser, GetSessionKey, GetSessionKeyError,
-            GetSessionKeyPayload, GetSessionKeyResponse, Login, LoginError, LoginPayload,
-            SessionKey,
+            GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload, SessionKey, UserInfo
         },
         common::{APIError, RPCMethod as _},
         markers::TaggedEntity,
-    },
-};
+    };
 
 use sha2::{Digest, Sha256};
 
@@ -106,18 +102,25 @@ impl RPCServer for Login {
     }
 }
 
-impl RPCServer for GetCurrentUser {
+impl RPCServer for GetUserInfo {
     async fn handle(
-        _app_state: AppState,
-        connection_state: ConnectionState,
-        _req: Self::Request,
+        app_state: AppState,
+        _connection_state: ConnectionState,
+        GetUserPayload { id }: GetUserPayload,
     ) -> Self::Response {
-        let conn_state = connection_state.read().unwrap();
+        let user = User::find_by_id(id.value)
+            .one(&app_state.db)
+            .await
+            .map_err(DbErr::into_api_error)?;
 
-        Ok(conn_state.user.as_ref().map(|user| user.id))
+        Ok(user
+            .map(|user| UserInfo {
+                id: user.tagged_id(),
+                username: user.username,
+            }))
     }
 }
 
 pub fn merge(router: GlobalRouter) -> GlobalRouter {
-    register_endpoints!(router, Login, GetCurrentUser, GetSessionKey)
+    register_endpoints!(router, Login, GetUserInfo, GetSessionKey)
 }
