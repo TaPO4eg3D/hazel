@@ -1013,6 +1013,7 @@ dependencies = [
  "bytes",
  "ffmpeg-next",
  "libspa",
+ "mio",
  "nnnoiseless",
  "pipewire",
  "ringbuf",
@@ -3107,6 +3108,7 @@ name = "hazel_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "capture",
  "clap 4.5.54",
  "client_macros",

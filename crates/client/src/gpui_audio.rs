@@ -1,64 +1,152 @@
-use capture::audio::linux::Audio;
+use std::{
+    net::{SocketAddr, UdpSocket}, sync::{Arc, RwLock, atomic::AtomicUsize}, thread
+};
+
+use bytes::{Bytes, BytesMut};
+use capture::audio::linux::{Audio, RegisteredClient};
 use gpui::{App, AppContext, AsyncApp, Global};
 
-use streaming_common::FFMpegPacketPayload;
+use rpc::models::markers::UserId;
+use streaming_common::{FFMpegPacketPayload, UDPPacket, UDPPacketType};
 
-use crate::gpui_tokio::Tokio;
+type Addr = Arc<RwLock<Option<(i32, SocketAddr)>>>;
 
-pub enum AudioMessage {
-    PlayFromFile,
-    PlayStreamingPacket(FFMpegPacketPayload),
-
-    SetCapture(bool),
-    SetPlayback(bool),
+pub enum StreamingMessage {
+    Connect((i32, SocketAddr)),
+    Disconnect,
 }
 
-struct GlobalAudio {
-    tx: smol::channel::Sender<AudioMessage>,
+fn init_sender(
+    socket: Arc<UdpSocket>,
+    addr: Addr,
+    packet_recv: std::sync::mpsc::Receiver<FFMpegPacketPayload>,
+) {
+    let mut buf = BytesMut::new();
+
+    while let Ok(packet) = packet_recv.recv() {
+        let addr = addr.read().unwrap();
+        let Some((user_id, addr)) = *addr else {
+            continue;
+        };
+
+        let msg = UDPPacket {
+            user_id,
+            payload: UDPPacketType::Voice(packet),
+        };
+        msg.to_bytes(&mut buf);
+
+        let buf = buf.split();
+        _ = socket.send_to(&buf[..], addr);
+    }
 }
 
-impl Global for GlobalAudio {}
+fn init_reciever(
+    socket: Arc<UdpSocket>,
+    audio: Audio,
+) {
+    let mut buf = BytesMut::with_capacity(4800 * 10);
+    let mut clients: Vec<RegisteredClient> = vec![];
 
-impl GlobalAudio {
-    fn process_message(audio: &mut Audio, message: AudioMessage) {
-        match message {
-            AudioMessage::PlayStreamingPacket(packet) => {
-                audio.play_stream_packet(packet);
-            },
-            _ => todo!()
+    loop {
+        buf.clear();
+        buf.resize(4800 * 10, 0);
+
+        if let Ok(len) = socket.recv(&mut buf[..]) {
+            buf.truncate(len);
+
+            let mut buf: Bytes = buf.split().into();
+            let packet = UDPPacket::parse(&mut buf);
+
+            let client = clients.iter()
+                .find(|client| client.user_id == packet.user_id);
+
+            let client = match client {
+                Some(client) => client,
+                None => {
+                    let client = audio.register_client(packet.user_id);
+                    clients.push(client);
+
+                    clients.last().unwrap()
+                }
+            };
+
+            match packet.payload {
+                UDPPacketType::Voice(packet) => {
+                    _ = client.packet_sender.send(packet);
+                },
+                _ => todo!(),
+            }
         }
     }
+}
 
-    async fn new() -> Self {
-        let (tx, rx) = smol::channel::bounded(1024);
+fn _init(tx: std::sync::mpsc::Receiver<StreamingMessage>) {
+    let addr: Addr = Arc::new(RwLock::new(None));
 
-        tokio::spawn(async move {
-            let mut audio = Audio::new()
-                .unwrap();
+    let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
 
-            while let Ok(message) = rx.recv().await {
-                Self::process_message(&mut audio, message);
+    let (audio, packet_recv) = Audio::new().unwrap();
+
+    thread::spawn({
+        let addr = addr.clone();
+        let socket = socket.clone();
+
+        move || {
+            init_sender(socket, addr, packet_recv);
+        }
+    });
+
+    thread::spawn({
+        let socket = socket.clone();
+        let audio = audio.clone();
+
+        move || {
+            init_reciever(socket, audio);
+        }
+    });
+
+    loop {
+        if let Ok(msg) = tx.recv() {
+            match msg {
+                StreamingMessage::Connect(new_addr) => {
+                    let mut addr = addr.write().unwrap();
+                    *addr = Some(new_addr);
+
+                    audio.set_capture(true);
+                }
+                StreamingMessage::Disconnect => {
+                    let mut addr = addr.write().unwrap();
+
+                    *addr = None;
+                    audio.set_capture(false);
+                }
             }
+        }
+    }
+}
+
+struct GlobalStreaming {
+    tx: std::sync::mpsc::Sender<StreamingMessage>,
+}
+
+impl Global for GlobalStreaming {}
+
+pub struct Streaming {}
+
+impl Streaming {
+    pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            stream.tx.send(StreamingMessage::Connect((user_id.value, addr)))
         });
-
-        Self { tx }
     }
 }
 
-struct AudioManager {}
+pub fn init(cx: &mut App) {
+    let (tx, rx) = std::sync::mpsc::channel();
 
-impl AudioManager {
-    fn send_command<C>(cx: &C, msg: AudioMessage)
-    where
-        C: AppContext,
-    {
-    }
-}
+    thread::spawn(move || {
+        _init(rx);
+    });
 
-pub async fn init(cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let manager = Tokio::spawn(cx, GlobalAudio::new()).await?;
-
-    cx.update(|cx| cx.set_global(manager));
-
-    Ok(())
+    cx.set_global(GlobalStreaming { tx });
 }

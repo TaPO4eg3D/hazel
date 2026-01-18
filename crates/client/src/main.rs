@@ -55,6 +55,12 @@ impl ConnectionManger {
         Self { conn: None, user_id: None }
     }
 
+    pub fn get_user_id(cx: &mut AsyncApp) -> Option<UserId> {
+        cx.read_global(|g: &Self, _| {
+            g.user_id
+        })
+    }
+
     pub fn set_user_id(cx: &mut AsyncApp, id: UserId) {
         cx.update_global(|g: &mut Self, _| {
             g.user_id = Some(id);
@@ -136,6 +142,7 @@ fn main() {
     app.run(move |cx| {
         gpui_component::init(cx);
         gpui_tokio::init(cx);
+        gpui_audio::init(cx);
 
         init_theme(cx);
         cx.set_global(ConnectionManger::new());
@@ -145,7 +152,6 @@ fn main() {
             let profile = args.profile.unwrap_or("default".into());
 
             db::init(cx, profile).await.unwrap();
-            gpui_audio::init(cx).await.unwrap();
 
             let db = DBConnectionManager::get(cx);
             let registry =

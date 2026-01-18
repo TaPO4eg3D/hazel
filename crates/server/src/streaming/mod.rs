@@ -3,7 +3,7 @@ use bytes::{Buf, BytesMut};
 use rpc::models::markers::{Id, User, UserId};
 use tokio::net::UdpSocket;
 
-use crate::{AppState, config::Config};
+use crate::{AppState, config::{self, Config}};
 use streaming_common::UDPPacket;
 
 
@@ -20,12 +20,14 @@ pub async fn open_udp_socket(
 
     loop {
         buf.clear();
+        buf.resize(4800 * 10, 0);
 
         let (bytes_read, addr) = sock.recv_from(&mut buf).await?;
 
         if bytes_read == 0 {
             continue;
         }
+        buf.truncate(bytes_read);
 
         // To parse data but keep original bytes intact
         let buf = buf.split().freeze();
@@ -34,10 +36,10 @@ pub async fn open_udp_socket(
 
             UDPPacket::parse(&mut buf)
         };
-        let user_id = Id::<User>::new(packet.user_id);
+        let currend_user_id = Id::<User>::new(packet.user_id);
 
         // TODO: Do something with it, it shouldn't be that bad
-        let (voice_channel, addr_differs) = match state.connected_clients.get(&user_id) {
+        let (voice_channel, addr_differs) = match state.connected_clients.get(&currend_user_id) {
             Some(state) => {
                 let state = state.read()
                     .unwrap();
@@ -58,7 +60,7 @@ pub async fn open_udp_socket(
         };
 
         if addr_differs {
-            let Some(state) = state.connected_clients.get(&user_id) else {
+            let Some(state) = state.connected_clients.get(&currend_user_id) else {
                 continue;
             };
 
@@ -75,6 +77,10 @@ pub async fn open_udp_socket(
         };
         
         for user in users.iter() {
+            if *user == currend_user_id {
+                continue;
+            }
+
             if let Some(user) = state.connected_clients.get(user) {
                 let addr = { 
                     user.read().unwrap().active_stream 
