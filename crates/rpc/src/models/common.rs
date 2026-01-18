@@ -1,4 +1,4 @@
-use std::{fmt::Debug, marker::PhantomData};
+use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,4 +25,11 @@ macro_rules! check_auth {
             return Err(APIError::Unauthorized);
         }
     };
+}
+
+pub trait RPCMethod {
+    type Request;
+    type Response;
+
+    fn key() -> &'static str;
 }

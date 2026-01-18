@@ -101,7 +101,7 @@ impl WorkspaceScreen {
         .detach();
     }
 
-    pub fn watch_for_voice_updates(&mut self, cx: &mut Context<Self>) {
+    pub fn watch_for_voice_channels(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |_this, cx| {
             let connection = ConnectionManger::get(cx);
 

@@ -1,16 +1,23 @@
 use rpc::{
     common::Empty,
-    models::{auth::{
-        GetCurrentUserError, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
-        LoginError, LoginPayload, SessionKey,
-    }, markers::TaggedEntity},
+    models::{
+        auth::{
+            GetCurrentUser, GetCurrentUserError, GetSessionKeyError, GetSessionKeyPayload,
+            GetSessionKeyResponse, Login, LoginError, LoginPayload, SessionKey,
+        },
+        common::{APIError, RPCMethod as _},
+        markers::TaggedEntity,
+    },
     server::RpcRouter,
 };
 
 use sha2::{Digest, Sha256};
 
-use crate::{AppState, ConnectionState};
-use crate::entity::user::{self, Entity as User};
+use crate::{AppState, ConnectionState, api::common::{DbErrReponseCompat as _, RPCServer}};
+use crate::{
+    entity::user::{self, Entity as User},
+    register_endpoints,
+};
 
 use sea_orm::{DbErr, entity::*, query::*};
 
@@ -68,67 +75,55 @@ async fn get_session_key(
     }
 }
 
-async fn login(
-    state: AppState,
-    conn_state: ConnectionState,
-    LoginPayload { session_key }: LoginPayload,
-) -> Result<(), LoginError> {
-    if !session_key.verify(b"TODO") {
-        return Err(LoginError::InvalidSesssionKey);
+impl RPCServer for Login {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        LoginPayload { session_key }: LoginPayload,
+    ) -> Self::Response {
+        if !session_key.verify(b"TODO") {
+            return Err(APIError::Err(LoginError::InvalidSesssionKey));
+        }
+
+        if session_key.is_expired() {
+            return Err(APIError::Err(LoginError::SessionKeyExpired));
+        }
+
+        let user = User::find()
+            .filter(user::Column::Id.eq(session_key.body.user_id))
+            .one(&app_state.db)
+            .await
+            .map_err(DbErr::into_api_error)?
+            .ok_or(APIError::Err(LoginError::UserNotFound))?;
+        let user_id = user.tagged_id();
+
+        {
+            let mut state = connection_state.write().unwrap();
+
+            state.user = Some(user);
+        }
+
+        app_state.connected_clients.insert(user_id, connection_state);
+
+        Ok(())
     }
-
-    if session_key.is_expired() {
-        return Err(LoginError::SessionKeyExpired);
-    }
-
-    let user = User::find()
-        .filter(user::Column::Id.eq(session_key.body.user_id))
-        .one(&state.db)
-        .await
-        .map_err(|err| {
-            log::error!("Failure when fetching a User: {:?} ({})", session_key, err,);
-
-            LoginError::ServerError
-        })?
-        .ok_or(LoginError::UserNotFound)?;
-    let user_id = user.tagged_id();
-
-    {
-        let mut conn_state = conn_state.write().map_err(|err| {
-            log::error!(
-                "Failed to get a connection state: {:?} ({})",
-                session_key,
-                err,
-            );
-
-            LoginError::ServerError
-        })?;
-
-        conn_state.user = Some(user);
-    }
-
-    state.connected_clients.insert(user_id, conn_state);
-
-    Ok(())
 }
 
-async fn get_user_info(
-    _state: AppState,
-    conn_state: ConnectionState,
-    _: Empty,
-) -> Result<Option<i32>, GetCurrentUserError> {
-    let conn_state = conn_state.read().map_err(|err| {
-        log::error!("Failed to get a connection state: {}", err,);
+impl RPCServer for GetCurrentUser {
+    async fn handle(
+        _app_state: AppState,
+        connection_state: ConnectionState,
+        _req: Self::Request,
+    ) -> Self::Response {
+        let conn_state = connection_state.read().unwrap();
 
-        GetCurrentUserError::ServerError
-    })?;
-
-    Ok(conn_state.user.as_ref().map(|user| user.id))
+        Ok(conn_state.user.as_ref().map(|user| user.id))
+    }
 }
 
 pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState, ConnectionState> {
-    router
-        .register("Login", login)
-        .register("GetCurrentUser", get_user_info)
-        .register("GetSessionKey", get_session_key)
+    let router = router
+        .register("GetSessionKey", get_session_key);
+
+    register_endpoints!(router, GetCurrentUser, Login)
 }
