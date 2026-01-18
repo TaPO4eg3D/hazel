@@ -1,16 +1,11 @@
 use chrono::{DateTime, Duration, Utc};
 use hmac::{Hmac, Mac};
+use rpc_macros::rpc_method;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct GetSessionKeyPayload {
-    pub login: String,
-    pub password: String,
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LoginPayload {
@@ -26,8 +21,19 @@ pub enum LoginError {
     SessionKeyExpired,
     #[error("Wasn't able to find requested User")]
     UserNotFound,
-    #[error("Server Error")]
-    ServerError,
+}
+
+#[rpc_method]
+pub struct Login {
+    request: LoginPayload,
+    response: (),
+    error: LoginError,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetSessionKeyPayload {
+    pub login: String,
+    pub password: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -119,9 +125,23 @@ pub enum GetSessionKeyError {
     ServerError,
 }
 
+#[rpc_method]
+pub struct GetSessionKey {
+    request: GetSessionKeyPayload,
+    response: GetSessionKeyResponse,
+    error: GetSessionKeyError,
+}
+
 #[derive(Serialize, Deserialize)]
 #[derive(Error, Debug)]
 pub enum GetCurrentUserError {
     #[error("Server Error")]
     ServerError,
+}
+
+#[rpc_method]
+pub struct GetCurrentUser {
+    request: (),
+    response: Option<i32>,
+    error: GetCurrentUserError,
 }

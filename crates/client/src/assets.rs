@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use gpui::*;
 use gpui_component::IconNamed;
-use hazel_macros::IconPath;
+use client_macros::IconPath;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 
