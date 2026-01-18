@@ -141,6 +141,7 @@ impl Connection {
 
             // TODO: Handle errors properly
             let (method, bytes_read) = parse_rpc_method(&mut buf, _reader).await.expect("TODO");
+
             let (uuid, bytes_read) = parse_uuid(&mut buf, _reader, bytes_read + 1)
                 .await
                 .expect("TODO");

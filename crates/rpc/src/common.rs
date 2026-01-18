@@ -53,7 +53,7 @@ pub async fn parse_uuid<T: AsyncReadExt + Unpin>(
     let is_tagged = buf[start];
 
     if is_tagged == 0 {
-        return Ok((None, start));
+        return Ok((None, start + 1));
     }
 
     const UUID_LEN: usize = std::mem::size_of::<Uuid>();
