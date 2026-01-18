@@ -8,9 +8,13 @@ use gpui_component::{
 use rpc::{
     common::Empty,
     models::{
+        auth::{GetUserInfo, GetUserPayload},
         common::{APIResult, RPCMethod},
         markers::{Id, VoiceChannelId},
-        voice::{GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate, VoiceChannelUpdateMessage},
+        voice::{
+            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload,
+            VoiceChannelUpdate, VoiceChannelUpdateMessage,
+        },
     },
 };
 
@@ -58,10 +62,12 @@ impl WorkspaceScreen {
         }
     }
 
+    pub fn get_active_channel(&self) -> Option<&VoiceChannel> {
+        self.voice_channels.iter().find(|channel| channel.is_active)
+    }
+
     pub fn get_voice_channel(&self, id: VoiceChannelId) -> Option<&VoiceChannel> {
-        self.voice_channels
-            .iter()
-            .find(|channel| channel.id == id)
+        self.voice_channels.iter().find(|channel| channel.id == id)
     }
 
     pub fn get_voice_channel_mut(&mut self, id: VoiceChannelId) -> Option<&mut VoiceChannel> {
@@ -81,9 +87,9 @@ impl WorkspaceScreen {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let response = JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload {
-                channel_id: id
-            }).await;
+            let response =
+                JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload { channel_id: id })
+                    .await;
 
             Self::fetch_channels_inner(&this, cx).await;
             this.update(cx, |this, cx| {
@@ -92,24 +98,94 @@ impl WorkspaceScreen {
                 }
 
                 cx.notify();
-            }).ok();
+            })
+            .ok();
         })
         .detach();
     }
 
     pub fn watch_for_voice_channels(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
             let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
             while let Some(event) = subscription.recv().await {
+                println!("EVENT");
+
                 let channel_id = event.channel_id;
+                let channel = this
+                    .read_with(cx, |this, _cx| this.get_voice_channel(channel_id).cloned())
+                    .unwrap();
+
+                let Some(channel) = channel else {
+                    // If there's no such channel, fetch updates
+                    // and skip processing
+                    let active_channel = this
+                        .read_with(cx, |this, _cx| this.get_active_channel().cloned())
+                        .unwrap();
+
+                    Self::fetch_channels_inner(&this, cx).await;
+
+                    if let Some(channel) = active_channel {
+                        this.update(cx, move |this, cx| {
+                            if let Some(channel) = this.get_voice_channel_mut(channel.id) {
+                                channel.is_active = true;
+
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
+
+                    continue;
+                };
 
                 match event.message {
                     VoiceChannelUpdateMessage::UserConnected(user_id) => {
-                    },
+                        // If user is already present, skip processing
+                        let is_present = channel.members.iter().any(|user| user.id == user_id);
+
+                        if is_present {
+                            continue;
+                        }
+
+                        let user =
+                            GetUserInfo::execute(&connection, &GetUserPayload { id: user_id })
+                                .await;
+
+                        let Ok(Some(user)) = user else {
+                            continue;
+                        };
+
+                        this.update(cx, |this, cx| {
+                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
+                                return;
+                            };
+
+                            channel.members.push(VoiceChannelMember {
+                                id: user.id,
+                                name: user.username.into(),
+                                is_muted: false,
+                                is_talking: false,
+                                is_streaming: false,
+                            });
+
+                            cx.notify();
+                        })
+                        .ok();
+                    }
                     VoiceChannelUpdateMessage::UserDisconnected(user_id) => {
-                    },
+                        this.update(cx, |this, cx| {
+                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
+                                return;
+                            };
+
+                            channel.members.retain(|user| user.id != user_id);
+
+                            cx.notify();
+                        })
+                        .ok();
+                    }
                 }
             }
         })
@@ -119,8 +195,7 @@ impl WorkspaceScreen {
     async fn fetch_channels_inner(this: &WeakEntity<Self>, cx: &mut AsyncApp) {
         let connection = ConnectionManger::get(cx);
 
-        let response = GetVoiceChannels::execute(&connection, &Empty {})
-            .await;
+        let response = GetVoiceChannels::execute(&connection, &Empty {}).await;
 
         let Ok(channels) = response else {
             // TODO: Send notification with an error
@@ -154,7 +229,8 @@ impl WorkspaceScreen {
     pub fn fetch_channels(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async |this, cx| {
             Self::fetch_channels_inner(&this, cx).await;
-        }).detach();
+        })
+        .detach();
     }
 }
 

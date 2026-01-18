@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "crates/rpc",
-    "crates/macros",
+    "crates/rpc_macros",
+    "crates/client_macros",
     "crates/server",
     "crates/client",
     "crates/capture", 
@@ -13,7 +14,10 @@ default-members = ["crates/client"]
 
 [workspace.dependencies]
 rpc = { path = "crates/rpc" }
-hazel_macros = { path = "crates/macros" }
+
+rpc_macros = { path = "crates/rpc_macros" }
+client_macros = { path = "crates/client_macros" }
+
 capture = { path = "crates/capture" }
 streaming_common = { path = "crates/streaming_common" }
 
