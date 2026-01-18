@@ -1,7 +1,9 @@
 use std::fmt::Debug;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
+
+use crate::client::Connection;
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError<T: Debug> {
@@ -28,8 +30,19 @@ macro_rules! check_auth {
 }
 
 pub trait RPCMethod {
-    type Request;
-    type Response;
+    type Request: Serialize;
+    type Response: DeserializeOwned;
 
     fn key() -> &'static str;
+
+    #[allow(async_fn_in_trait)]
+    async fn execute(
+        connection: &Connection,
+        payload: &Self::Request,
+    ) -> Self::Response {
+        connection.execute(
+            Self::key(),
+            payload
+        ).await.expect("invalid params")
+    }
 }

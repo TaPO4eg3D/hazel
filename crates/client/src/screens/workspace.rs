@@ -8,9 +8,9 @@ use gpui_component::{
 use rpc::{
     common::Empty,
     models::{
-        common::APIResult,
+        common::{APIResult, RPCMethod},
         markers::{Id, VoiceChannelId},
-        voice::{JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate, VoiceChannelUpdateMessage},
+        voice::{GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate, VoiceChannelUpdateMessage},
     },
 };
 
@@ -81,13 +81,9 @@ impl WorkspaceScreen {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let _: APIResult<(), JoinVoiceChannelError> = connection
-                .execute(
-                    "JoinVoiceChannel",
-                    &JoinVoiceChannelPayload { channel_id: id },
-                )
-                .await
-                .expect("invalid params");
+            let response = JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload {
+                channel_id: id
+            }).await;
 
             Self::fetch_channels_inner(&this, cx).await;
             this.update(cx, |this, cx| {
@@ -123,18 +119,16 @@ impl WorkspaceScreen {
     async fn fetch_channels_inner(this: &WeakEntity<Self>, cx: &mut AsyncApp) {
         let connection = ConnectionManger::get(cx);
 
-        let data: APIResult<Vec<rpc::models::voice::VoiceChannel>, ()> = connection
-            .execute("GetVoiceChannels", &Empty {})
-            .await
-            .expect("invalid params");
+        let response = GetVoiceChannels::execute(&connection, &Empty {})
+            .await;
 
-        let Ok(data) = data else {
+        let Ok(channels) = response else {
             // TODO: Send notification with an error
             return;
         };
 
         this.update(cx, move |this, _cx| {
-            this.voice_channels = data
+            this.voice_channels = channels
                 .into_iter()
                 .map(|channel| VoiceChannel {
                     id: channel.id,

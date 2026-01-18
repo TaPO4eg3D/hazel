@@ -1,13 +1,20 @@
-
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px, rgb, white
+    AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    Styled, Window, div, prelude::FluentBuilder, px, rgb, white,
 };
 use gpui_component::{
     Disableable, Icon, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
-use rpc::models::{auth::{GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError, LoginPayload}, markers::Id};
+use rpc::models::{
+    auth::{
+        GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError,
+        LoginPayload,
+    },
+    common::{APIError, RPCMethod},
+    markers::Id,
+};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 use crate::{
@@ -133,18 +140,16 @@ impl LoginScreen {
             })?;
             let connection = ConnectionManger::get(cx);
 
-            let data: Result<GetSessionKeyResponse, GetSessionKeyError> = connection
-                .execute(
-                    "GetSessionKey",
-                    &GetSessionKeyPayload {
-                        login: login.into(),
-                        password: password.into(),
-                    },
-                )
-                .await
-                .expect("invalid params");
+            let response = GetSessionKey::execute(
+                &connection,
+                &GetSessionKeyPayload {
+                    login: login.into(),
+                    password: password.into(),
+                },
+            )
+            .await;
 
-            match data {
+            match response {
                 Ok(value) => {
                     let session_key = match value {
                         GetSessionKeyResponse::NewUser(key) => {
@@ -166,9 +171,9 @@ impl LoginScreen {
                         registry.session_key = Set(Some(session_key_bytes));
                         registry.connected_server = Set(Some(server_ip.into()));
 
-                        registry.update(&db).await
-                            .unwrap();
-                    }).await?;
+                        registry.update(&db).await.unwrap();
+                    })
+                    .await?;
 
                     let data: Result<(), LoginError> = connection
                         .execute(
@@ -182,25 +187,24 @@ impl LoginScreen {
 
                     data.expect("We just logged in, it should not fail");
 
-                    ConnectionManger::set_user_id(
-                        cx,
-                        Id::new(session_key.body.user_id),
-                    );
+                    ConnectionManger::set_user_id(cx, Id::new(session_key.body.user_id));
 
                     // Notify parent component that we're logged in
                     this.update(cx, |_, cx| {
                         cx.emit(());
-                    }).unwrap();
+                    })
+                    .unwrap();
                 }
-                Err(err) => {
-                    match err {
-                        GetSessionKeyError::UserAlreadyExists => {
-                            tx.send(ConnectionResult::Failed("incorrect password".to_string()))
-                                .await?;
-                        },
-                        _ => tx.send(ConnectionResult::Failed(format!("{err:?}"))).await?
+                Err(err) => match err {
+                    APIError::Err(GetSessionKeyError::UserAlreadyExists) => {
+                        tx.send(ConnectionResult::Failed("incorrect password".to_string()))
+                            .await?;
                     }
-                }
+                    _ => {
+                        tx.send(ConnectionResult::Failed(format!("{err:?}")))
+                            .await?
+                    }
+                },
             }
 
             this.update(cx, |this, cx| {

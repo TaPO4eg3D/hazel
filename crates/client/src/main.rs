@@ -7,7 +7,7 @@ use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
 use anyhow::Result as AResult;
 use rpc::{
     client::Connection,
-    models::{auth::{LoginError, LoginPayload, SessionKey}, markers::{Id, UserId}},
+    models::{auth::{Login, LoginError, LoginPayload, SessionKey}, common::RPCMethod, markers::{Id, UserId}},
 };
 
 pub mod assets;
@@ -214,10 +214,9 @@ fn main() {
 
                             match rmp_serde::from_slice::<SessionKey>(&session_key) {
                                 Ok(session_key) => {
-                                    let result: Result<(), LoginError> = connection
-                                        .execute("Login", &LoginPayload { session_key: session_key.clone() })
-                                        .await
-                                        .expect("invalid params");
+                                    let result = Login::execute(&connection, &LoginPayload {
+                                        session_key: session_key.clone(),
+                                    }).await;
 
                                     ConnectionManger::set_user_id(cx, Id::new(session_key.body.user_id));
 
