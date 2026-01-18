@@ -112,7 +112,7 @@ async fn login(
     Ok(())
 }
 
-async fn get_current_user(
+async fn get_user_info(
     _state: AppState,
     conn_state: ConnectionState,
     _: Empty,
@@ -129,6 +129,6 @@ async fn get_current_user(
 pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState, ConnectionState> {
     router
         .register("Login", login)
-        .register("GetCurrentUser", get_current_user)
+        .register("GetCurrentUser", get_user_info)
         .register("GetSessionKey", get_session_key)
 }

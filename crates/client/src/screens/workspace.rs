@@ -10,7 +10,7 @@ use rpc::{
     models::{
         common::APIResult,
         markers::{Id, VoiceChannelId},
-        voice::{JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate},
+        voice::{JoinVoiceChannelError, JoinVoiceChannelPayload, VoiceChannelUpdate, VoiceChannelUpdateMessage},
     },
 };
 
@@ -76,17 +76,8 @@ impl WorkspaceScreen {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(channel) = self.get_voice_channel(*id) else {
-            println!("Unexpected voice channel id: {}", id.value);
-
-            return;
-        };
-
-        if channel.is_active {
-            return;
-        }
-
         let id = *id;
+
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
@@ -110,13 +101,20 @@ impl WorkspaceScreen {
         .detach();
     }
 
-    pub fn watch_for_connections(&mut self, cx: &mut Context<Self>) {
+    pub fn watch_for_voice_updates(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |_this, cx| {
             let connection = ConnectionManger::get(cx);
 
             let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
-            while let Some(message) = subscription.recv().await {
-                println!("{message:?}");
+            while let Some(event) = subscription.recv().await {
+                let channel_id = event.channel_id;
+
+                match event.message {
+                    VoiceChannelUpdateMessage::UserConnected(user_id) => {
+                    },
+                    VoiceChannelUpdateMessage::UserDisconnected(user_id) => {
+                    },
+                }
             }
         })
         .detach();

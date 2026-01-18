@@ -1,7 +1,9 @@
 use std::{fmt::format, sync::Arc};
 
 use gpui::{
-    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder, px, red, rgb, white
+    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    RenderOnce, SharedString, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window,
+    div, percentage, prelude::FluentBuilder, px, red, rgb, white,
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
 use rpc::models::markers::{UserId, VoiceChannelId};
@@ -97,7 +99,7 @@ impl CollapasableCard {
 }
 
 impl RenderOnce for CollapasableCard {
-    fn render(self, window: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut gpui::Window, _: &mut App) -> impl IntoElement {
         div()
             .refine_style(&self.style)
             .child(
@@ -231,7 +233,10 @@ impl VoiceChannelsComponent {
         }
     }
 
-    pub fn on_select(mut self, f: impl Fn(&VoiceChannelId, &mut Window, &mut App) + Send + Sync + 'static) -> Self {
+    pub fn on_select(
+        mut self,
+        f: impl Fn(&VoiceChannelId, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
         self.on_select = Some(Arc::new(f));
 
         self
@@ -274,7 +279,7 @@ impl RenderOnce for IconRoundedButton {
 }
 
 impl RenderOnce for VoiceChannelsComponent {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let channels = self.channels.iter().map(|channel| {
             let members = channel.members.iter().map(|member| {
                 div()
@@ -316,16 +321,17 @@ impl RenderOnce for VoiceChannelsComponent {
                     .when(channel.is_active, |this| {
                         this.border_color(rgb(0x7B5CFF)).border_2()
                     })
-                    .when_some(self.on_select.clone(), {
-                        let id = channel.id;
+                    .when(!channel.is_active, |this| {
+                        this.cursor_pointer().when_some(self.on_select.clone(), {
+                            let id = channel.id;
 
-                        move |this, on_select| {
-                            this.on_click(move |_, window, app| {
-                                on_select(&id, window, app);
-                            })
-                        }
+                            move |this, on_select| {
+                                this.on_click(move |_, window, app| {
+                                    on_select(&id, window, app);
+                                })
+                            }
+                        })
                     })
-                    .when(!channel.is_active, |this| this.cursor_pointer())
                     .v_flex()
                     .child(
                         div()
