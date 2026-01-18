@@ -96,41 +96,44 @@ async fn join_voice_channel(
         conn_state
             .read()
             .unwrap()
-            .user
-            .as_ref()
-            .unwrap()
-            .tagged_id()
+            .get_user_id()
+            .expect("We checked auth above")
     };
 
+    // Update global state in a block to not hold 
+    // the lock for a long time
     {
-        state.channels.voice_channels
+        state
+            .channels
+            .voice_channels
             .entry(payload.channel_id)
             .and_modify(|v| {
                 v.push(current_user_id);
             })
-            .or_insert_with(|| {
-                vec![current_user_id]
-            });
+            .or_insert_with(|| vec![current_user_id]);
+    }
+
+    // Update connection state in a block to not hold 
+    // the lock for a long time
+    {
+        let mut conn_state = conn_state.write()
+            .unwrap();
+
+        conn_state.active_voice_channel = Some(payload.channel_id);
     }
 
     for value in state.connected_clients.iter() {
-        let user_id = {
-            let conn_state = value.read().unwrap();
-            let Some(user) = conn_state.user.as_ref() else {
-                continue;
-            };
+        let user_id = value.read().unwrap().get_user_id();
 
-            user.tagged_id()
+        let Some(user_id) = user_id else {
+            continue;
         };
 
         if user_id == current_user_id {
             continue;
         }
 
-        let writer = {
-            let conn_state = value.read().unwrap();
-            conn_state.writer.clone()
-        };
+        let writer = value.read().unwrap().writer.clone();
 
         writer
             .write(
