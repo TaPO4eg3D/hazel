@@ -136,7 +136,7 @@ pub struct Streaming {}
 impl Streaming {
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.tx.send(StreamingMessage::Connect((user_id.value, addr)))
+            _ = stream.tx.send(StreamingMessage::Connect((user_id.value, addr)))
         });
     }
 }

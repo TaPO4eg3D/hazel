@@ -4,17 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+log = { workspace = true }
+
 bytes = { workspace = true }
 anyhow = { workspace = true }
+crossbeam = { workspace = true }
 
 streaming_common = { workspace = true }
 
-arc-swap = "1.8.0"
 ffmpeg-next = "8.0.0"
 
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
-nnnoiseless = "0.5.2"
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 
+nnnoiseless = "0.5.2"
+
 ringbuf = "0.4.8"
-mio = { version = "1.1.1", features = ["net"] }
