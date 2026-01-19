@@ -109,7 +109,7 @@ impl WorkspaceScreen {
             Streaming::connect(
                 cx,
                 user_id,
-                SocketAddr::from_str("127.0.0.1:9899").unwrap(),
+                SocketAddr::from_str("188.208.103.225:9899").unwrap(),
             );
         })
         .detach();

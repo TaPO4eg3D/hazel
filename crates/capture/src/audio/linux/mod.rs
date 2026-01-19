@@ -1,14 +1,17 @@
-use std::{cell::LazyCell, collections::VecDeque, net::UdpSocket, sync::{self, Arc, LazyLock, atomic::AtomicBool}, thread};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, atomic::AtomicBool},
+    thread,
+};
 
-use anyhow::{Result as AResult, bail};
-use bytes::BytesMut;
+use anyhow::Result as AResult;
 use libspa::param::{
     ParamType,
     audio::{AudioFormat, AudioInfoRaw},
     format::{MediaSubtype, MediaType},
     format_utils,
 };
-use nnnoiseless::{DenoiseState, dasp::sample::FromSample};
+use nnnoiseless::DenoiseState;
 use pipewire::{
     self as pw,
     properties::properties,
@@ -22,9 +25,6 @@ use ffmpeg::{ChannelLayout, format};
 use ffmpeg_next::{self as ffmpeg, Packet, codec, frame};
 
 use streaming_common::FFMpegPacketPayload;
-
-pub const DEFAULT_RATE: u32 = 48000;
-pub const DEFAULT_CHANNELS: u32 = 2;
 
 struct CaptureStreamData {
     encoder: AudioEncoder,
@@ -94,8 +94,7 @@ impl AudioDecoder {
     }
 
     fn decode_inner(&mut self, packet: Packet) {
-        self.decoder.send_packet(&packet)
-            .unwrap();
+        self.decoder.send_packet(&packet).unwrap();
 
         while self.decoder.receive_frame(&mut self.decoded_frame).is_ok() {
             let channels = self.decoded_frame.channels();
@@ -103,7 +102,7 @@ impl AudioDecoder {
 
             let is_planar = format == format::Sample::F32(format::sample::Type::Planar);
 
-            match (is_planar, channels)  {
+            match (is_planar, channels) {
                 (true, 2) => {
                     // Convert into F32::Packed
                     let left = self.decoded_frame.plane::<f32>(0);
@@ -113,7 +112,7 @@ impl AudioDecoder {
                         self.decoded_frames_queue.push_back(*l);
                         self.decoded_frames_queue.push_back(*r);
                     }
-                },
+                }
                 (false, 2) => {
                     // Already Packed stereo
                     // TODO: Fix, it won't work because of the bug in `ffpeg-next`,
@@ -121,7 +120,7 @@ impl AudioDecoder {
                     let data = self.decoded_frame.plane::<f32>(0);
 
                     self.decoded_frames_queue.extend(data)
-                },
+                }
                 (_, 1) => {
                     // Convert mono to stereo by duplicating
                     let data = self.decoded_frame.plane::<f32>(0);
@@ -130,7 +129,7 @@ impl AudioDecoder {
                         self.decoded_frames_queue.push_back(*sample);
                         self.decoded_frames_queue.push_back(*sample);
                     }
-                },
+                }
                 _ => unimplemented!("Unhandled case: {:?}", (is_planar, channels)),
             }
         }
@@ -216,108 +215,6 @@ impl StreamingCompatInto for Packet {
     }
 }
 
-struct AudioEncoder {
-    encoder: encoder::audio::Encoder,
-
-    /// Buffer for raw samples, reused
-    raw_frame: frame::audio::Audio,
-
-    /// Buffer for encoded data, reused
-    encoded_packet: Packet,
-
-    /// Queue of samples, waiting minimum number
-    /// of samples that encoder requires
-    frame_queue: VecDeque<f32>,
-
-    /// Buffer of packets that are ready to be sent over
-    /// the network
-    packet_buff: VecDeque<FFMpegPacketPayload>,
-
-    /// Count number of frames for decoder
-    pts_counter: i64,
-}
-
-impl AudioEncoder {
-    fn new() -> Self {
-        let codec = encoder::find(ffmpeg::codec::Id::OPUS).expect("Opus codec not found");
-        let context = ffmpeg::codec::context::Context::new_with_codec(codec);
-
-        let codec = codec.audio().unwrap();
-
-        let mut encoder = context.encoder().audio().unwrap();
-
-        encoder.set_rate(DEFAULT_RATE as i32);
-        encoder.set_channel_layout(ChannelLayout::MONO);
-        encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
-
-        // As recommended per: https://wiki.xiph.org/Opus_Recommended_Settings
-        encoder.set_bit_rate(128000);
-        encoder.set_time_base((1, DEFAULT_RATE as i32));
-
-        let encoder = encoder.open_as(codec).unwrap();
-
-        // Just a note for myself, in case I forget that shit again:
-        // `frame_size` means number of samples **PER** channel
-        let frame_size = encoder.frame_size() as usize;
-
-        Self {
-            encoder,
-            raw_frame: frame::audio::Audio::new(
-                format::Sample::F32(format::sample::Type::Packed),
-                frame_size,
-                ChannelLayout::MONO,
-            ),
-            pts_counter: 0,
-            packet_buff: VecDeque::new(),
-            encoded_packet: Packet::empty(),
-            frame_queue: VecDeque::new(),
-        }
-    }
-
-    fn encode(&mut self, samples: &[f32]) {
-        self.frame_queue.extend(samples);
-
-        loop {
-            // Because of a bug in `ffpeg-next`, it does not account
-            // for channels when we have packed audio
-            let plane = unsafe {
-                std::slice::from_raw_parts_mut(
-                    (*self.raw_frame.as_mut_ptr())
-                        .data[0] as *mut f32,
-                    self.raw_frame.samples() * self.raw_frame.channels() as usize,
-                )
-            };
-
-            if self.frame_queue.pop_slice(plane, false) == 0 {
-                break;
-            }
-
-            self.raw_frame.set_pts(Some(self.pts_counter));
-            self.encoder.send_frame(&self.raw_frame).unwrap();
-
-            let (new_pts, _) = self.pts_counter.overflowing_add(
-                self.encoder.frame_size() as i64,
-            );
-
-            self.pts_counter = new_pts;
-
-            while self
-                .encoder
-                .receive_packet(&mut self.encoded_packet)
-                .is_ok()
-            {
-                let encoded_data = self.encoded_packet.data().unwrap_or_default();
-
-                if encoded_data.is_empty() {
-                    continue;
-                }
-
-                self.packet_buff.push_back(self.encoded_packet.to_payload())
-            }
-        }
-    }
-}
-
 impl<'a> CaptureStream<'a> {
     const STREAM_NAME: &'static str = "HAZEL Audio Capture";
 
@@ -384,25 +281,25 @@ impl<'a> CaptureStream<'a> {
             if this.enable_noise_reduction {
                 this.rnnoise_queue.extend(captured_samples);
 
-                while this.rnnoise_queue.pop_slice(
-                    &mut this.rnnoise_in_buff, false
-                ) > 0 {
+                while this
+                    .rnnoise_queue
+                    .pop_slice(&mut this.rnnoise_in_buff, false)
+                    > 0
+                {
                     // As described in the `process_frame` documentation
                     for sample in this.rnnoise_in_buff.iter_mut() {
                         *sample = (32767.5 * (*sample) - 0.5).round();
                     }
 
-                    this.denoise_state.process_frame(
-                        &mut this.rnnoise_out_buff,
-                        &this.rnnoise_in_buff,
-                    );
+                    this.denoise_state
+                        .process_frame(&mut this.rnnoise_out_buff, &this.rnnoise_in_buff);
 
                     for sample in this.rnnoise_out_buff.iter_mut() {
                         *sample = ((*sample) + 0.5) / 32767.5;
                     }
 
                     this.encoder.encode(&this.rnnoise_out_buff);
-                };
+                }
             } else {
                 this.encoder.encode(captured_samples);
             }
@@ -534,7 +431,7 @@ impl<'a> PlaybackStream<'a> {
             match msg {
                 PlaybackClientMessage::AddClient(client) => {
                     user_data.clients.push(client);
-                },
+                }
                 PlaybackClientMessage::RemoveClient(id) => {
                     user_data.clients.retain(|client| client.user_id != id);
                 }
@@ -564,19 +461,16 @@ impl<'a> PlaybackStream<'a> {
             };
 
             // Cleanup to ensure we don't mix garbage
-            output_samples
-                .iter_mut()
-                .for_each(|i| *i = 0.);
+            output_samples.iter_mut().for_each(|i| *i = 0.);
 
             // Mix multiple clients into a single stream
             let mut max_read_count = 0;
             for client in user_data.clients.iter_mut() {
-                let read_count = client
-                    .decoder
-                    .decoded_frames_queue
-                    .pop_slice_with(output_samples, true, |old, new| {
-                        (old + new).min(1.)
-                    });
+                let read_count = client.decoder.decoded_frames_queue.pop_slice_with(
+                    output_samples,
+                    true,
+                    |old, new| (old + new).min(1.),
+                );
 
                 max_read_count = max_read_count.max(read_count);
             }
@@ -689,33 +583,27 @@ impl Audio {
             let context = pw::context::ContextRc::new(&mainloop, None)?;
             let core = context.connect_rc(None)?;
 
-            let _capture = CaptureStream::new(
-                &core,
-                packet_sender,
-                loopback_producer,
-                _capture,
-            )?;
-            let _playback = PlaybackStream::new(
-                &core,
-                loopback_consumer,
-                clients_reciever,
-            )?;
+            let _capture = CaptureStream::new(&core, packet_sender, loopback_producer, _capture)?;
+            let _playback = PlaybackStream::new(&core, loopback_consumer, clients_reciever)?;
 
             mainloop.run();
 
             Ok::<_, anyhow::Error>(())
         });
 
-        Ok((Audio {
-            capture,
-            clients_sender,
-        }, packet_reciever))
+        Ok((
+            Audio {
+                capture,
+                clients_sender,
+            },
+            packet_reciever,
+        ))
     }
 
     pub fn remove_client(&self, client: RegisteredClient) {
-        _ = self.clients_sender.send(PlaybackClientMessage::RemoveClient(
-            client.user_id
-        ));
+        _ = self
+            .clients_sender
+            .send(PlaybackClientMessage::RemoveClient(client.user_id));
     }
 
     pub fn register_client(&self, user_id: i32) -> RegisteredClient {
@@ -730,7 +618,9 @@ impl Audio {
             is_talking: is_talking.clone(),
         };
 
-        _ = self.clients_sender.send(PlaybackClientMessage::AddClient(state));
+        _ = self
+            .clients_sender
+            .send(PlaybackClientMessage::AddClient(state));
 
         RegisteredClient {
             user_id,
@@ -744,6 +634,7 @@ impl Audio {
     }
 
     pub fn set_capture(&self, value: bool) {
-        self.capture.store(value, std::sync::atomic::Ordering::SeqCst);
+        self.capture
+            .store(value, std::sync::atomic::Ordering::SeqCst);
     }
 }
