@@ -1,12 +1,14 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, thread};
+
+use anyhow::Result as AResult;
 
 use ffmpeg_next::{Packet, codec};
 use streaming_common::FFMpegPacketPayload;
 
 pub mod linux;
 
-pub mod encode;
 pub mod decode;
+pub mod encode;
 
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
@@ -86,3 +88,15 @@ impl StreamingCompatInto for Packet {
     }
 }
 
+enum PlatformCaptureStream<'a> {
+    Linux(linux::capture::CaptureStream<'a>),
+}
+
+pub struct Capture<'a> {
+    stream: PlatformCaptureStream<'a>,
+}
+
+pub struct Playback {}
+
+pub fn init_linux() {
+}
