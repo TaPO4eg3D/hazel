@@ -8,7 +8,7 @@ use crate::audio::{DEFAULT_BIT_RATE, DEFAULT_RATE, StreamingCompatInto as _, Vec
 /// Instance of the Opus encoder. Please note that Opus is 
 /// a stateful codec, hence each client MUST have its own instance
 /// of this encoder. Otherwise, encoding artifacts are guaranteed
-struct AudioEncoder {
+pub struct AudioEncoder {
     /// Instance of the Opus FFmpeg encoder
     encoder: encoder::audio::Encoder,
 
@@ -35,7 +35,7 @@ struct AudioEncoder {
 }
 
 impl AudioEncoder {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let codec = encoder::find(codec::Id::OPUS).expect("Opus codec not found");
         let context = codec::context::Context::new_with_codec(codec);
 
@@ -72,13 +72,13 @@ impl AudioEncoder {
         }
     }
 
-    fn pop_packet(&mut self) -> Option<FFMpegPacketPayload> {
+    pub fn pop_packet(&mut self) -> Option<FFMpegPacketPayload> {
         self.encoded_packets.pop_front()
     }
 
     /// Encoded provided `samples`. This could result in multiple encoded packets.
     /// Packets can be extracted by using [`Self::pop_packet`] function.
-    fn encode(&mut self, samples: &[f32]) {
+    pub fn encode(&mut self, samples: &[f32]) {
         self.frame_queue.extend(samples);
 
         loop {
