@@ -5,6 +5,8 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
+use crossbeam::channel;
+
 use crate::audio::{DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
 
 pub mod capture;
@@ -27,6 +29,12 @@ impl LinuxCapture {
 
 pub struct LinuxPlayback {
     playback_producer: HeapProd<f32>,
+}
+
+impl LinuxPlayback {
+    pub fn push(&mut self, data: &[f32]) {
+        _ = self.playback_producer.push_slice(data);
+    }
 }
 
 fn init() -> (LinuxCapture, LinuxPlayback) {
@@ -60,9 +68,9 @@ fn init() -> (LinuxCapture, LinuxPlayback) {
 
         let _playback = PlaybackStream::new(core, playback_consumer)?;
 
-        pw_receiver.attach(mainloop.loop_(), move |msg| match msg {
+        let _attached = pw_receiver.attach(mainloop.loop_(), move |msg| match msg {
             PipewireCommand::SetCapture(capture) => {
-                stream.set_active(capture);
+                _ = stream.set_active(capture);
             }
         });
 

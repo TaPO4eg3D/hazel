@@ -16,6 +16,12 @@ pub enum StreamingMessage {
     Disconnect,
 }
 
+fn spawn_sender() {
+}
+
+fn spawn_reciever() {
+}
+
 fn init_sender(
     socket: Arc<UdpSocket>,
     addr: Addr,

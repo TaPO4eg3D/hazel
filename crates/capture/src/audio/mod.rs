@@ -1,9 +1,12 @@
-use std::{collections::VecDeque, thread};
+use std::{collections::{BinaryHeap, VecDeque}, thread, time::Instant};
 
 use anyhow::Result as AResult;
 
 use ffmpeg_next::{Packet, codec};
+use ringbuf::{HeapCons, HeapProd, traits::Producer};
 use streaming_common::FFMpegPacketPayload;
+
+use crate::audio::{decode::AudioDecoder, linux::{LinuxCapture, LinuxPlayback}};
 
 pub mod linux;
 
@@ -88,15 +91,32 @@ impl StreamingCompatInto for Packet {
     }
 }
 
-enum PlatformCaptureStream<'a> {
-    Linux(linux::capture::CaptureStream<'a>),
+pub struct StreamingClient {
+    user_id: i32,
+    decoder: AudioDecoder,
+
+    packets: BinaryHeap<FFMpegPacketPayload>,
 }
 
-pub struct Capture<'a> {
-    stream: PlatformCaptureStream<'a>,
+enum PlaybackCommand {
 }
 
-pub struct Playback {}
+pub struct Capture {
+    platform_capture: LinuxCapture,
+}
+
+pub struct Playback {
+    buf: Vec<f32>,
+    platform_playback: LinuxPlayback,
+}
+
+impl Playback {
+    /// Process all streaming clients and flush to the playback stream
+    /// if we have enough data. Returns true if clients have no more
+    /// data (used for efficient waiting)
+    pub fn process_streaming(&mut self, clients: &[StreamingClient]) {
+    }
+}
 
 pub fn init_linux() {
 }
