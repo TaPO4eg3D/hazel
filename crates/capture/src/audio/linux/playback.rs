@@ -11,7 +11,7 @@ struct PlaybackStreamData {
 }
 
 pub(crate) struct PlaybackStream {
-    stream: StreamRc,
+    pub(crate) stream: StreamRc,
     stream_listener: StreamListener<PlaybackStreamData>,
 }
 

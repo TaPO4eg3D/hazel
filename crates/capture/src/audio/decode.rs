@@ -13,7 +13,7 @@ pub(crate) struct AudioDecoder {
     decoded_frame: frame::Audio,
 
     /// That's the "output" of [`Self::decode`] function
-    decoded_samples: VecDeque<f32>,
+    pub(crate) decoded_samples: VecDeque<f32>,
 }
 
 impl AudioDecoder {
