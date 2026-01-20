@@ -35,6 +35,7 @@ pub struct AudioEncoder {
 }
 
 impl AudioEncoder {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let codec = encoder::find(codec::Id::OPUS).expect("Opus codec not found");
         let context = codec::context::Context::new_with_codec(codec);

@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
-use ffmpeg_next::{ChannelLayout, Packet, codec, format, frame};
+use ffmpeg_next::{ChannelLayout, Packet, codec, dictionary, format, frame};
 
 /// Instance of the Opus decoder. Please note that Opus is
 /// a stateful codec, hence each client MUST have its own instance
 /// of this decoder. Otherwise, encoding artifacts are guaranteed
-pub struct AudioDecoder {
+pub(crate) struct AudioDecoder {
     /// Instance of the Opus FFmpeg decoder
     decoder: codec::decoder::Audio,
 
@@ -17,11 +17,22 @@ pub struct AudioDecoder {
 }
 
 impl AudioDecoder {
-    pub fn new() -> Self {
+    #[allow(clippy::new_without_default)]
+    pub(crate) fn new() -> Self {
         let codec = codec::decoder::find(codec::Id::OPUS).expect("Opus codec is not found");
-        let context = codec::context::Context::new_with_codec(codec);
+        let context = codec::context::Context::new();
 
-        let mut decoder = context.decoder().audio().unwrap();
+        // Enable Opus DTX feature to save bandwidth
+        // (almost no bandwidth on silence)
+        let mut opts = dictionary::Owned::new();
+        opts.set("dtx", "1");
+
+        let mut decoder = context
+            .decoder()
+            .open_as_with(codec, opts)
+            .and_then(|o| o.audio())
+            .unwrap();
+
         decoder.set_channel_layout(ChannelLayout::STEREO);
 
         Self {
@@ -32,7 +43,7 @@ impl AudioDecoder {
         }
     }
 
-    fn decode(&mut self, packet: Packet) {
+    pub(crate) fn decode(&mut self, packet: Packet) {
         self.decoder.send_packet(&packet).unwrap();
 
         while self.decoder.receive_frame(&mut self.decoded_frame).is_ok() {

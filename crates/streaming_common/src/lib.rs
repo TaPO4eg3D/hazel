@@ -1,11 +1,23 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FFMpegPacketPayload {
     pub pts: i64,
     pub flags: i32,
 
     pub data: Vec<u8>,
+}
+
+impl PartialOrd for FFMpegPacketPayload {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FFMpegPacketPayload {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.pts.cmp(&other.pts)
+    }
 }
 
 impl FFMpegPacketPayload {
@@ -21,14 +33,9 @@ impl FFMpegPacketPayload {
         let flags = bytes.get_i32_le();
 
         let data_len = bytes.remaining();
-        let data = bytes.slice(0..data_len)
-            .to_vec();
-        
-        Self {
-            pts,
-            flags,
-            data,
-        }
+        let data = bytes.slice(0..data_len).to_vec();
+
+        Self { pts, flags, data }
     }
 }
 
@@ -43,12 +50,8 @@ pub enum UDPPacketType {
 impl UDPPacketType {
     pub fn from_byte(ty: u8, bytes: Bytes) -> Self {
         match ty {
-            0 => UDPPacketType::Voice(
-                FFMpegPacketPayload::parse(bytes)
-            ),
-            1 => UDPPacketType::Stream(
-                FFMpegPacketPayload::parse(bytes)
-            ),
+            0 => UDPPacketType::Voice(FFMpegPacketPayload::parse(bytes)),
+            1 => UDPPacketType::Stream(FFMpegPacketPayload::parse(bytes)),
             2 => UDPPacketType::Ping,
             3 => UDPPacketType::Pong,
             _ => todo!(),
@@ -63,7 +66,6 @@ impl UDPPacketType {
             UDPPacketType::Pong => 3,
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -75,7 +77,7 @@ pub struct UDPPacket {
 impl UDPPacket {
     pub fn to_bytes(&self, buf: &mut BytesMut) {
         let ty = self.payload.get_ty_byte();
-        
+
         buf.put_u8(ty);
         buf.put_i32_le(self.user_id);
 
@@ -100,5 +102,3 @@ impl UDPPacket {
         }
     }
 }
-
-
