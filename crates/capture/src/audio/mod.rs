@@ -1,13 +1,9 @@
+use core::panic;
 use std::{
-    cell::UnsafeCell,
-    collections::{BinaryHeap, VecDeque},
-    mem::MaybeUninit,
-    sync::{
+    cell::UnsafeCell, collections::{BinaryHeap, VecDeque}, mem::MaybeUninit, ptr::NonNull, sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-    },
-    thread,
-    time::Instant,
+    }, thread, time::Instant
 };
 
 use anyhow::Result as AResult;
@@ -115,56 +111,60 @@ pub struct StreamingClient {
     packets: BinaryHeap<FFMpegPacketPayload>,
 }
 
-type Slot = UnsafeCell<Option<channel::Sender<Vec<f32>>>>;
+pub enum AudioLoopCommand {
+    SetEnabledCapture(bool),
+    SetEnabledPlayback(bool),
+}
 
 /// Playback handle, can be safely shared between threads
+#[derive(Clone)]
 pub struct Capture {
-    rx: channel::Receiver<Vec<f32>>,
-
-    slot: u8,
+    idx_count: Arc<AtomicUsize>,
 
     handle: Arc<thread::JoinHandle<()>>,
     is_enabled: Arc<AtomicBool>,
 
-    consumers: Arc<AtomicU8>,
-    consumer_slots: Arc<[Slot]>,
+    platform_loop_controller: pipewire::channel::Sender<AudioLoopCommand>,
+    consumers: Arc<RwLock<Vec<channel::Sender<Vec<u8>>>>>,
 }
 
-impl Clone for Capture {
-    fn clone(&self) -> Self {
-        let consumers = self.consumers.clone();
-        let consumer_slots = self.consumer_slots.clone();
+pub struct CaptureReciever<'a> {
+    idx: usize,
+    rx: channel::Receiver<Vec<u8>>,
+    capture: &'a Capture,
+}
 
-        let idx = consumers.fetch_add(1, Ordering::AcqRel);
+impl<'a> CaptureReciever<'a> {
+    fn new(capture: &'a Capture) -> CaptureReciever<'a> {
+        let mut recievers = capture.consumers
+            .write().unwrap();
+
         let (tx, rx) = channel::unbounded();
 
-        unsafe {
-            let slot = &consumer_slots[idx as usize];
-            let slot = &mut *slot.get();
+        let is_empty = recievers.is_empty();
+        recievers.push(tx);
 
-            slot.replace(tx);
+        if is_empty {
+            capture.set_enabled(true);
         }
 
         Self {
+            idx: recievers.len() - 1,
             rx,
-            slot: idx,
-            handle: self.handle.clone(),
-            is_enabled: self.is_enabled.clone(),
-            consumers: self.consumers.clone(),
-            consumer_slots: self.consumer_slots.clone(),
+            capture,
         }
     }
 }
 
-impl Drop for Capture {
+impl<'a> Drop for CaptureReciever<'a> {
     fn drop(&mut self) {
-        let idx = self.consumers.fetch_sub(1, Ordering::AcqRel);
+        let mut recievers = self.capture.consumers
+            .write().unwrap();
 
-        unsafe {
-            let slot = &self.consumer_slots[idx as usize];
-            let slot = &mut *slot.get();
+        recievers.remove(self.idx);
 
-            _ = slot.take()
+        if recievers.is_empty() {
+            self.capture.set_enabled(false);
         }
     }
 }
@@ -172,39 +172,53 @@ impl Drop for Capture {
 impl Capture {
     const MAX_CONSUMERS: usize = 4;
 
-    fn new(platform_capture: PlatformCapture) -> Self {
+    fn new(mut platform_capture: PlatformCapture) -> Self {
         let (tx, rx) = channel::unbounded();
 
         let is_enabled = Arc::new(AtomicBool::new(false));
-        let handle = thread::spawn(move || {
-            // We start with disabled capturing
-            thread::park();
+        let platform_loop_controller = platform_capture.get_controller();
+
+        let consumers = Arc::new(RwLock::new(Vec::new()));
+
+        let handle = thread::spawn({
+            let consumers = consumers.clone();
+            let is_enabled = is_enabled.clone();
+
+            move || {
+                let mut buf = vec![0.; (DEFAULT_RATE * 2) as usize];
+
+                // We start with disabled capturing
+                thread::park();
+
+                loop {
+                    if is_enabled.load(Ordering::Relaxed) {
+                        std::thread::park();
+                    }
+
+                    let len = platform_capture.pop(&mut buf);
+
+                }
+            }
         });
 
-        let consumer_slots: Arc<[Slot]> = (0..Self::MAX_CONSUMERS)
-            .map(|i| UnsafeCell::new(None))
-            .collect();
-
-        unsafe {
-            let slot = &consumer_slots[0];
-            let slot = &mut *slot.get();
-
-            slot.replace(tx);
-        }
 
         Self {
-            rx,
             is_enabled,
+            consumers,
+            platform_loop_controller,
             handle: Arc::new(handle),
-
-            slot: 0,
-            consumers: Arc::new(AtomicU8::new(0)),
-            consumer_slots,
+            idx_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     fn set_enabled(&self, value: bool) {
         self.is_enabled.store(value, Ordering::Relaxed);
+
+        _ = self.platform_loop_controller.send(AudioLoopCommand::SetEnabledCapture(value));
+
+        if value {
+            self.handle.thread().unpark();
+        }
     }
 }
 

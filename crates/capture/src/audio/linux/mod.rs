@@ -5,39 +5,34 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
-use crate::audio::{DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
+use crate::audio::{AudioLoopCommand, DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
 
 pub mod capture;
 pub mod playback;
 
-enum PipewireCommand {
-    SetCapture(bool),
-    SetPlayback(bool),
-}
-
-pub struct LinuxCapture {
-    pw_sender: pw::channel::Sender<PipewireCommand>,
+pub(crate) struct LinuxCapture {
+    pw_sender: pw::channel::Sender<AudioLoopCommand>,
     capture_consumer: HeapCons<f32>,
 }
 
 impl LinuxCapture {
-    fn set_active(&self, active: bool) {
-        _ = self.pw_sender.send(PipewireCommand::SetCapture(active));
+    pub(crate) fn pop(&mut self, buf: &mut [f32]) -> usize {
+        self.capture_consumer.pop_slice(buf)
+    }
+
+    pub fn get_controller(&self) -> pw::channel::Sender<AudioLoopCommand> {
+        self.pw_sender.clone()
     }
 }
 
 pub struct LinuxPlayback {
-    pw_sender: pw::channel::Sender<PipewireCommand>,
+    pw_sender: pw::channel::Sender<AudioLoopCommand>,
     playback_producer: HeapProd<f32>,
 }
 
 impl LinuxPlayback {
     pub fn push(&mut self, data: &[f32]) {
         self.playback_producer.push_slice(data);
-    }
-
-    pub fn set_active(&self, active: bool) {
-        _ = self.pw_sender.send(PipewireCommand::SetCapture(active));
     }
 }
 
@@ -48,7 +43,7 @@ fn init() -> (LinuxCapture, LinuxPlayback) {
     let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
     let (playback_producer, playback_consumer) = ring.split();
 
-    let (pw_sender, pw_receiver) = pw::channel::channel::<PipewireCommand>();
+    let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
     let capture = LinuxCapture {
         pw_sender: pw_sender.clone(),
@@ -77,10 +72,10 @@ fn init() -> (LinuxCapture, LinuxPlayback) {
         // TODO: Maybe it's better to emit a loop event
         // and deactivate inside the event handler (to clean up leftovers)
         let _attached = pw_receiver.attach(mainloop.loop_(), move |msg| match msg {
-            PipewireCommand::SetCapture(active) => {
+            AudioLoopCommand::SetEnabledCapture(active) => {
                 _ = capture_stream.set_active(active);
             },
-            PipewireCommand::SetPlayback(active) => {
+            AudioLoopCommand::SetEnabledPlayback(active) => {
                 _ = playback_stream.set_active(active);
             }
         });
