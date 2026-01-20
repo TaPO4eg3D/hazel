@@ -39,7 +39,7 @@ struct CaptureStreamData {
 }
 
 pub(crate) struct CaptureStream {
-    pub stream: pw::stream::StreamRc,
+    pub(crate) stream: pw::stream::StreamRc,
     stream_listener: StreamListener<CaptureStreamData>,
 }
 

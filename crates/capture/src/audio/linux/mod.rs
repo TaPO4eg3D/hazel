@@ -5,8 +5,6 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
-use crossbeam::channel;
-
 use crate::audio::{DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
 
 pub mod capture;
@@ -14,6 +12,7 @@ pub mod playback;
 
 enum PipewireCommand {
     SetCapture(bool),
+    SetPlayback(bool),
 }
 
 pub struct LinuxCapture {
@@ -22,18 +21,23 @@ pub struct LinuxCapture {
 }
 
 impl LinuxCapture {
-    fn set_capture(&self, capture: bool) {
-        _ = self.pw_sender.send(PipewireCommand::SetCapture(capture));
+    fn set_active(&self, active: bool) {
+        _ = self.pw_sender.send(PipewireCommand::SetCapture(active));
     }
 }
 
 pub struct LinuxPlayback {
+    pw_sender: pw::channel::Sender<PipewireCommand>,
     playback_producer: HeapProd<f32>,
 }
 
 impl LinuxPlayback {
     pub fn push(&mut self, data: &[f32]) {
-        _ = self.playback_producer.push_slice(data);
+        self.playback_producer.push_slice(data);
+    }
+
+    pub fn set_active(&self, active: bool) {
+        _ = self.pw_sender.send(PipewireCommand::SetCapture(active));
     }
 }
 
@@ -47,11 +51,12 @@ fn init() -> (LinuxCapture, LinuxPlayback) {
     let (pw_sender, pw_receiver) = pw::channel::channel::<PipewireCommand>();
 
     let capture = LinuxCapture {
-        pw_sender,
+        pw_sender: pw_sender.clone(),
         capture_consumer,
     };
 
     let playback = LinuxPlayback {
+        pw_sender,
         playback_producer,
     };
 
@@ -64,13 +69,19 @@ fn init() -> (LinuxCapture, LinuxPlayback) {
         let core = context.connect_rc(None)?;
 
         let capture = CaptureStream::new(core.clone(), capture_producer)?;
-        let stream = capture.stream.clone();
+        let capture_stream = capture.stream.clone();
 
-        let _playback = PlaybackStream::new(core, playback_consumer)?;
+        let playback = PlaybackStream::new(core, playback_consumer)?;
+        let playback_stream = playback.stream.clone();
 
+        // TODO: Maybe it's better to emit a loop event
+        // and deactivate inside the event handler (to clean up leftovers)
         let _attached = pw_receiver.attach(mainloop.loop_(), move |msg| match msg {
-            PipewireCommand::SetCapture(capture) => {
-                _ = stream.set_active(capture);
+            PipewireCommand::SetCapture(active) => {
+                _ = capture_stream.set_active(active);
+            },
+            PipewireCommand::SetPlayback(active) => {
+                _ = playback_stream.set_active(active);
             }
         });
 

@@ -1,12 +1,26 @@
-use std::{collections::{BinaryHeap, VecDeque}, thread, time::Instant};
+use std::{
+    cell::UnsafeCell,
+    collections::{BinaryHeap, VecDeque},
+    mem::MaybeUninit,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    },
+    thread,
+    time::Instant,
+};
 
 use anyhow::Result as AResult;
 
 use ffmpeg_next::{Packet, codec};
-use ringbuf::{HeapCons, HeapProd, traits::Producer};
 use streaming_common::FFMpegPacketPayload;
 
-use crate::audio::{decode::AudioDecoder, linux::{LinuxCapture, LinuxPlayback}};
+use crossbeam::channel;
+
+use crate::audio::{
+    decode::AudioDecoder,
+    linux::{LinuxCapture, LinuxPlayback},
+};
 
 pub mod linux;
 
@@ -91,6 +105,9 @@ impl StreamingCompatInto for Packet {
     }
 }
 
+type PlatformCapture = LinuxCapture;
+type PlatformPlayback = LinuxPlayback;
+
 pub struct StreamingClient {
     user_id: i32,
     decoder: AudioDecoder,
@@ -98,25 +115,187 @@ pub struct StreamingClient {
     packets: BinaryHeap<FFMpegPacketPayload>,
 }
 
-enum PlaybackCommand {
-}
+type Slot = UnsafeCell<Option<channel::Sender<Vec<f32>>>>;
 
+/// Playback handle, can be safely shared between threads
 pub struct Capture {
-    platform_capture: LinuxCapture,
+    rx: channel::Receiver<Vec<f32>>,
+
+    slot: u8,
+
+    handle: Arc<thread::JoinHandle<()>>,
+    is_enabled: Arc<AtomicBool>,
+
+    consumers: Arc<AtomicU8>,
+    consumer_slots: Arc<[Slot]>,
 }
 
-pub struct Playback {
-    buf: Vec<f32>,
-    platform_playback: LinuxPlayback,
-}
+impl Clone for Capture {
+    fn clone(&self) -> Self {
+        let consumers = self.consumers.clone();
+        let consumer_slots = self.consumer_slots.clone();
 
-impl Playback {
-    /// Process all streaming clients and flush to the playback stream
-    /// if we have enough data. Returns true if clients have no more
-    /// data (used for efficient waiting)
-    pub fn process_streaming(&mut self, clients: &[StreamingClient]) {
+        let idx = consumers.fetch_add(1, Ordering::AcqRel);
+        let (tx, rx) = channel::unbounded();
+
+        unsafe {
+            let slot = &consumer_slots[idx as usize];
+            let slot = &mut *slot.get();
+
+            slot.replace(tx);
+        }
+
+        Self {
+            rx,
+            slot: idx,
+            handle: self.handle.clone(),
+            is_enabled: self.is_enabled.clone(),
+            consumers: self.consumers.clone(),
+            consumer_slots: self.consumer_slots.clone(),
+        }
     }
 }
 
-pub fn init_linux() {
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let idx = self.consumers.fetch_sub(1, Ordering::AcqRel);
+
+        unsafe {
+            let slot = &self.consumer_slots[idx as usize];
+            let slot = &mut *slot.get();
+
+            _ = slot.take()
+        }
+    }
 }
+
+impl Capture {
+    const MAX_CONSUMERS: usize = 4;
+
+    fn new(platform_capture: PlatformCapture) -> Self {
+        let (tx, rx) = channel::unbounded();
+
+        let is_enabled = Arc::new(AtomicBool::new(false));
+        let handle = thread::spawn(move || {
+            // We start with disabled capturing
+            thread::park();
+        });
+
+        let consumer_slots: Arc<[Slot]> = (0..Self::MAX_CONSUMERS)
+            .map(|i| UnsafeCell::new(None))
+            .collect();
+
+        unsafe {
+            let slot = &consumer_slots[0];
+            let slot = &mut *slot.get();
+
+            slot.replace(tx);
+        }
+
+        Self {
+            rx,
+            is_enabled,
+            handle: Arc::new(handle),
+
+            slot: 0,
+            consumers: Arc::new(AtomicU8::new(0)),
+            consumer_slots,
+        }
+    }
+
+    fn set_enabled(&self, value: bool) {
+        self.is_enabled.store(value, Ordering::Relaxed);
+    }
+}
+
+/// Playback handle, can be safely shared between threads
+#[derive(Clone)]
+pub struct Playback {
+    volume: Arc<AtomicU8>,
+    is_enabled: Arc<AtomicBool>,
+
+    tx: channel::Sender<Vec<f32>>,
+}
+
+impl Playback {
+    fn new(mut platform_playback: LinuxPlayback) -> Self {
+        let (tx, rx) = channel::bounded::<Vec<f32>>(24);
+
+        let volume = Arc::new(AtomicU8::new(140));
+        let is_enabled = Arc::new(AtomicBool::new(false));
+
+        thread::spawn({
+            move || {
+                loop {
+                    if let Ok(packet) = rx.recv() {
+                        platform_playback.push(&packet);
+                    }
+                }
+            }
+        });
+
+        Self {
+            tx,
+            is_enabled,
+            volume,
+        }
+    }
+
+    pub fn set_enabled(&self, value: bool) {
+        self.is_enabled.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_volume(&self, value: u8) {
+        self.volume.store(value, Ordering::Relaxed);
+    }
+
+    fn send_samples(&self, mut samples: Vec<f32>) {
+        let volume = self.volume.load(Ordering::Relaxed);
+        let volume: f32 = volume as f32 / 100.;
+
+        samples.iter_mut().for_each(|value| *value *= volume);
+
+        _ = self.tx.send(samples);
+    }
+
+    fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClient) {
+        // 3 packets is about 60 ms
+        if client.packets.len() < 3 {
+            return;
+        };
+
+        // Safe due the check above
+        let packet = client.packets.pop().unwrap();
+        client.decoder.decode(packet.to_packet());
+
+        // Mixing if we already have data
+        let len = buf.len().min(client.decoder.decoded_samples.len());
+        (0..len).for_each(|idx| {
+            // Safe due how we derived len
+            buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
+        });
+
+        // Pushing the rest
+        while let Some(value) = client.decoder.decoded_samples.pop_front() {
+            buf.push(value);
+        }
+    }
+
+    pub fn play_file(&self) {
+        todo!()
+    }
+
+    pub fn process_streaming(&self, clients: &mut [StreamingClient]) {
+        let mut buf: Vec<f32> = vec![];
+
+        for client in clients {
+            Self::process_client(&mut buf, client);
+        }
+
+        if !buf.is_empty() {
+            self.send_samples(buf);
+        }
+    }
+}
+
+pub fn init() {}
