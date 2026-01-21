@@ -50,15 +50,14 @@ impl LoginScreen {
         is_connecting: bool,
         server_address: Option<String>,
     ) -> Self {
-        let username = cx.new(|cx| InputState::new(window, cx).default_value("admin"));
+        let username = cx.new(|cx| InputState::new(window, cx));
         let password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .default_value("admin")
         });
         let server_address = cx.new(|cx| {
             InputState::new(window, cx)
-                .default_value(server_address.unwrap_or("localhost:9898".to_string()))
+                .default_value(server_address.unwrap_or("localhost".to_string()))
         });
 
         cx.subscribe_in(&username, window, Self::watch_for_inputs)
@@ -74,7 +73,7 @@ impl LoginScreen {
             server_address,
 
             is_connecting,
-            is_form_valid: true,
+            is_form_valid: false,
         }
     }
 

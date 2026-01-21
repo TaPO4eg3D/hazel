@@ -9,6 +9,7 @@ use std::{
 use anyhow::Result as AResult;
 
 use ffmpeg_next::{Packet, codec};
+use pipewire::client;
 use streaming_common::FFMpegPacketPayload;
 
 use crossbeam::channel;
@@ -315,22 +316,24 @@ impl Playback {
 
     fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClient) {
         // 3 packets is about 60 ms
-        while client.packets.len() >= 3 {
-            // Safe due the check above
-            let packet = client.packets.pop().unwrap().0;
-            client.decoder.decode(packet.to_packet());
+        if client.packets.len() < 3 {
+            return;
+        };
 
-            // Mixing if we already have data
-            let len = buf.len().min(client.decoder.decoded_samples.len());
-            (0..len).for_each(|idx| {
-                // Safe due how we derived len
-                buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
-            });
+        // Safe due the check above
+        let packet = client.packets.pop().unwrap().0;
+        client.decoder.decode(packet.to_packet());
 
-            // Pushing the rest
-            while let Some(value) = client.decoder.decoded_samples.pop_front() {
-                buf.push(value);
-            }
+        // Mixing if we already have data
+        let len = buf.len().min(client.decoder.decoded_samples.len());
+        (0..len).for_each(|idx| {
+            // Safe due how we derived len
+            buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
+        });
+
+        // Pushing the rest
+        while let Some(value) = client.decoder.decoded_samples.pop_front() {
+            buf.push(value);
         }
     }
 

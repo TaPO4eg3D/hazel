@@ -105,11 +105,16 @@ impl WorkspaceScreen {
             .ok();
 
             let user_id = ConnectionManger::get_user_id(cx).unwrap();
+            let server_ip = ConnectionManger::get_server_ip(cx).unwrap();
+
+            println!("{server_ip}");
 
             Streaming::connect(
                 cx,
                 user_id,
-                SocketAddr::from_str("127.0.0.1:9899").unwrap(),
+                SocketAddr::from_str(
+                    &format!("{server_ip}:9899"),
+                ).unwrap(),
             );
         })
         .detach();
