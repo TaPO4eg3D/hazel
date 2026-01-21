@@ -147,7 +147,7 @@ pub struct Capture {
 
 pub struct CaptureReciever<'a> {
     idx: usize,
-    rx: channel::Receiver<Vec<f32>>,
+    pub rx: channel::Receiver<Vec<f32>>,
     encoder: AudioEncoder,
     capture: &'a Capture,
 }
@@ -305,7 +305,7 @@ impl Playback {
         self.volume.store(value, Ordering::Relaxed);
     }
 
-    fn send_samples(&self, mut samples: Vec<f32>) {
+    pub fn send_samples(&self, mut samples: Vec<f32>) {
         let volume = self.volume.load(Ordering::Relaxed);
         let volume: f32 = volume as f32 / 100.;
 
