@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt::format, path::PathBuf};
 
 use clap::Parser;
 use gpui::*;
@@ -47,17 +47,25 @@ impl MainWindow {
 
 pub struct ConnectionManger {
     conn: Option<Connection>,
+
     user_id: Option<UserId>,
+    server_ip: Option<String>,
 }
 
 impl ConnectionManger {
     fn new() -> Self {
-        Self { conn: None, user_id: None }
+        Self { conn: None, user_id: None, server_ip: None }
     }
 
     pub fn get_user_id(cx: &mut AsyncApp) -> Option<UserId> {
         cx.read_global(|g: &Self, _| {
             g.user_id
+        })
+    }
+
+    pub fn get_server_ip(cx: &mut AsyncApp) -> Option<String> {
+        cx.read_global(|g: &Self, _| {
+            g.server_ip.clone()
         })
     }
 
@@ -71,15 +79,15 @@ impl ConnectionManger {
         self.conn.is_some()
     }
 
-    fn update(&mut self, connection: Connection) {
-        self.conn = Some(connection);
-    }
-
     fn get(cx: &mut AsyncApp) -> Connection {
         cx.read_global(|this: &Self, _| this.conn.as_ref().unwrap().clone())
     }
 
-    async fn connect(cx: &mut AsyncApp, server_ip: String) -> AResult<()> {
+    async fn connect(cx: &mut AsyncApp, mut server_ip: String) -> AResult<()> {
+        if server_ip == "localhost" {
+            server_ip = "127.0.0.1".into();
+        }
+
         let connected = cx.read_global(|g: &Self, _| g.is_connected());
 
         if connected {
@@ -87,10 +95,13 @@ impl ConnectionManger {
             return Ok(());
         }
 
-        let connection = Tokio::spawn(cx, Connection::new(server_ip)).await??;
+        let connection = Tokio::spawn(cx, {
+            Connection::new(format!("{server_ip}:9898"))
+        }).await??;
 
-        cx.update_global(|g: &mut Self, _| {
-            g.update(connection);
+        cx.update_global(move |g: &mut Self, _| {
+            g.server_ip = Some(server_ip);
+            g.conn = Some(connection);
         });
 
         Ok(())
