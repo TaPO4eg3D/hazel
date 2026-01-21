@@ -1,12 +1,22 @@
-use pipewire::{
-    self as pw, core::CoreRc, properties::properties, spa::{self, pod::Pod}, stream::{Stream, StreamListener, StreamRc}
-};
+use std::time::{Duration, Instant};
+
 use anyhow::Result as AResult;
-use ringbuf::{HeapCons, traits::Consumer};
+use pipewire::{
+    self as pw,
+    core::CoreRc,
+    properties::properties,
+    spa::{self, pod::Pod},
+    stream::{Stream, StreamListener, StreamRc},
+};
+use ringbuf::{
+    HeapCons,
+    traits::{Consumer},
+};
 
 use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE};
 
 struct PlaybackStreamData {
+    last: Instant,
     samples_consumer: HeapCons<f32>,
 }
 
@@ -36,23 +46,39 @@ impl PlaybackStream {
             let output_samples = unsafe {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
-
-            let size = this.samples_consumer.pop_slice(output_samples);
-            (size..output_samples.len())
-                .for_each(|idx| output_samples[idx] = 0.);
-
             let chunk = data.chunk_mut();
+
+            // TODO: It should not be here (and not like that), move
+            if this.last.elapsed() > Duration::from_millis(120) {
+                while this.samples_consumer.pop_slice(output_samples) > 0 {}
+
+                *chunk.offset_mut() = 0;
+                *chunk.stride_mut() = stride as i32;
+                *chunk.size_mut() = 4;
+
+                this.last = Instant::now();
+
+                return;
+            }
+            this.last = Instant::now();
+
+            let written_frames = this.samples_consumer.pop_slice(output_samples);
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
             *chunk.size_mut() = (output_samples.len() * 4) as u32;
+
+            if written_frames > 0 {
+                *chunk.size_mut() = (written_frames * 4) as u32;
+            } else {
+                output_samples[0] = 0.0;
+                *chunk.size_mut() = 4;
+            }
+
         }
     }
 
-    pub(crate) fn new(
-        core: CoreRc,
-        samples_consumer: HeapCons<f32>,
-    ) -> AResult<Self> {
+    pub(crate) fn new(core: CoreRc, samples_consumer: HeapCons<f32>) -> AResult<Self> {
         let playback_stream = StreamRc::new(
             core,
             Self::STREAM_NAME,
@@ -61,6 +87,7 @@ impl PlaybackStream {
                 *pw::keys::MEDIA_ROLE => "Communication",
                 *pw::keys::MEDIA_CATEGORY => "Playback",
                 *pw::keys::AUDIO_CHANNELS => "2",
+                *pw::keys::NODE_LATENCY => "1/48000",
             },
         )?;
 
@@ -76,6 +103,7 @@ impl PlaybackStream {
         audio_info.set_position(position);
 
         let user_data = PlaybackStreamData {
+            last: Instant::now(),
             samples_consumer,
         };
 

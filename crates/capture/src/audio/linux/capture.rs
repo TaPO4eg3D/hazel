@@ -110,6 +110,7 @@ impl CaptureStream {
             core,
             Self::STREAM_NAME,
             properties! {
+                *pw::keys::NODE_LATENCY => "16/48000",
                 *pw::keys::MEDIA_TYPE => "Audio",
                 *pw::keys::MEDIA_ROLE => "Communication",
                 *pw::keys::MEDIA_CATEGORY => "Capture",
