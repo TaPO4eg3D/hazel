@@ -1,6 +1,6 @@
 use core::panic;
 use std::{
-    cell::UnsafeCell, collections::{BinaryHeap, VecDeque}, mem::MaybeUninit, ptr::NonNull, sync::{
+    cell::UnsafeCell, cmp::Reverse, collections::{BinaryHeap, VecDeque}, mem::MaybeUninit, ptr::NonNull, sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     }, thread, time::Instant
@@ -14,8 +14,7 @@ use streaming_common::FFMpegPacketPayload;
 use crossbeam::channel;
 
 use crate::audio::{
-    decode::AudioDecoder,
-    linux::{LinuxCapture, LinuxPlayback},
+    decode::AudioDecoder, encode::AudioEncoder, linux::{LinuxCapture, LinuxPlayback}
 };
 
 pub mod linux;
@@ -105,16 +104,33 @@ type PlatformCapture = LinuxCapture;
 type PlatformPlayback = LinuxPlayback;
 
 pub struct StreamingClient {
-    user_id: i32,
+    pub user_id: i32,
     decoder: AudioDecoder,
 
-    packets: BinaryHeap<FFMpegPacketPayload>,
+    packets: BinaryHeap<Reverse<FFMpegPacketPayload>>,
+}
+
+impl StreamingClient {
+    pub fn new(user_id: i32) -> Self {
+        Self {
+            user_id,
+            decoder: AudioDecoder::new(),
+            packets: BinaryHeap::new(),
+        }
+    }
+
+    pub fn push(&mut self, packet: FFMpegPacketPayload) {
+        self.packets.push(Reverse(packet));
+    }
 }
 
 pub enum AudioLoopCommand {
     SetEnabledCapture(bool),
     SetEnabledPlayback(bool),
 }
+
+/// (id, Sender)
+type CaptureConsumer = (usize, channel::Sender<Vec<f32>>);
 
 /// Playback handle, can be safely shared between threads
 #[derive(Clone)]
@@ -125,13 +141,24 @@ pub struct Capture {
     is_enabled: Arc<AtomicBool>,
 
     platform_loop_controller: pipewire::channel::Sender<AudioLoopCommand>,
-    consumers: Arc<RwLock<Vec<channel::Sender<Vec<u8>>>>>,
+    consumers: Arc<RwLock<Vec<CaptureConsumer>>>,
 }
 
 pub struct CaptureReciever<'a> {
     idx: usize,
-    rx: channel::Receiver<Vec<u8>>,
+    rx: channel::Receiver<Vec<f32>>,
+    encoder: AudioEncoder,
     capture: &'a Capture,
+}
+
+pub struct EncodedRecv<'a> {
+    encoder: &'a mut AudioEncoder,
+}
+
+impl<'a> EncodedRecv<'a> {
+    pub fn pop(&mut self) -> Option<FFMpegPacketPayload> {
+        self.encoder.pop_packet()
+    }
 }
 
 impl<'a> CaptureReciever<'a> {
@@ -139,20 +166,26 @@ impl<'a> CaptureReciever<'a> {
         let mut recievers = capture.consumers
             .write().unwrap();
 
+        let idx = capture.idx_count.fetch_add(1, Ordering::AcqRel);
+
         let (tx, rx) = channel::unbounded();
-
-        let is_empty = recievers.is_empty();
-        recievers.push(tx);
-
-        if is_empty {
-            capture.set_enabled(true);
-        }
+        recievers.push((idx, tx));
 
         Self {
-            idx: recievers.len() - 1,
+            idx,
+            encoder: AudioEncoder::new(),
             rx,
             capture,
         }
+    }
+
+    /// Blocking call. Will block until we get samples from the capture
+    pub fn recv_encoded<'b>(&'b mut self) -> EncodedRecv<'b> {
+        if let Ok(samples) = self.rx.recv() {
+            self.encoder.encode(&samples);
+        }
+
+        EncodedRecv { encoder: &mut self.encoder }
     }
 }
 
@@ -161,7 +194,7 @@ impl<'a> Drop for CaptureReciever<'a> {
         let mut recievers = self.capture.consumers
             .write().unwrap();
 
-        recievers.remove(self.idx);
+        recievers.retain(|(id, _)| *id != self.idx);
 
         if recievers.is_empty() {
             self.capture.set_enabled(false);
@@ -170,33 +203,36 @@ impl<'a> Drop for CaptureReciever<'a> {
 }
 
 impl Capture {
-    const MAX_CONSUMERS: usize = 4;
-
     fn new(mut platform_capture: PlatformCapture) -> Self {
-        let (tx, rx) = channel::unbounded();
-
         let is_enabled = Arc::new(AtomicBool::new(false));
         let platform_loop_controller = platform_capture.get_controller();
 
-        let consumers = Arc::new(RwLock::new(Vec::new()));
+        let consumers: Arc<RwLock<Vec<CaptureConsumer>>> = 
+            Arc::new(RwLock::new(Vec::new()));
 
         let handle = thread::spawn({
             let consumers = consumers.clone();
             let is_enabled = is_enabled.clone();
 
             move || {
-                let mut buf = vec![0.; (DEFAULT_RATE * 2) as usize];
+                let mut buf = vec![0.; (DEFAULT_RATE * 14) as usize];
 
                 // We start with disabled capturing
                 thread::park();
 
                 loop {
-                    if is_enabled.load(Ordering::Relaxed) {
+                    if !is_enabled.load(Ordering::Relaxed) {
                         std::thread::park();
                     }
 
                     let len = platform_capture.pop(&mut buf);
+                    
+                    let consumers = consumers.read()
+                        .unwrap();
 
+                    for (_, consumer) in consumers.iter() {
+                        _ = consumer.send(buf[0..len].to_vec());
+                    }
                 }
             }
         });
@@ -211,7 +247,12 @@ impl Capture {
         }
     }
 
-    fn set_enabled(&self, value: bool) {
+    /// TODO: Make it a builder API. To build your receiver in layers
+    pub fn get_recv(&self) -> CaptureReciever<'_> {
+        CaptureReciever::new(self)
+    }
+
+    pub fn set_enabled(&self, value: bool) {
         self.is_enabled.store(value, Ordering::Relaxed);
 
         _ = self.platform_loop_controller.send(AudioLoopCommand::SetEnabledCapture(value));
@@ -274,24 +315,22 @@ impl Playback {
 
     fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClient) {
         // 3 packets is about 60 ms
-        if client.packets.len() < 3 {
-            return;
-        };
+        while client.packets.len() >= 3 {
+            // Safe due the check above
+            let packet = client.packets.pop().unwrap().0;
+            client.decoder.decode(packet.to_packet());
 
-        // Safe due the check above
-        let packet = client.packets.pop().unwrap();
-        client.decoder.decode(packet.to_packet());
+            // Mixing if we already have data
+            let len = buf.len().min(client.decoder.decoded_samples.len());
+            (0..len).for_each(|idx| {
+                // Safe due how we derived len
+                buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
+            });
 
-        // Mixing if we already have data
-        let len = buf.len().min(client.decoder.decoded_samples.len());
-        (0..len).for_each(|idx| {
-            // Safe due how we derived len
-            buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
-        });
-
-        // Pushing the rest
-        while let Some(value) = client.decoder.decoded_samples.pop_front() {
-            buf.push(value);
+            // Pushing the rest
+            while let Some(value) = client.decoder.decoded_samples.pop_front() {
+                buf.push(value);
+            }
         }
     }
 
@@ -312,4 +351,11 @@ impl Playback {
     }
 }
 
-pub fn init() {}
+pub fn init() -> (Capture, Playback) {
+    let (capture, playback) = linux::init();
+
+    let capture = Capture::new(capture);
+    let playback = Playback::new(playback);
+
+    (capture, playback)
+}

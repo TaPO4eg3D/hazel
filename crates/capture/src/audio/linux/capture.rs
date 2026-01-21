@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::{Arc, atomic::AtomicBool}};
+use std::{collections::VecDeque, sync::{Arc, Condvar, atomic::AtomicBool}};
 
 use anyhow::Result as AResult;
 use libspa::param::{
@@ -15,23 +15,11 @@ use ringbuf::{HeapProd, traits::Producer};
 
 use crate::audio::DEFAULT_RATE;
 
-struct RnnoiseState {
-    enable_noise_reduction: bool,
-    denoise_state: Box<DenoiseState<'static>>,
-
-    rnnoise_queue: VecDeque<f32>,
-
-    rnnoise_in_buff: Vec<f32>,
-    rnnoise_out_buff: Vec<f32>,
-}
-
-enum Denoiser {
-    Rnnoise(RnnoiseState)
-}
 
 /// This data is shared across all Pipewire events
 struct CaptureStreamData {
     format: AudioInfoRaw,
+    notify_tx: crossbeam::channel::Sender<()>,
 
     /// Producer of captured samples
     samples_producer: HeapProd<f32>,
@@ -101,47 +89,21 @@ impl CaptureStream {
                 )
             };
 
-            captured_samples
-                .iter()
-                .for_each(|&s| {
-                    _ = this.samples_producer.try_push(s)
-                });
+            this.samples_producer.push_slice(captured_samples);
 
-            // Encode everything we've captured
-            // if this.enable_noise_reduction {
-            //     this.rnnoise_queue.extend(captured_samples);
-            //
-            //     while this
-            //         .rnnoise_queue
-            //         .pop_slice(&mut this.rnnoise_in_buff, false)
-            //         > 0
-            //     {
-            //         // As described in the `process_frame` documentation
-            //         for sample in this.rnnoise_in_buff.iter_mut() {
-            //             *sample = (32767.5 * (*sample) - 0.5).round();
-            //         }
-            //
-            //         this.denoise_state
-            //             .process_frame(&mut this.rnnoise_out_buff, &this.rnnoise_in_buff);
-            //
-            //         for sample in this.rnnoise_out_buff.iter_mut() {
-            //             *sample = ((*sample) + 0.5) / 32767.5;
-            //         }
-            //
-            //         this.encoder.encode(&this.rnnoise_out_buff);
-            //     }
-            // } else {
-            //     this.encoder.encode(captured_samples);
-            // }
-            //
-            // while let Some(packet) = this.encoder.packet_buff.pop_front() {
-            //     _ = this.packet_producer.send(packet);
-            // }
+            // Note: Maybe a plain Condvar would be a better fit, I don't know.
+            // The reasoning for the current implementation is that crossbeam has a built-in 
+            // (correctly implemented) spinning with exponential backoff before parking
+            // the thread (on receiving end). We may very well receive data before we hit parking.
+            // But it locks the Mutex to notify waiting threads.
+            // (Multithreading is hard...)
+            _ = this.notify_tx.try_send(());
         }
     }
 
     pub(crate) fn new(
         core: pw::core::CoreRc,
+        notify_tx: crossbeam::channel::Sender<()>,
         samples_producer: HeapProd<f32>,
     ) -> AResult<Self> {
         let capture_stream = pw::stream::StreamRc::new(
@@ -181,6 +143,7 @@ impl CaptureStream {
 
         let stream_data = CaptureStreamData {
             format: Default::default(),
+            notify_tx,
             samples_producer,
         };
 
@@ -191,7 +154,7 @@ impl CaptureStream {
             .register()?;
 
         // Disabled by default
-        capture_stream.set_active(false);
+        _ = capture_stream.set_active(false);
         capture_stream.connect(
             spa::utils::Direction::Input,
             None,

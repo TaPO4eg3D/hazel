@@ -2,7 +2,7 @@ use pipewire::{
     self as pw, core::CoreRc, properties::properties, spa::{self, pod::Pod}, stream::{Stream, StreamListener, StreamRc}
 };
 use anyhow::Result as AResult;
-use ringbuf::HeapCons;
+use ringbuf::{HeapCons, traits::Consumer};
 
 use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE};
 
@@ -12,7 +12,8 @@ struct PlaybackStreamData {
 
 pub(crate) struct PlaybackStream {
     pub(crate) stream: StreamRc,
-    stream_listener: StreamListener<PlaybackStreamData>,
+
+    _stream_listener: StreamListener<PlaybackStreamData>,
 }
 
 impl PlaybackStream {
@@ -36,7 +37,9 @@ impl PlaybackStream {
                 std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
             };
 
-            // TODO: Playback
+            let size = this.samples_consumer.pop_slice(output_samples);
+            (size..output_samples.len())
+                .for_each(|idx| output_samples[idx] = 0.);
 
             let chunk = data.chunk_mut();
 
@@ -106,7 +109,8 @@ impl PlaybackStream {
 
         Ok(PlaybackStream {
             stream: playback_stream,
-            stream_listener: listener,
+
+            _stream_listener: listener,
         })
     }
 }
