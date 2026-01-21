@@ -49,7 +49,7 @@ impl PlaybackStream {
             let chunk = data.chunk_mut();
 
             // TODO: It should not be here (and not like that), move
-            if this.last.elapsed() > Duration::from_millis(120) {
+            if this.last.elapsed() > Duration::from_millis(210) {
                 while this.samples_consumer.pop_slice(output_samples) > 0 {}
 
                 *chunk.offset_mut() = 0;
