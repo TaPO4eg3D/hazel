@@ -18,7 +18,7 @@ bytes = { workspace = true }
 # TODO: Keep it from these forks until this issue is resolved:
 # https://github.com/zed-industries/zed/pull/46543
 # gpui = "0.2.2"
-gpui = { git = "https://github.com/Neulus/zed.git" }
+gpui = { git = "https://github.com/zortax/zed.git" }
 gpui-component = { git = "https://github.com/TaPO4eg3D/gpui-component.git" }
 
 rust-embed = "8.9.0"
