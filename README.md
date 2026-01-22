@@ -7,8 +7,8 @@ Modern VoIP software with snappy UI and self-hosting capabilities.
 ## Pre-alpha
 
 - [ ] Working Text Channels / messages in them
-- [ ] Working Voice Channels
-    - [ ] Linux
+- [x] Working Voice Channels
+    - [x] Linux
 - [ ] Display currently online users
 - [ ] Display registered users overall
 
