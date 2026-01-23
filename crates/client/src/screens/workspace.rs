@@ -90,7 +90,7 @@ impl WorkspaceScreen {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let response =
+            let _response =
                 JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload { channel_id: id })
                     .await;
 
@@ -106,8 +106,6 @@ impl WorkspaceScreen {
 
             let user_id = ConnectionManger::get_user_id(cx).unwrap();
             let server_ip = ConnectionManger::get_server_ip(cx).unwrap();
-
-            println!("{server_ip}");
 
             Streaming::connect(
                 cx,
@@ -126,8 +124,6 @@ impl WorkspaceScreen {
 
             let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
             while let Some(event) = subscription.recv().await {
-                println!("EVENT");
-
                 let channel_id = event.channel_id;
                 let channel = this
                     .read_with(cx, |this, _cx| this.get_voice_channel(channel_id).cloned())
@@ -326,17 +322,20 @@ impl Render for WorkspaceScreen {
                                 ),
                         ),
                     )
-                    .child(ControlPanel::new()),
+                    .child(
+                        ControlPanel::new()
+                            .is_connected(self.get_active_channel().is_some())
+                    ),
             )
             // Message area
             .child(div().w_full().child("456"))
             // Right sidebar
-            .child(
-                div()
-                    .bg(rgb(0x181B25))
-                    .w_full()
-                    .max_w(px(220.))
-                    .child("789"),
-            )
+            // .child(
+            //     div()
+            //         .bg(rgb(0x181B25))
+            //         .w_full()
+            //         .max_w(px(220.))
+            //         .child("789"),
+            // )
     }
 }
