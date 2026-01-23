@@ -5,7 +5,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
-use crate::audio::{AudioLoopCommand, DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
+use crate::audio::{AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
 
 pub mod capture;
 pub mod playback;
@@ -78,10 +78,12 @@ impl LinuxPlayback {
 }
 
 pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
-    let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
+    // We capture in mono and there's no point to store
+    // more than 60ms
+    let ring = HeapRb::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
-    let ring = HeapRb::new((DEFAULT_RATE * 2) as usize);
+    let ring = HeapRb::new((DEFAULT_RATE * DEFAULT_CHANNELS) as usize);
     let (playback_producer, playback_consumer) = ring.split();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();

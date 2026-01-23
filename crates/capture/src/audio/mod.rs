@@ -23,6 +23,7 @@ pub mod linux;
 pub mod decode;
 pub mod encode;
 
+/// Sampling rate per channel
 pub const DEFAULT_RATE: u32 = 48000;
 pub const DEFAULT_CHANNELS: u32 = 2;
 
@@ -216,7 +217,7 @@ impl Capture {
             let is_enabled = is_enabled.clone();
 
             move || {
-                let mut buf = vec![0.; (DEFAULT_RATE * 14) as usize];
+                let mut buf = vec![0.; (DEFAULT_RATE * DEFAULT_CHANNELS) as usize];
                 platform_capture.update_working_thread();
 
                 // We start with disabled capturing
