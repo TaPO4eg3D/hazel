@@ -37,6 +37,7 @@ pub enum IconName {
     Eye,
     Mic,
     MicOff,
+    PhoneOff,
     Headphones,
     HeadphoneOff,
     Cast,

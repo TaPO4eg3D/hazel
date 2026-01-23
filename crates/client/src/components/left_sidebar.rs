@@ -247,6 +247,17 @@ impl VoiceChannelsComponent {
 pub struct IconRoundedButton {
     id: ElementId,
     content: Option<Icon>,
+
+    style: StyleRefinement,
+
+    #[allow(clippy::type_complexity)]
+    on_click: Option<Arc<dyn Fn(&(), &mut Window, &mut App) + Send + Sync>>,
+}
+
+impl Styled for IconRoundedButton {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
 }
 
 impl IconRoundedButton {
@@ -254,7 +265,17 @@ impl IconRoundedButton {
         Self {
             id: id.into(),
             content: None,
+            style: StyleRefinement::default(),
+            on_click: None,
         }
+    }
+
+    pub fn on_click(
+        mut self,
+        on_click: impl Fn(&(), &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_click = Some(Arc::new(on_click));
+        self
     }
 
     pub fn content(mut self, value: Icon) -> Self {
@@ -275,6 +296,7 @@ impl RenderOnce for IconRoundedButton {
             .cursor_pointer()
             .rounded_3xl()
             .when_some(self.content, |this, content| this.child(content))
+            .refine_style(&self.style)
     }
 }
 
@@ -356,14 +378,21 @@ impl RenderOnce for VoiceChannelsComponent {
 
 #[derive(IntoElement)]
 pub struct ControlPanel {
+    is_connected: bool,
     style: StyleRefinement,
 }
 
 impl ControlPanel {
     pub fn new() -> Self {
         Self {
+            is_connected: false,
             style: StyleRefinement::default(),
         }
+    }
+
+    pub fn is_connected(mut self, value: bool) -> Self {
+        self.is_connected = value;
+        self
     }
 }
 
@@ -389,27 +418,36 @@ impl RenderOnce for ControlPanel {
                     .px_2()
                     .py_4()
                     .flex()
-                    .child(
-                        IconRoundedButton::new("cast")
-                            .content(Icon::new(IconName::Cast).with_size(Size::Large)),
-                    )
-                    .child(
-                        div()
+                    .when(self.is_connected, |this| {
+                        this
+                            .child(
+                                IconRoundedButton::new("disconnect")
+                                    .content(Icon::new(IconName::PhoneOff).with_size(Size::Large)),
+                            )
+                            .child(div().w(px(1.)).h(px(32.0)).bg(white()).mx_2())
                             .child(
                                 IconRoundedButton::new("mic-mute")
                                     .content(Icon::new(IconName::MicOff).with_size(Size::Large)),
                             )
-                            .ml_auto(),
-                    )
-                    .child(
-                        IconRoundedButton::new("sound-mute")
-                            .content(Icon::new(IconName::HeadphoneOff).with_size(Size::Large)),
-                    )
-                    .child(div().w(px(1.)).h(px(32.0)).bg(white()).mx_2())
+                            .child(
+                                IconRoundedButton::new("sound-mute").content(
+                                    Icon::new(IconName::HeadphoneOff).with_size(Size::Large),
+                                ),
+                            )
+                            .child(
+                                IconRoundedButton::new("cast")
+                                    .content(Icon::new(IconName::Cast).with_size(Size::Large))
+                                    .ml_auto(),
+                            )
+                            .child(div().w(px(1.)).h(px(32.0)).bg(white()).mx_2())
+                    })
                     .child(
                         IconRoundedButton::new("settings")
-                            .content(Icon::new(IconName::Settings).with_size(Size::Large)),
-                    ),
+                            .content(Icon::new(IconName::Settings).with_size(Size::Large))
+                            .when(!self.is_connected, |this| {
+                                this.ml_auto()
+                            })
+                    )
             )
             .refine_style(&self.style)
     }
