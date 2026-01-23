@@ -1,5 +1,3 @@
-use std::{collections::VecDeque, sync::{Arc, Condvar, atomic::AtomicBool}};
-
 use anyhow::Result as AResult;
 use libspa::param::{
     ParamType,
@@ -7,28 +5,29 @@ use libspa::param::{
     format::{MediaSubtype, MediaType},
     format_utils,
 };
-use nnnoiseless::DenoiseState;
 use pipewire::{
-    self as pw, main_loop::MainLoopRc, properties::properties, spa::{self, pod::Pod}, stream::{Stream, StreamBox, StreamListener}
+    self as pw,
+    properties::properties,
+    spa::{self, pod::Pod},
+    stream::{Stream, StreamListener},
 };
 use ringbuf::{HeapProd, traits::Producer};
 
-use crate::audio::DEFAULT_RATE;
-
+use crate::audio::{DEFAULT_RATE, linux::Notifier};
 
 /// This data is shared across all Pipewire events
 struct CaptureStreamData {
     format: AudioInfoRaw,
-    notify_tx: crossbeam::channel::Sender<()>,
+    notifier: Notifier,
 
     /// Producer of captured samples
     samples_producer: HeapProd<f32>,
-
 }
 
 pub(crate) struct CaptureStream {
     pub(crate) stream: pw::stream::StreamRc,
-    stream_listener: StreamListener<CaptureStreamData>,
+
+    _stream_listener: StreamListener<CaptureStreamData>,
 }
 
 impl CaptureStream {
@@ -90,20 +89,13 @@ impl CaptureStream {
             };
 
             this.samples_producer.push_slice(captured_samples);
-
-            // Note: Maybe a plain Condvar would be a better fit, I don't know.
-            // The reasoning for the current implementation is that crossbeam has a built-in 
-            // (correctly implemented) spinning with exponential backoff before parking
-            // the thread (on receiving end). We may very well receive data before we hit parking.
-            // But it locks the Mutex to notify waiting threads.
-            // (Multithreading is hard...)
-            _ = this.notify_tx.try_send(());
+            this.notifier.notify();
         }
     }
 
     pub(crate) fn new(
         core: pw::core::CoreRc,
-        notify_tx: crossbeam::channel::Sender<()>,
+        notifier: Notifier,
         samples_producer: HeapProd<f32>,
     ) -> AResult<Self> {
         let capture_stream = pw::stream::StreamRc::new(
@@ -144,7 +136,7 @@ impl CaptureStream {
 
         let stream_data = CaptureStreamData {
             format: Default::default(),
-            notify_tx,
+            notifier,
             samples_producer,
         };
 
@@ -155,7 +147,6 @@ impl CaptureStream {
             .register()?;
 
         // Disabled by default
-        _ = capture_stream.set_active(false);
         capture_stream.connect(
             spa::utils::Direction::Input,
             None,
@@ -164,10 +155,13 @@ impl CaptureStream {
                 | pw::stream::StreamFlags::RT_PROCESS,
             &mut params,
         )?;
+        capture_stream.set_active(false)
+            .unwrap();
 
         Ok(Self {
             stream: capture_stream,
-            stream_listener: listener,
+
+            _stream_listener: listener,
         })
     }
 }
