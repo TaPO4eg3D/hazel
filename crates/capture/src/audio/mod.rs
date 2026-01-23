@@ -217,6 +217,7 @@ impl Capture {
 
             move || {
                 let mut buf = vec![0.; (DEFAULT_RATE * 14) as usize];
+                platform_capture.update_working_thread();
 
                 // We start with disabled capturing
                 thread::park();

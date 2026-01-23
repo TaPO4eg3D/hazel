@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Condvar, Mutex}, thread};
+use std::{sync::{Arc, Condvar, Mutex, atomic::{AtomicPtr, Ordering}}, thread::{self, Thread}};
 
 use pipewire::{self as pw, channel};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
@@ -10,24 +10,59 @@ use crate::audio::{AudioLoopCommand, DEFAULT_RATE, linux::{capture::CaptureStrea
 pub mod capture;
 pub mod playback;
 
+#[derive(Clone)]
+pub(crate) struct Notifier {
+    thread: Arc<Mutex<Option<Thread>>>,
+}
+
+impl Notifier {
+    pub fn new() -> Self {
+        Self {
+            thread: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn notify(&self) {
+        let handle = {
+            let guard = self.thread.lock().unwrap();
+
+            guard.clone() 
+        };
+
+        if let Some(thread) = handle {
+            thread.unpark();
+        }
+    }
+
+    pub fn update_thread(&self) {
+        let mut guard = self.thread.lock().unwrap();
+        *guard = Some(std::thread::current());
+    }
+}
+
+
 pub(crate) struct LinuxCapture {
-    notify_rx: crossbeam::channel::Receiver<()>,
+    notifier: Notifier,
 
     pw_sender: pw::channel::Sender<AudioLoopCommand>,
     capture_consumer: HeapCons<f32>,
 }
 
 impl LinuxCapture {
-    pub(crate) fn pop(&mut self, buf: &mut [f32]) -> usize {
+    pub fn pop(&mut self, buf: &mut [f32]) -> usize {
         if self.capture_consumer.occupied_len() == 0 {
-            _ = self.notify_rx.recv();
+            std::thread::park();
         }
 
         self.capture_consumer.pop_slice(buf)
     }
-
+    
     pub fn get_controller(&self) -> pw::channel::Sender<AudioLoopCommand> {
         self.pw_sender.clone()
+    }
+
+    pub fn update_working_thread(&mut self) {
+        self.notifier.update_thread();
     }
 }
 
@@ -51,11 +86,10 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
-    let (notify_tx, notify_rx) = crossbeam::channel::bounded(1);
-
+    let notifier = Notifier::new();
     let capture = LinuxCapture {
         pw_sender: pw_sender.clone(),
-        notify_rx,
+        notifier: notifier.clone(),
         capture_consumer,
     };
 
@@ -72,7 +106,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
         let context = pw::context::ContextRc::new(&mainloop, None)?;
         let core = context.connect_rc(None)?;
 
-        let capture = CaptureStream::new(core.clone(), notify_tx, capture_producer)?;
+        let capture = CaptureStream::new(core.clone(), notifier, capture_producer)?;
         let capture_stream = capture.stream.clone();
 
         let playback = PlaybackStream::new(core, playback_consumer)?;
