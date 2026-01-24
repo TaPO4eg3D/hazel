@@ -105,14 +105,14 @@ impl StreamingCompatInto for Packet {
 type PlatformCapture = LinuxCapture;
 type PlatformPlayback = LinuxPlayback;
 
-pub struct StreamingClient {
+pub struct StreamingClientState {
     pub user_id: i32,
     decoder: AudioDecoder,
 
     packets: BinaryHeap<Reverse<FFMpegPacketPayload>>,
 }
 
-impl StreamingClient {
+impl StreamingClientState {
     pub fn new(user_id: i32) -> Self {
         Self {
             user_id,
@@ -316,7 +316,7 @@ impl Playback {
         _ = self.tx.send(samples);
     }
 
-    fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClient) {
+    fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClientState) {
         // 3 packets is about 60 ms
         if client.packets.len() < 3 {
             return;
@@ -343,7 +343,7 @@ impl Playback {
         todo!()
     }
 
-    pub fn process_streaming(&self, clients: &mut [StreamingClient]) {
+    pub fn process_streaming<'a>(&self, clients: impl Iterator<Item = &'a mut StreamingClientState>) {
         let mut buf: Vec<f32> = vec![];
 
         for client in clients {

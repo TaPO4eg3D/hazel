@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use gpui::{
     AppContext, AsyncApp, Context, Entity, ParentElement, Render, Styled, WeakEntity, Window, div,
@@ -30,7 +30,7 @@ use crate::{
             VoiceChannelMember, VoiceChannelsComponent,
         },
     },
-    gpui_audio::Streaming,
+    gpui_audio::{Streaming, VoiceMemberSharedData},
 };
 
 pub struct WorkspaceScreen {
@@ -98,6 +98,10 @@ impl WorkspaceScreen {
             this.update(cx, |this, cx| {
                 if let Some(channel) = this.get_voice_channel_mut(id) {
                     channel.is_active = true;
+
+                    for member in channel.members.iter_mut() {
+                        member.register(cx);
+                    }
                 }
 
                 cx.notify();
@@ -174,13 +178,16 @@ impl WorkspaceScreen {
                                 return;
                             };
 
-                            channel.members.push(VoiceChannelMember {
-                                id: user.id,
-                                name: user.username.into(),
-                                is_muted: false,
-                                is_talking: false,
-                                is_streaming: false,
-                            });
+                            let mut member = VoiceChannelMember::new(
+                                user.id,
+                                user.username.into(),
+                            );
+
+                            if channel.is_active {
+                                member.register(cx);
+                            }
+
+                            channel.members.push(member);
 
                             cx.notify();
                         })
@@ -214,7 +221,7 @@ impl WorkspaceScreen {
             return;
         };
 
-        this.update(cx, move |this, _cx| {
+        this.update(cx, move |this, cx| {
             this.voice_channels = channels
                 .into_iter()
                 .map(|channel| VoiceChannel {
@@ -224,13 +231,10 @@ impl WorkspaceScreen {
                     members: channel
                         .members
                         .into_iter()
-                        .map(|member| VoiceChannelMember {
-                            id: member.id,
-                            name: member.name.into(),
-                            is_muted: false,
-                            is_talking: false,
-                            is_streaming: false,
-                        })
+                        .map(|member| VoiceChannelMember::new(
+                            member.id,
+                            member.name.into(),
+                        ))
                         .collect(),
                 })
                 .collect();
