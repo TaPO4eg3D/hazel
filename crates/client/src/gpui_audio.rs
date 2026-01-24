@@ -1,7 +1,8 @@
 use std::{
-    net::{SocketAddr, UdpSocket}, sync::{Arc, Mutex, RwLock, Weak, atomic::{AtomicBool, AtomicUsize, Ordering}}, thread, time::{Duration, Instant}
+    cell::RefCell, net::{SocketAddr, UdpSocket}, sync::{Arc, Mutex, RwLock, Weak, atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering}}, thread, time::{Duration, Instant}
 };
 
+use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{self, Capture, Playback, StreamingClientState};
 use gpui::{App, AppContext, AsyncApp, Global};
@@ -9,7 +10,7 @@ use gpui::{App, AppContext, AsyncApp, Global};
 use rpc::models::markers::UserId;
 use streaming_common::{FFMpegPacketPayload, UDPPacket, UDPPacketType};
 
-type Addr = Arc<RwLock<Option<(UserId, SocketAddr)>>>;
+type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
 pub struct VoiceMemberSharedData {
     id: UserId,
@@ -40,15 +41,6 @@ impl VoiceMemberSharedData {
     }
 }
 
-pub enum StreamingMessage {
-    /// Connect to an UDP socket
-    Connect((UserId, SocketAddr)),
-    // Disconnect from an active UDP socket
-    Disconnect,
-    /// Add voice member for tracking
-    AddVoiceMember(Weak<VoiceMemberSharedData>),
-}
-
 struct VoiceMember {
     shared_state: Weak<VoiceMemberSharedData>,
     streaming_state: StreamingClientState,
@@ -65,19 +57,67 @@ impl VoiceMember {
     }
 }
 
+struct SenderState {
+    transmit_volume: AtomicF32,
+    is_talking: AtomicBool,
+}
+
+impl SenderState {
+    fn new() -> Self {
+        Self {
+            is_talking: AtomicBool::new(false),
+            transmit_volume: AtomicF32::new(0.010),
+        }
+    }
+}
+
 fn spawn_sender(
     addr: Addr,
     socket: Arc<UdpSocket>,
+    state: Arc<SenderState>,
     capture: Capture,
 ) {
     let mut buf = BytesMut::new();
     let mut recv = capture.get_recv();
 
+    let last_silence = RefCell::new(Some(Instant::now()));
+
     loop {
-        let mut encoded_recv = recv.recv_encoded();
+        let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
+
+        let mut encoded_recv = recv.recv_encoded_with(|samples| {
+            let max_volume = *(samples
+                .iter()
+                .max_by(|a, b| a.total_cmp(b))
+                .unwrap());
+
+            if max_volume < transmit_volume {
+                let now = Instant::now();
+
+                let silence = { *last_silence.borrow() };
+                match silence {
+                    Some(value) => {
+                        if now - value > Duration::from_millis(400) {
+                            state.is_talking.store(false, Ordering::Relaxed);
+
+                            return None;
+                        }
+                    },
+                    None => {
+                        *last_silence.borrow_mut() = Some(now)
+                    }
+                }
+            } else {
+                state.is_talking.store(true, Ordering::Relaxed);
+
+                *last_silence.borrow_mut() = None;
+            }
+
+            Some(samples)
+        });
 
         while let Some(audio_packet) = encoded_recv.pop() {
-            if let Some((user_id, addr)) = *addr.read().unwrap() {
+            if let Some((user_id, addr)) = *addr.lock().unwrap() {
                 buf.clear();
 
                 let udp_packet = UDPPacket {
@@ -162,60 +202,14 @@ fn spawn_receiver(
     }
 }
 
-fn _init(tx: std::sync::mpsc::Receiver<StreamingMessage>) {
-    let addr: Addr = Arc::new(RwLock::new(None));
-
-    let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (capture, playback) = audio::init();
-
-    let reciver_state = Arc::new(Mutex::new(ReceiverState::default()));
-
-    thread::spawn({
-        let addr = addr.clone();
-        let capture = capture.clone();
-        let socket = socket.clone();
-
-        move || {
-            spawn_sender(addr, socket, capture);
-        }
-    });
-
-    thread::spawn({
-        let socket = socket.clone();
-        let playback = playback.clone();
-        let state = reciver_state.clone();
-
-        move || {
-            spawn_receiver(socket, playback, state);
-        }
-    });
-
-    loop {
-        if let Ok(msg) = tx.recv() {
-            match msg {
-                StreamingMessage::Connect(new_addr) => {
-                    let mut addr = addr.write().unwrap();
-                    *addr = Some(new_addr);
-
-                    capture.set_enabled(true);
-                }
-                StreamingMessage::Disconnect => {
-                    let mut addr = addr.write().unwrap();
-
-                    *addr = None;
-                    capture.set_enabled(false);
-                },
-                StreamingMessage::AddVoiceMember(shared) => {
-                    let mut state = reciver_state.lock().unwrap();
-                    state.voice_members.push(VoiceMember::new(shared));
-                },
-            }
-        }
-    }
-}
-
 struct GlobalStreaming {
-    tx: std::sync::mpsc::Sender<StreamingMessage>,
+    capture: Capture,
+    playback: Playback,
+
+    stream_addr: Addr,
+
+    reciever_state: Arc<Mutex<ReceiverState>>,
+    sender_state: Arc<SenderState>,
 }
 
 impl Global for GlobalStreaming {}
@@ -224,25 +218,68 @@ pub struct Streaming {}
 
 impl Streaming
 {
+    pub fn is_talking<C: AppContext>(cx: &C) -> bool {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            stream.sender_state.is_talking.load(Ordering::Relaxed)
+        })
+    }
+
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            _ = stream.tx.send(StreamingMessage::Connect((user_id, addr)))
+            let mut state = stream.stream_addr.lock()
+                .unwrap();
+
+            *state = Some((user_id, addr));
+
+            stream.capture.set_enabled(true);
         });
     }
 
     pub fn add_voice_member<C: AppContext>(cx: &C, shared: Weak<VoiceMemberSharedData>) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            _ = stream.tx.send(StreamingMessage::AddVoiceMember(shared))
+            let mut state = stream.reciever_state.lock()
+                .unwrap();
+
+            state.voice_members.push(VoiceMember::new(shared));
         });
     }
 }
 
 pub fn init(cx: &mut App) {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let stream_addr: Addr = Arc::new(Mutex::new(None));
 
-    thread::spawn(move || {
-        _init(rx);
+    let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
+    let (capture, playback) = audio::init();
+
+    let sender_state = Arc::new(SenderState::new());
+    let reciever_state = Arc::new(Mutex::new(ReceiverState::default()));
+
+    thread::spawn({
+        let addr = stream_addr.clone();
+        let capture = capture.clone();
+        let socket = socket.clone();
+        let state = sender_state.clone();
+
+        move || {
+            spawn_sender(addr, socket, state, capture);
+        }
     });
 
-    cx.set_global(GlobalStreaming { tx });
+    thread::spawn({
+        let socket = socket.clone();
+        let playback = playback.clone();
+        let state = reciever_state.clone();
+
+        move || {
+            spawn_receiver(socket, playback, state);
+        }
+    });
+
+    cx.set_global(GlobalStreaming { 
+        capture,
+        playback,
+        sender_state,
+        stream_addr,
+        reciever_state,
+    });
 }

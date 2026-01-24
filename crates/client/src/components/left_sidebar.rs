@@ -6,7 +6,7 @@ use gpui::{
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
 use rpc::models::markers::{UserId, VoiceChannelId};
 
-use crate::{assets::IconName, gpui_audio::{Streaming, VoiceMemberSharedData}};
+use crate::{ConnectionManger, assets::IconName, gpui_audio::{Streaming, VoiceMemberSharedData}};
 
 #[derive(Clone)]
 pub struct TextChannel {
@@ -15,6 +15,7 @@ pub struct TextChannel {
 
     pub is_active: bool,
     pub is_muted: bool,
+
     pub has_unread: bool,
 }
 
@@ -197,6 +198,7 @@ pub struct VoiceChannelMember {
     pub is_mic_off: bool,
     pub is_sound_off: bool,
     pub is_streaming: bool,
+    pub is_talking: bool,
 
     shared: Option<Arc<VoiceMemberSharedData>>,
 }
@@ -210,16 +212,24 @@ impl VoiceChannelMember {
             is_mic_off: false,
             is_sound_off: false,
             is_streaming: false,
+            is_talking: false,
             shared: None
         }
     }
 
-    pub fn is_talking(&self) -> bool {
-        if let Some(shared) = self.shared.as_ref() {
-            return shared.is_talking()
-        }
+    pub fn fetch_is_talking<C: AppContext>(&mut self, cx: &C) -> bool {
+        let current = self.is_talking;
+        let current_user = ConnectionManger::get_user_id(cx);
 
-        false
+        self.is_talking = if let Some(user) = current_user && user == self.id {
+            Streaming::is_talking(cx)
+        } else if let Some(shared) = self.shared.as_ref() {
+            shared.is_talking()
+        } else {
+            false
+        };
+
+        self.is_talking != current
     }
 
     pub fn register<C: AppContext>(&mut self, cx: &C) {
@@ -335,7 +345,10 @@ impl RenderOnce for IconRoundedButton {
 }
 
 impl RenderOnce for VoiceChannelsComponent {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let self_id = ConnectionManger::get_user_id(cx)
+            .unwrap();
+
         let channels = self.channels.iter().map(|channel| {
             let members = channel.members.iter().map(|member| {
                 div()
@@ -349,7 +362,7 @@ impl RenderOnce for VoiceChannelsComponent {
                             .flex()
                             .gap_1()
                             .ml_1()
-                            .when(member.is_talking(), |this| {
+                            .when(member.is_talking, |this| {
                                 this.child(Icon::new(IconName::Mic).text_color(rgb(0x4AC6FF)))
                             })
                             .when(member.is_streaming, |this| {
