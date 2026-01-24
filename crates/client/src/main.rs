@@ -41,6 +41,7 @@ impl MainWindow {
             this.fetch_channels(cx);
             // TODO: Race condition?
             this.watch_for_voice_channels(cx);
+            this.watch_streaming_state_updates(cx);
         });
     }
 }
@@ -57,7 +58,7 @@ impl ConnectionManger {
         Self { conn: None, user_id: None, server_ip: None }
     }
 
-    pub fn get_user_id(cx: &mut AsyncApp) -> Option<UserId> {
+    pub fn get_user_id<C: AppContext>(cx: &C) -> Option<UserId> {
         cx.read_global(|g: &Self, _| {
             g.user_id
         })

@@ -181,11 +181,19 @@ impl<'a> CaptureReciever<'a> {
         }
     }
 
-    /// Blocking call. Will block until we get samples from the capture
     pub fn recv_encoded<'b>(&'b mut self) -> EncodedRecv<'b> {
         if let Ok(samples) = self.rx.recv() {
             self.encoder.encode(&samples);
         }
+
+        EncodedRecv { encoder: &mut self.encoder }
+    }
+
+    pub fn recv_encoded_with<'b>(&'b mut self, f: impl Fn(Vec<f32>) -> Option<Vec<f32>>) -> EncodedRecv<'b> {
+        if let Ok(samples) = self.rx.recv()
+            && let Some(samples) = f(samples) {
+                self.encoder.encode(&samples);
+            }
 
         EncodedRecv { encoder: &mut self.encoder }
     }

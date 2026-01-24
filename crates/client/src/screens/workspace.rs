@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use gpui::{
     AppContext, AsyncApp, Context, Entity, ParentElement, Render, Styled, WeakEntity, Window, div,
@@ -19,6 +19,7 @@ use rpc::{
         },
     },
 };
+use smol::{channel, stream::StreamExt};
 
 use crate::{
     ConnectionManger, MainWindow,
@@ -69,6 +70,10 @@ impl WorkspaceScreen {
         self.voice_channels.iter().find(|channel| channel.is_active)
     }
 
+    pub fn get_active_channel_mut(&mut self) -> Option<&mut VoiceChannel> {
+        self.voice_channels.iter_mut().find(|channel| channel.is_active)
+    }
+
     pub fn get_voice_channel(&self, id: VoiceChannelId) -> Option<&VoiceChannel> {
         self.voice_channels.iter().find(|channel| channel.id == id)
     }
@@ -78,6 +83,7 @@ impl WorkspaceScreen {
             .iter_mut()
             .find(|channel| channel.id == id)
     }
+
 
     pub fn on_voice_channel_select(
         &mut self,
@@ -120,6 +126,30 @@ impl WorkspaceScreen {
             );
         })
         .detach();
+    }
+
+    pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let mut timer = smol::Timer::interval(Duration::from_millis(250));
+            
+            loop {
+                timer.next().await;
+
+                this.update(cx, |this, cx| {
+                    let mut updated = false;
+
+                    if let Some(channel) = this.get_active_channel_mut() {
+                        for member in channel.members.iter_mut() {
+                            updated = member.fetch_is_talking(cx) || updated;
+                        }
+                    }
+
+                    if updated {
+                        cx.notify();
+                    }
+                }).ok();
+            }
+        }).detach();
     }
 
     pub fn watch_for_voice_channels(&mut self, cx: &mut Context<Self>) {
