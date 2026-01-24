@@ -15,11 +15,8 @@ streaming_common = { workspace = true }
 bytes = { workspace = true }
 
 # UI
-# TODO: Keep it from these forks until this issue is resolved:
-# https://github.com/zed-industries/zed/pull/46543
-# gpui = "0.2.2"
-gpui = { git = "https://github.com/zortax/zed.git", branch = "wgpu" }
-gpui-component = { git = "https://github.com/TaPO4eg3D/gpui-component.git" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
 
 rust-embed = "8.9.0"
 unicode-segmentation = "1.12.0"
