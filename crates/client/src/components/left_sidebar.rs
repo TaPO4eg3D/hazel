@@ -1,14 +1,12 @@
-use std::{fmt::format, sync::Arc};
+use std::{fmt::format, sync::{Arc, Weak}};
 
 use gpui::{
-    AnyElement, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    RenderOnce, SharedString, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window,
-    div, percentage, prelude::FluentBuilder, px, red, rgb, white,
+    AnyElement, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement, Render, RenderOnce, SharedString, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window, div, percentage, prelude::FluentBuilder, px, red, rgb, white
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, button::Button};
 use rpc::models::markers::{UserId, VoiceChannelId};
 
-use crate::assets::IconName;
+use crate::{assets::IconName, gpui_audio::{Streaming, VoiceMemberSharedData}};
 
 #[derive(Clone)]
 pub struct TextChannel {
@@ -196,8 +194,44 @@ pub struct VoiceChannelMember {
     pub name: SharedString,
 
     pub is_muted: bool,
-    pub is_talking: bool,
+    pub is_mic_off: bool,
+    pub is_sound_off: bool,
     pub is_streaming: bool,
+
+    shared: Option<Arc<VoiceMemberSharedData>>,
+}
+
+impl VoiceChannelMember {
+    pub fn new(id: UserId, name: SharedString) -> Self {
+        VoiceChannelMember {
+            id,
+            name,
+            is_muted: false,
+            is_mic_off: false,
+            is_sound_off: false,
+            is_streaming: false,
+            shared: None
+        }
+    }
+
+    pub fn is_talking(&self) -> bool {
+        if let Some(shared) = self.shared.as_ref() {
+            return shared.is_talking()
+        }
+
+        false
+    }
+
+    pub fn register<C: AppContext>(&mut self, cx: &C) {
+        let shared = Arc::new(VoiceMemberSharedData::new(self.id));
+        self.shared = Some(shared.clone());
+
+        Streaming::add_voice_member(cx, Arc::downgrade(&shared));
+    }
+
+    pub fn unregister(&mut self) {
+        self.shared = None;
+    }
 }
 
 #[derive(Clone)]
@@ -315,7 +349,7 @@ impl RenderOnce for VoiceChannelsComponent {
                             .flex()
                             .gap_1()
                             .ml_1()
-                            .when(member.is_talking, |this| {
+                            .when(member.is_talking(), |this| {
                                 this.child(Icon::new(IconName::Mic).text_color(rgb(0x4AC6FF)))
                             })
                             .when(member.is_streaming, |this| {
