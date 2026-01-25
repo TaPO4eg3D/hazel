@@ -224,6 +224,18 @@ impl Streaming
         })
     }
 
+    pub fn get_playback<C: AppContext>(cx: &C) -> Playback {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            stream.playback.clone()
+        })
+    }
+
+    pub fn get_capture<C: AppContext>(cx: &C) -> Capture {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            stream.capture.clone()
+        })
+    }
+
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let mut state = stream.stream_addr.lock()
