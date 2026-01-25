@@ -8,6 +8,8 @@ use rpc::models::markers::{UserId, VoiceChannelId};
 
 use crate::{ConnectionManger, assets::IconName, gpui_audio::{Streaming, VoiceMemberSharedData}};
 
+type EventCallback<T> = Option<Box<dyn Fn(&T, &mut Window, &mut App) + Send + Sync>>;
+
 #[derive(Clone)]
 pub struct TextChannel {
     pub id: u64,
@@ -294,8 +296,7 @@ pub struct IconRoundedButton {
 
     style: StyleRefinement,
 
-    #[allow(clippy::type_complexity)]
-    on_click: Option<Arc<dyn Fn(&(), &mut Window, &mut App) + Send + Sync>>,
+    on_click: EventCallback<()>,
 }
 
 impl Styled for IconRoundedButton {
@@ -318,7 +319,7 @@ impl IconRoundedButton {
         mut self,
         on_click: impl Fn(&(), &mut Window, &mut App) + Send + Sync + 'static,
     ) -> Self {
-        self.on_click = Some(Arc::new(on_click));
+        self.on_click = Some(Box::new(on_click));
         self
     }
 
@@ -426,6 +427,15 @@ impl RenderOnce for VoiceChannelsComponent {
 #[derive(IntoElement)]
 pub struct ControlPanel {
     is_connected: bool,
+
+    is_capture_enabled: bool,
+    is_playback_enabled: bool,
+
+    on_capture_click: EventCallback<bool>,
+    on_playback_click: EventCallback<bool>,
+
+    on_disconnect_click: EventCallback<()>,
+
     style: StyleRefinement,
 }
 
@@ -433,12 +443,57 @@ impl ControlPanel {
     pub fn new() -> Self {
         Self {
             is_connected: false,
+
+            is_capture_enabled: true,
+            is_playback_enabled: true,
+
+            on_capture_click: None,
+            on_playback_click: None,
+            on_disconnect_click: None,
+
             style: StyleRefinement::default(),
         }
     }
 
     pub fn is_connected(mut self, value: bool) -> Self {
         self.is_connected = value;
+        self
+    }
+
+    pub fn on_capture_click(
+        mut self,
+        f: impl Fn(&bool, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_capture_click = Some(Box::new(f));
+
+        self
+    }
+
+    pub fn on_playback_click(
+        mut self,
+        f: impl Fn(&bool, &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_playback_click = Some(Box::new(f));
+
+        self
+    }
+
+    pub fn on_disconnect_click(
+        mut self,
+        f: impl Fn(&(), &mut Window, &mut App) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_disconnect_click = Some(Box::new(f));
+
+        self
+    }
+
+    pub fn is_capture_enabled(mut self, value: bool) -> Self {
+        self.is_capture_enabled = value;
+        self
+    }
+
+    pub fn is_playback_enabled(mut self, value: bool) -> Self {
+        self.is_playback_enabled = value;
         self
     }
 }
@@ -456,7 +511,7 @@ impl Styled for ControlPanel {
 }
 
 impl RenderOnce for ControlPanel {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
             .id("control-panel")
             .bg(rgb(0x0F111A))
@@ -473,13 +528,40 @@ impl RenderOnce for ControlPanel {
                             )
                             .child(div().w(px(1.)).h(px(32.0)).bg(white()).mx_2())
                             .child(
-                                IconRoundedButton::new("mic-mute")
-                                    .content(Icon::new(IconName::MicOff).with_size(Size::Large)),
+                                IconRoundedButton::new("capture-control")
+                                    .content(
+                                        Icon::new({
+                                            if self.is_capture_enabled {
+                                                IconName::MicOff
+                                            } else {
+                                                IconName::Mic
+                                            }
+                                        }).when(!self.is_capture_enabled, |this| {
+                                            this.text_color(red())
+                                        }).with_size(Size::Large)
+                                    ).when_some(self.on_capture_click, |this, f| {
+                                        this.on_click(move |_, window, cx| {
+                                            f(&!self.is_capture_enabled, window, cx)
+                                        })
+                                    })
                             )
                             .child(
-                                IconRoundedButton::new("sound-mute").content(
-                                    Icon::new(IconName::HeadphoneOff).with_size(Size::Large),
-                                ),
+                                IconRoundedButton::new("playback-control")
+                                    .content(
+                                        Icon::new({
+                                            if self.is_playback_enabled {
+                                                IconName::HeadphoneOff
+                                            } else {
+                                                IconName::Headphones
+                                            }
+                                        }).when(!self.is_playback_enabled, |this| {
+                                            this.text_color(red())
+                                        }).with_size(Size::Large)
+                                    ).when_some(self.on_playback_click, |this, f| {
+                                        this.on_click(move |_, window, cx| {
+                                            f(&!self.is_playback_enabled, window, cx)
+                                        })
+                                    })
                             )
                             .child(
                                 IconRoundedButton::new("cast")
