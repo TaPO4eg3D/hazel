@@ -86,6 +86,12 @@ fn spawn_sender(
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
 
         let mut encoded_recv = recv.recv_encoded_with(|samples| {
+            if samples.is_empty() {
+                state.is_talking.store(false, Ordering::Relaxed);
+
+                return None;
+            }
+
             let max_volume = *(samples
                 .iter()
                 .max_by(|a, b| a.total_cmp(b))
