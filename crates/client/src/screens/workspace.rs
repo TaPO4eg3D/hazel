@@ -41,6 +41,9 @@ pub struct WorkspaceScreen {
     text_channels_collapsed: bool,
     voice_channels_collapsed: bool,
 
+    is_capture_enabled: bool,
+    is_playback_enabled: bool,
+
     chat: Entity<Chat>,
 }
 
@@ -60,6 +63,9 @@ impl WorkspaceScreen {
                 })
                 .collect(),
             voice_channels: vec![],
+
+            is_capture_enabled: true,
+            is_playback_enabled: true,
 
             text_channels_collapsed: false,
             voice_channels_collapsed: false,
@@ -130,6 +136,7 @@ impl WorkspaceScreen {
 
     pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
+            let self_id = ConnectionManger::get_user_id(cx);
             let mut timer = smol::Timer::interval(Duration::from_millis(250));
             
             loop {
@@ -137,10 +144,15 @@ impl WorkspaceScreen {
 
                 this.update(cx, |this, cx| {
                     let mut updated = false;
+                    let capture_enabled = this.is_capture_enabled;
 
                     if let Some(channel) = this.get_active_channel_mut() {
                         for member in channel.members.iter_mut() {
-                            updated = member.fetch_is_talking(cx) || updated;
+                            if Some(member.id) == self_id && !capture_enabled {
+                                member.is_talking = false;
+                            } else {
+                                updated = member.fetch_is_talking(cx) || updated;
+                            }
                         }
                     }
 
@@ -349,7 +361,9 @@ impl Render for WorkspaceScreen {
                                             VoiceChannelsComponent::new(
                                                 self.voice_channels.clone(),
                                             )
-                                            .on_select(cx.listener(Self::on_voice_channel_select)),
+                                            .on_select(cx.listener(
+                                                Self::on_voice_channel_select
+                                            ))
                                         )
                                         .pt_6()
                                         .mb_2(),
@@ -359,6 +373,35 @@ impl Render for WorkspaceScreen {
                     .child(
                         ControlPanel::new()
                             .is_connected(self.get_active_channel().is_some())
+                            .is_capture_enabled(self.is_capture_enabled)
+                            .is_playback_enabled(self.is_playback_enabled)
+                            .on_capture_click(cx.listener(|this, ev: &bool, _, cx| {
+                                this.is_capture_enabled = *ev;
+
+                                if this.is_capture_enabled && !this.is_playback_enabled {
+                                    this.is_playback_enabled = true;
+
+                                    let playback = Streaming::get_playback(cx);
+                                    playback.set_enabled(this.is_playback_enabled);
+                                }
+
+                                let capture = Streaming::get_capture(cx);
+                                capture.set_enabled(this.is_capture_enabled);
+
+                                cx.notify();
+                            }))
+                            .on_playback_click(cx.listener(|this, ev: &bool, _, cx| {
+                                this.is_playback_enabled = *ev;
+                                this.is_capture_enabled = *ev;
+
+                                let playback = Streaming::get_playback(cx);
+                                playback.set_enabled(this.is_playback_enabled);
+
+                                let capture = Streaming::get_capture(cx);
+                                capture.set_enabled(this.is_capture_enabled);
+
+                                cx.notify();
+                            }))
                     ),
             )
             // Message area

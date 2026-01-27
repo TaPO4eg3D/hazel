@@ -341,6 +341,11 @@ impl RenderOnce for IconRoundedButton {
             .cursor_pointer()
             .rounded_3xl()
             .when_some(self.content, |this, content| this.child(content))
+            .when_some(self.on_click, |this, f| {
+                this.on_click(move |_ev, window, cx| {
+                    f(&(), window, cx)
+                })
+            })
             .refine_style(&self.style)
     }
 }

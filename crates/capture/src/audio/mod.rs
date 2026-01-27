@@ -288,12 +288,18 @@ impl Playback {
         let (tx, rx) = channel::bounded::<Vec<f32>>(24);
 
         let volume = Arc::new(AtomicU8::new(140));
-        let is_enabled = Arc::new(AtomicBool::new(false));
+        let is_enabled = Arc::new(AtomicBool::new(true));
 
         thread::spawn({
+            let is_enabled = is_enabled.clone();
+
             move || {
                 loop {
                     if let Ok(packet) = rx.recv() {
+                        if !is_enabled.load(Ordering::Relaxed) {
+                            continue;
+                        }
+
                         platform_playback.push(&packet);
                     }
                 }
