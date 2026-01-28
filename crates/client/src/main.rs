@@ -38,10 +38,7 @@ impl MainWindow {
     fn set_workspace_screen(&mut self, cx: &mut App) {
         self.current_screen = Screen::MainWorkspace;
         self.workspace_screen.update(cx, |this, cx| {
-            this.fetch_channels(cx);
-            // TODO: Race condition?
-            this.watch_for_voice_channels(cx);
-            this.watch_streaming_state_updates(cx);
+            this.init(cx);
         });
     }
 }

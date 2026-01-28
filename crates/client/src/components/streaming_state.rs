@@ -1,0 +1,310 @@
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+
+use gpui::{AppContext, AsyncApp, Context, Render, SharedString, WeakEntity, Window, div};
+use rpc::{
+    common::Empty,
+    models::{
+        auth::{GetUserInfo, GetUserPayload},
+        common::RPCMethod as _,
+        markers::{UserId, VoiceChannelId},
+        voice::{
+            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, VoiceChannelUpdate,
+            VoiceChannelUpdateMessage,
+        },
+    },
+};
+use smol::stream::StreamExt as _;
+
+use crate::{
+    ConnectionManger,
+    gpui_audio::{Streaming, VoiceMemberSharedData},
+};
+
+#[derive(Clone)]
+pub struct VoiceChannel {
+    pub id: VoiceChannelId,
+    pub name: SharedString,
+
+    pub is_active: bool,
+    pub members: Vec<VoiceChannelMember>,
+}
+
+#[derive(Clone)]
+pub struct VoiceChannelMember {
+    pub id: UserId,
+    pub name: SharedString,
+
+    pub is_muted: bool,
+    pub is_mic_off: bool,
+    pub is_sound_off: bool,
+    pub is_streaming: bool,
+    pub is_talking: bool,
+
+    shared: Option<Arc<VoiceMemberSharedData>>,
+}
+
+impl VoiceChannelMember {
+    pub fn new(id: UserId, name: SharedString) -> Self {
+        VoiceChannelMember {
+            id,
+            name,
+            is_muted: false,
+            is_mic_off: false,
+            is_sound_off: false,
+            is_streaming: false,
+            is_talking: false,
+            shared: None,
+        }
+    }
+
+    pub fn fetch_is_talking<C: AppContext>(&mut self, cx: &C) -> bool {
+        let current = self.is_talking;
+        let current_user = ConnectionManger::get_user_id(cx);
+
+        self.is_talking = if let Some(user) = current_user
+            && user == self.id
+        {
+            Streaming::is_talking(cx)
+        } else if let Some(shared) = self.shared.as_ref() {
+            shared.is_talking()
+        } else {
+            false
+        };
+
+        self.is_talking != current
+    }
+
+    pub fn register<C: AppContext>(&mut self, cx: &C) {
+        let shared = Arc::new(VoiceMemberSharedData::new(self.id));
+        self.shared = Some(shared.clone());
+
+        Streaming::add_voice_member(cx, Arc::downgrade(&shared));
+    }
+
+    pub fn unregister(&mut self) {
+        self.shared = None;
+    }
+}
+
+#[derive(Default)]
+pub struct StreamingState {
+    pub voice_channels: Vec<VoiceChannel>,
+
+    pub is_capture_enabled: bool,
+    pub is_playback_enabled: bool,
+}
+
+impl StreamingState {
+    pub fn get_active_channel(&self) -> Option<&VoiceChannel> {
+        self.voice_channels.iter().find(|channel| channel.is_active)
+    }
+
+    pub fn get_active_channel_mut(&mut self) -> Option<&mut VoiceChannel> {
+        self.voice_channels
+            .iter_mut()
+            .find(|channel| channel.is_active)
+    }
+
+    pub fn get_voice_channel(&self, id: VoiceChannelId) -> Option<&VoiceChannel> {
+        self.voice_channels.iter().find(|channel| channel.id == id)
+    }
+
+    pub fn get_voice_channel_mut(&mut self, id: VoiceChannelId) -> Option<&mut VoiceChannel> {
+        self.voice_channels
+            .iter_mut()
+            .find(|channel| channel.id == id)
+    }
+
+    pub fn on_voice_channel_select(
+        &mut self,
+        id: &VoiceChannelId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = *id;
+
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let _response =
+                JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload { channel_id: id })
+                    .await;
+
+            Self::fetch_channels_inner(&this, cx).await;
+            this.update(cx, |this, cx| {
+                if let Some(channel) = this.get_voice_channel_mut(id) {
+                    channel.is_active = true;
+
+                    for member in channel.members.iter_mut() {
+                        member.register(cx);
+                    }
+                }
+
+                cx.notify();
+            })
+            .ok();
+
+            let user_id = ConnectionManger::get_user_id(cx).unwrap();
+            let server_ip = ConnectionManger::get_server_ip(cx).unwrap();
+
+            Streaming::connect(
+                cx,
+                user_id,
+                format!("{server_ip}:9899").parse()
+                    .unwrap(),
+            );
+        })
+        .detach();
+    }
+
+    async fn fetch_channels_inner(this: &WeakEntity<Self>, cx: &mut AsyncApp) {
+        let connection = ConnectionManger::get(cx);
+
+        let response = GetVoiceChannels::execute(&connection, &Empty {}).await;
+
+        let Ok(channels) = response else {
+            // TODO: Send notification with an error
+            return;
+        };
+
+        this.update(cx, move |this, cx| {
+            this.voice_channels = channels
+                .into_iter()
+                .map(|channel| VoiceChannel {
+                    id: channel.id,
+                    name: channel.name.into(),
+                    is_active: false,
+                    members: channel
+                        .members
+                        .into_iter()
+                        .map(|member| VoiceChannelMember::new(member.id, member.name.into()))
+                        .collect(),
+                })
+                .collect();
+        })
+        .ok();
+    }
+
+    pub fn fetch_voice_channels(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async |this, cx| {
+            Self::fetch_channels_inner(&this, cx).await;
+        })
+        .detach();
+    }
+
+    pub fn watch_voice_channel_updates(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
+            while let Some(event) = subscription.recv().await {
+                let channel_id = event.channel_id;
+                let channel = this
+                    .read_with(cx, |this, _cx| this.get_voice_channel(channel_id).cloned())
+                    .unwrap();
+
+                let Some(channel) = channel else {
+                    // If there's no such channel, fetch updates
+                    // and skip processing
+                    let active_channel = this
+                        .read_with(cx, |this, _cx| this.get_active_channel().cloned())
+                        .unwrap();
+
+                    Self::fetch_channels_inner(&this, cx).await;
+
+                    if let Some(channel) = active_channel {
+                        this.update(cx, move |this, cx| {
+                            if let Some(channel) = this.get_voice_channel_mut(channel.id) {
+                                channel.is_active = true;
+
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
+
+                    continue;
+                };
+
+                match event.message {
+                    VoiceChannelUpdateMessage::UserConnected(user_id) => {
+                        // If user is already present, skip processing
+                        let is_present = channel.members.iter().any(|user| user.id == user_id);
+
+                        if is_present {
+                            continue;
+                        }
+
+                        let user =
+                            GetUserInfo::execute(&connection, &GetUserPayload { id: user_id })
+                                .await;
+
+                        let Ok(Some(user)) = user else {
+                            continue;
+                        };
+
+                        this.update(cx, |this, cx| {
+                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
+                                return;
+                            };
+
+                            let mut member = VoiceChannelMember::new(user.id, user.username.into());
+
+                            if channel.is_active {
+                                member.register(cx);
+                            }
+
+                            channel.members.push(member);
+
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                    VoiceChannelUpdateMessage::UserDisconnected(user_id) => {
+                        this.update(cx, |this, cx| {
+                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
+                                return;
+                            };
+
+                            channel.members.retain(|user| user.id != user_id);
+
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let self_id = ConnectionManger::get_user_id(cx);
+            let mut timer = smol::Timer::interval(Duration::from_millis(250));
+            
+            loop {
+                timer.next().await;
+
+                this.update(cx, |this, cx| {
+                    let mut updated = false;
+                    let capture_enabled = this.is_capture_enabled;
+
+                    if let Some(channel) = this.get_active_channel_mut() {
+                        for member in channel.members.iter_mut() {
+                            if Some(member.id) == self_id && !capture_enabled {
+                                member.is_talking = false;
+                            } else {
+                                updated = member.fetch_is_talking(cx) || updated;
+                            }
+                        }
+                    }
+
+                    if updated {
+                        cx.notify();
+                    }
+                }).ok();
+            }
+        }).detach();
+    }
+}
