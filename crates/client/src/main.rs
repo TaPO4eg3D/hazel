@@ -127,17 +127,13 @@ impl Render for MainWindow {
 }
 
 pub fn init_theme(cx: &mut App) {
-    let theme_name = SharedString::from("Hazel Default");
+    let theme = ThemeRegistry::global(cx)
+        .themes()
+        .get("Default Dark")
+        .unwrap()
+        .clone();
 
-    if let Err(err) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
-        if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-            Theme::global_mut(cx).apply_config(&theme);
-        } else {
-            panic!("Theme is not found! Are you running the app not inside the root folder?")
-        }
-    }) {
-        panic!("Failed to watch themes directory: {}", err);
-    }
+    Theme::global_mut(cx).apply_config(&theme);
 }
 
 #[derive(Parser, Debug)]

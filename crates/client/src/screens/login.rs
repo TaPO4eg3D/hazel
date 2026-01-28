@@ -1,11 +1,8 @@
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    Styled, Window, div, prelude::FluentBuilder, px, rgb, white,
+    AppContext, ClickEvent, Context, Element, ElementId, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px, red, rgb, white
 };
 use gpui_component::{
-    Disableable, Icon, StyledExt, WindowExt,
-    button::{Button, ButtonVariants},
-    input::{Input, InputEvent, InputState},
+    ActiveTheme, Disableable, Icon, StyledExt, WindowExt, button::{Button, ButtonVariants}, divider::Divider, input::{Input, InputEvent, InputState}, label::Label
 };
 use rpc::models::{
     auth::{
@@ -51,10 +48,7 @@ impl LoginScreen {
         server_address: Option<String>,
     ) -> Self {
         let username = cx.new(|cx| InputState::new(window, cx));
-        let password = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-        });
+        let password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let server_address = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(server_address.unwrap_or("localhost".to_string()))
@@ -219,87 +213,106 @@ impl LoginScreen {
     }
 }
 
+const INPUT_BG: u32 = 0x262626;
+
+impl LoginScreen {
+    fn create_input(&self, state: &Entity<InputState>, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Input {
+        let is_focused = {
+            let state = state.read(cx);
+            state.focus_handle(cx).is_focused(window)
+        };
+
+        Input::new(state)
+            .appearance(false)
+            .bg(rgb(INPUT_BG))
+            .border_1()
+            .border_color(rgb(INPUT_BG))
+            .rounded_md()
+            .disabled(self.is_connecting)
+            .when(is_focused, |this| {
+                this
+                    .border_1()
+                    .border_color(rgb(0x323333))
+            })
+    }
+}
+
 impl Render for LoginScreen {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .bg(rgb(0x24283D))
-            .size_full()
-            .v_flex()
-            .justify_center()
-            .items_center()
-            .gap(px(30.))
-            .font_family("Inter")
-            .text_size(px(18.))
-            .child(
-                div()
-                    .text_color(white())
-                    .text_size(px(64.))
-                    .font_bold()
-                    .child("HAZEL"),
-            )
-            .child(
-                div()
-                    .size(px(600.))
-                    .bg(rgb(0x181B25))
-                    .p(px(30.))
-                    .v_flex()
-                    .child(div().text_color(white()).font_bold().child("USERNAME"))
-                    .child(
-                        Input::new(&self.username)
-                            .disabled(self.is_connecting)
-                            .mt(px(12.))
-                            .min_h(px(55.))
-                            .prefix(Icon::new(IconName::User)),
-                    )
-                    .child(
-                        div()
-                            .mt(px(25.))
-                            .text_color(white())
-                            .font_bold()
-                            .child("PASSWORD"),
-                    )
-                    .child(
-                        Input::new(&self.password)
-                            .disabled(self.is_connecting)
-                            .mt(px(12.))
-                            .min_h(px(55.))
-                            .prefix(Icon::new(IconName::Lock))
-                            .mask_toggle(),
-                    )
-                    .child(
-                        div()
-                            .mt_auto()
-                            .v_flex()
-                            .child(
-                                div()
-                                    .text_color(white())
-                                    .font_bold()
-                                    .child("SERVER ADDRESS"),
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        // Background container
+        div().id("login-card").flex().items_center().justify_center().h_full().child(
+            // Card
+            div()
+                .w_96()
+                .border_1()
+                .rounded_lg()
+                .bg(cx.theme().secondary)
+                .border_color(cx.theme().secondary_active)
+                .child(
+                    // Card Content
+                    div()
+                        .p_4()
+                        .child(
+                            Label::new("HAZEL")
+                                .mt_4()
+                                .text_center()
+                                .text_xl()
+                                .font_bold(),
+                        )
+                        .child(
+                            Label::new(
+                                "Enter any credentials if you're logging for the first time. \
+                                Account will be created automatically",
                             )
-                            .child(
-                                Input::new(&self.server_address)
-                                    .disabled(self.is_connecting)
-                                    .text_decoration_color(white())
-                                    .min_h(px(55.))
-                                    .mt(px(12.))
-                                    .mb(px(30.))
-                                    .prefix(Icon::new(IconName::Server)),
-                            )
-                            .child(
-                                Button::new("ok")
-                                    .h(px(55.))
-                                    .disabled(!self.is_form_valid || self.is_connecting)
-                                    .primary()
-                                    .mt_auto()
-                                    .text_color(white())
-                                    .font_bold()
-                                    .loading(self.is_connecting)
-                                    .loading_icon(Icon::new(IconName::Loader))
-                                    .label("LOG IN")
-                                    .when(self.is_connecting, |this| this.label("Connecting..."))
-                                    .on_click(cx.listener(Self::login_btn_click)),
-                            ),
-                    ),
-            )
+                            .text_color(rgb(0x727272))
+                            .mt_4()
+                            .mb_4()
+                            .text_center()
+                            .text_xs()
+                        )
+                        .child(
+                            div()
+                                .mb_2()
+                                .child(
+                                    Label::new("Username")
+                                        .text_xs()
+                                )
+                                .child(self.create_input(&self.username, window, cx))
+                        )
+                        .child(
+                            div()
+                                .child(
+                                    Label::new("Password")
+                                        .text_xs()
+                                )
+                                .child(self.create_input(&self.password, window, cx))
+                        )
+                        .child(
+                            Divider::horizontal()
+                                .mt_4()
+                                .mb_4()
+                        )
+                        .child(
+                            div()
+                                .mb_2()
+                                .child(
+                                    Label::new("Server IP")
+                                        .text_xs()
+                                )
+                                .child(self.create_input(&self.server_address, window, cx))
+                        )
+                        .child(
+                            Button::new("login-btn")
+                                .mt_4()
+                                .label("Login")
+                                .primary()
+                                .disabled(!self.is_form_valid || self.is_connecting)
+                                .loading(self.is_connecting)
+                                .loading_icon(Icon::new(IconName::Loader))
+                                .when(self.is_connecting, |this| this.label("Connecting..."))
+                                .on_click(cx.listener(Self::login_btn_click)),
+                        )
+                ),
+        )
     }
 }
