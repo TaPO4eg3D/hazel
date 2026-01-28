@@ -95,7 +95,7 @@ fn spawn_sender(
             let max_volume = *(samples
                 .iter()
                 .max_by(|a, b| a.total_cmp(b))
-                .unwrap());
+                .unwrap()); // Safe due to the check above
 
             if max_volume < transmit_volume {
                 let now = Instant::now();

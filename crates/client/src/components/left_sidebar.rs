@@ -296,6 +296,7 @@ pub struct IconRoundedButton {
 
     style: StyleRefinement,
 
+    selected: bool,
     on_click: EventCallback<()>,
 }
 
@@ -310,6 +311,7 @@ impl IconRoundedButton {
         Self {
             id: id.into(),
             content: None,
+            selected: false,
             style: StyleRefinement::default(),
             on_click: None,
         }
