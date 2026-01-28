@@ -1,298 +1,42 @@
-use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use gpui::{AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Window, div, px};
+use gpui_component::resizable::{
+    ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, h_resizable,
+    resizable_panel, v_resizable,
+};
 
-use gpui::{
-    AppContext, AsyncApp, Context, Entity, ParentElement, Render, Styled, WeakEntity, Window, div,
-    px, rgb, white,
-};
-use gpui_component::{
-    Icon, Sizable, Size, StyledExt, accordion::Accordion, scroll::ScrollableElement, v_flex,
-};
-use rpc::{
-    common::Empty,
-    models::{
-        auth::{GetUserInfo, GetUserPayload},
-        common::{APIResult, RPCMethod},
-        markers::{Id, VoiceChannelId},
-        voice::{
-            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload,
-            VoiceChannelUpdate, VoiceChannelUpdateMessage,
-        },
-    },
-};
-use smol::{channel, stream::StreamExt};
-
-use crate::{
-    ConnectionManger, MainWindow,
-    assets::IconName,
-    components::{
-        chat::Chat,
-        left_sidebar::{
-            CollapasableCard, ControlPanel, TextChannel, TextChannelsComponent, VoiceChannel,
-            VoiceChannelMember, VoiceChannelsComponent,
-        },
-    },
-    gpui_audio::{Streaming, VoiceMemberSharedData},
-};
+use crate::components::{chat_state::ChatState, streaming_state::StreamingState};
 
 pub struct WorkspaceScreen {
-    text_channels: Vec<TextChannel>,
-    voice_channels: Vec<VoiceChannel>,
-
     text_channels_collapsed: bool,
     voice_channels_collapsed: bool,
 
-    is_capture_enabled: bool,
-    is_playback_enabled: bool,
-
-    chat: Entity<Chat>,
+    chat: Entity<ChatState>,
+    streaming: Entity<StreamingState>,
 }
 
 impl WorkspaceScreen {
+    pub fn init<C: AppContext>(&self, cx: &mut C) {
+        self.streaming.update(cx, |this, cx| {
+            this.fetch_voice_channels(cx);
+
+            this.watch_voice_channel_updates(cx);
+            this.watch_streaming_state_updates(cx);
+        });
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let chat = cx.new(|cx| Chat::new(window, cx));
+        let chat = cx.new(|cx| ChatState::new(window, cx));
+        let streaming = cx.new(|_| StreamingState::default());
 
         Self {
             chat,
-            text_channels: (0..2)
-                .map(|i| TextChannel {
-                    id: i,
-                    name: format!("Text Channel {i}").into(),
-                    is_active: i == 0,
-                    is_muted: i % 2 == 0,
-                    has_unread: i % 3 == 0,
-                })
-                .collect(),
-            voice_channels: vec![],
-
-            is_capture_enabled: true,
-            is_playback_enabled: true,
+            streaming,
 
             text_channels_collapsed: false,
             voice_channels_collapsed: false,
         }
     }
-
-    pub fn get_active_channel(&self) -> Option<&VoiceChannel> {
-        self.voice_channels.iter().find(|channel| channel.is_active)
-    }
-
-    pub fn get_active_channel_mut(&mut self) -> Option<&mut VoiceChannel> {
-        self.voice_channels.iter_mut().find(|channel| channel.is_active)
-    }
-
-    pub fn get_voice_channel(&self, id: VoiceChannelId) -> Option<&VoiceChannel> {
-        self.voice_channels.iter().find(|channel| channel.id == id)
-    }
-
-    pub fn get_voice_channel_mut(&mut self, id: VoiceChannelId) -> Option<&mut VoiceChannel> {
-        self.voice_channels
-            .iter_mut()
-            .find(|channel| channel.id == id)
-    }
-
-
-    pub fn on_voice_channel_select(
-        &mut self,
-        id: &VoiceChannelId,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let id = *id;
-
-        cx.spawn(async move |this, cx| {
-            let connection = ConnectionManger::get(cx);
-
-            let _response =
-                JoinVoiceChannel::execute(&connection, &JoinVoiceChannelPayload { channel_id: id })
-                    .await;
-
-            Self::fetch_channels_inner(&this, cx).await;
-            this.update(cx, |this, cx| {
-                if let Some(channel) = this.get_voice_channel_mut(id) {
-                    channel.is_active = true;
-
-                    for member in channel.members.iter_mut() {
-                        member.register(cx);
-                    }
-                }
-
-                cx.notify();
-            })
-            .ok();
-
-            let user_id = ConnectionManger::get_user_id(cx).unwrap();
-            let server_ip = ConnectionManger::get_server_ip(cx).unwrap();
-
-            Streaming::connect(
-                cx,
-                user_id,
-                SocketAddr::from_str(
-                    &format!("{server_ip}:9899"),
-                ).unwrap(),
-            );
-        })
-        .detach();
-    }
-
-    pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let self_id = ConnectionManger::get_user_id(cx);
-            let mut timer = smol::Timer::interval(Duration::from_millis(250));
-            
-            loop {
-                timer.next().await;
-
-                this.update(cx, |this, cx| {
-                    let mut updated = false;
-                    let capture_enabled = this.is_capture_enabled;
-
-                    if let Some(channel) = this.get_active_channel_mut() {
-                        for member in channel.members.iter_mut() {
-                            if Some(member.id) == self_id && !capture_enabled {
-                                member.is_talking = false;
-                            } else {
-                                updated = member.fetch_is_talking(cx) || updated;
-                            }
-                        }
-                    }
-
-                    if updated {
-                        cx.notify();
-                    }
-                }).ok();
-            }
-        }).detach();
-    }
-
-    pub fn watch_for_voice_channels(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let connection = ConnectionManger::get(cx);
-
-            let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
-            while let Some(event) = subscription.recv().await {
-                let channel_id = event.channel_id;
-                let channel = this
-                    .read_with(cx, |this, _cx| this.get_voice_channel(channel_id).cloned())
-                    .unwrap();
-
-                let Some(channel) = channel else {
-                    // If there's no such channel, fetch updates
-                    // and skip processing
-                    let active_channel = this
-                        .read_with(cx, |this, _cx| this.get_active_channel().cloned())
-                        .unwrap();
-
-                    Self::fetch_channels_inner(&this, cx).await;
-
-                    if let Some(channel) = active_channel {
-                        this.update(cx, move |this, cx| {
-                            if let Some(channel) = this.get_voice_channel_mut(channel.id) {
-                                channel.is_active = true;
-
-                                cx.notify();
-                            }
-                        })
-                        .ok();
-                    }
-
-                    continue;
-                };
-
-                match event.message {
-                    VoiceChannelUpdateMessage::UserConnected(user_id) => {
-                        // If user is already present, skip processing
-                        let is_present = channel.members.iter().any(|user| user.id == user_id);
-
-                        if is_present {
-                            continue;
-                        }
-
-                        let user =
-                            GetUserInfo::execute(&connection, &GetUserPayload { id: user_id })
-                                .await;
-
-                        let Ok(Some(user)) = user else {
-                            continue;
-                        };
-
-                        this.update(cx, |this, cx| {
-                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
-                                return;
-                            };
-
-                            let mut member = VoiceChannelMember::new(
-                                user.id,
-                                user.username.into(),
-                            );
-
-                            if channel.is_active {
-                                member.register(cx);
-                            }
-
-                            channel.members.push(member);
-
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                    VoiceChannelUpdateMessage::UserDisconnected(user_id) => {
-                        this.update(cx, |this, cx| {
-                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
-                                return;
-                            };
-
-                            channel.members.retain(|user| user.id != user_id);
-
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                }
-            }
-        })
-        .detach();
-    }
-
-    async fn fetch_channels_inner(this: &WeakEntity<Self>, cx: &mut AsyncApp) {
-        let connection = ConnectionManger::get(cx);
-
-        let response = GetVoiceChannels::execute(&connection, &Empty {}).await;
-
-        let Ok(channels) = response else {
-            // TODO: Send notification with an error
-            return;
-        };
-
-        this.update(cx, move |this, cx| {
-            this.voice_channels = channels
-                .into_iter()
-                .map(|channel| VoiceChannel {
-                    id: channel.id,
-                    name: channel.name.into(),
-                    is_active: false,
-                    members: channel
-                        .members
-                        .into_iter()
-                        .map(|member| VoiceChannelMember::new(
-                            member.id,
-                            member.name.into(),
-                        ))
-                        .collect(),
-                })
-                .collect();
-        })
-        .ok();
-    }
-
-    pub fn fetch_channels(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async |this, cx| {
-            Self::fetch_channels_inner(&this, cx).await;
-        })
-        .detach();
-    }
 }
-
-const CARD_BG: u32 = 0x0F111A;
 
 impl Render for WorkspaceScreen {
     fn render(
@@ -300,119 +44,20 @@ impl Render for WorkspaceScreen {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        div()
-            .bg(rgb(0x24283D))
-            .size_full()
-            .flex()
-            .font_family("Inter")
-            .text_color(white())
-            .text_size(px(16.))
-            .font_bold()
-            // Left sidebar
+        h_resizable("my-layout")
+            .on_resize(|state, window, cx| {
+                // Handle resize event
+                // You can read the panel sizes from the state.
+                let state = state.read(cx);
+                let sizes = state.sizes();
+            })
             .child(
-                div()
-                    .bg(rgb(0x181B25))
-                    .size_full()
-                    .max_w(px(380.))
-                    .v_flex()
-                    // Server name header
-                    .child(
-                        div()
-                            .bg(rgb(CARD_BG))
-                            .py_4()
-                            .px_6()
-                            .flex()
-                            .items_center()
-                            .child("HAZEL OFFICIAL")
-                            .child(div().ml_auto().child(Icon::new(IconName::Settings))),
-                    )
-                    // Main area
-                    .child(
-                        div().size_full().overflow_hidden().child(
-                            v_flex()
-                                .px_6()
-                                .overflow_y_scrollbar()
-                                .child(
-                                    CollapasableCard::new("text-channels-card")
-                                        .title("TEXT CHANNELS")
-                                        .collapsed(self.text_channels_collapsed)
-                                        .on_toggle_click(cx.listener(
-                                            |this, is_collapsed: &bool, _, cx| {
-                                                this.text_channels_collapsed = *is_collapsed;
-                                                cx.notify();
-                                            },
-                                        ))
-                                        .content(TextChannelsComponent::new(
-                                            self.text_channels.clone(),
-                                        ))
-                                        .pt_6(),
-                                )
-                                .child(
-                                    CollapasableCard::new("voice-channels-card")
-                                        .title("VOICE CHANNELS")
-                                        .collapsed(self.voice_channels_collapsed)
-                                        .on_toggle_click(cx.listener(
-                                            |this, is_collapsed: &bool, _, cx| {
-                                                this.voice_channels_collapsed = *is_collapsed;
-                                                cx.notify();
-                                            },
-                                        ))
-                                        .content(
-                                            VoiceChannelsComponent::new(
-                                                self.voice_channels.clone(),
-                                            )
-                                            .on_select(cx.listener(
-                                                Self::on_voice_channel_select
-                                            ))
-                                        )
-                                        .pt_6()
-                                        .mb_2(),
-                                ),
-                        ),
-                    )
-                    .child(
-                        ControlPanel::new()
-                            .is_connected(self.get_active_channel().is_some())
-                            .is_capture_enabled(self.is_capture_enabled)
-                            .is_playback_enabled(self.is_playback_enabled)
-                            .on_capture_click(cx.listener(|this, ev: &bool, _, cx| {
-                                this.is_capture_enabled = *ev;
-
-                                if this.is_capture_enabled && !this.is_playback_enabled {
-                                    this.is_playback_enabled = true;
-
-                                    let playback = Streaming::get_playback(cx);
-                                    playback.set_enabled(this.is_playback_enabled);
-                                }
-
-                                let capture = Streaming::get_capture(cx);
-                                capture.set_enabled(this.is_capture_enabled);
-
-                                cx.notify();
-                            }))
-                            .on_playback_click(cx.listener(|this, ev: &bool, _, cx| {
-                                this.is_playback_enabled = *ev;
-                                this.is_capture_enabled = *ev;
-
-                                let playback = Streaming::get_playback(cx);
-                                playback.set_enabled(this.is_playback_enabled);
-
-                                let capture = Streaming::get_capture(cx);
-                                capture.set_enabled(this.is_capture_enabled);
-
-                                cx.notify();
-                            }))
-                    ),
+                // Use resizable_panel() to create a sized panel.
+                resizable_panel().size(px(200.)).child("Left Panel"),
             )
-            // Message area
-            .child(div().w_full().child("456"))
-            // Right sidebar
-            // .child(
-            //     div()
-            //         .bg(rgb(0x181B25))
-            //         .w_full()
-            //         .max_w(px(220.))
-            //         .child("789"),
-            // )
+            .child(
+                // Or you can just add AnyElement without a size.
+                div().child("Right Panel").into_any_element(),
+            )
     }
 }
