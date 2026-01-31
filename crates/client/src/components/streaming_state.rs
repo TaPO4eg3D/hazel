@@ -125,6 +125,31 @@ impl StreamingState {
             .find(|channel| channel.id == id)
     }
 
+    pub fn toggle_capture(&mut self, cx: &mut Context<Self>) {
+        self.is_capture_enabled = !self.is_capture_enabled;
+
+        if !self.is_playback_enabled && self.is_capture_enabled {
+            self.is_playback_enabled = true;
+
+            let playback = Streaming::get_playback(cx);
+            playback.set_enabled(true);
+        }
+        
+        let capture = Streaming::get_capture(cx);
+        capture.set_enabled(self.is_capture_enabled);
+    }
+
+    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        self.is_playback_enabled = !self.is_playback_enabled;
+        self.is_capture_enabled = self.is_playback_enabled;
+
+        let capture = Streaming::get_capture(cx);
+        capture.set_enabled(self.is_capture_enabled);
+
+        let playback = Streaming::get_playback(cx);
+        playback.set_enabled(self.is_playback_enabled);
+    }
+
     pub fn join_voice_channel(
         &mut self,
         id: &VoiceChannelId,
@@ -132,6 +157,11 @@ impl StreamingState {
         cx: &mut Context<Self>,
     ) {
         let id = *id;
+
+        if let Some(channel) = self.get_active_channel()
+            && channel.id == id {
+            return;
+        }
 
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
