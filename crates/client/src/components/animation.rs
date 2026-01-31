@@ -128,12 +128,9 @@ impl<E: IntoElement + 'static> Element for HoverAnimationElement<E> {
                     let delta = if state.animating_in {
                         raw_delta.min(1.0)
                     } else {
-                        let start_progress = if state.progress > 0.0 {
-                            state.progress
-                        } else {
-                            0.0
-                        };
+                        let start_progress = state.progress;
                         let remaining = 1.0 - raw_delta.min(1.0);
+
                         (start_progress * remaining).max(0.0)
                     };
 
