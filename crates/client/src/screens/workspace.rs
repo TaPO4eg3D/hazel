@@ -1,10 +1,10 @@
-use gpui::{AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Window, div, px};
+use gpui::{AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Window, div, px};
 use gpui_component::resizable::{
     ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, h_resizable,
     resizable_panel, v_resizable,
 };
 
-use crate::components::{chat_state::ChatState, streaming_state::StreamingState};
+use crate::components::{chat_state::ChatState, left_sidebar::TextChannelsComponent, streaming_state::StreamingState};
 
 pub struct WorkspaceScreen {
     text_channels_collapsed: bool,
@@ -52,12 +52,14 @@ impl Render for WorkspaceScreen {
                 let sizes = state.sizes();
             })
             .child(
-                // Use resizable_panel() to create a sized panel.
-                resizable_panel().size(px(200.)).child("Left Panel"),
+                resizable_panel()
+                    .size_range(px(288.)..px(384.))
+                    .child(
+                        TextChannelsComponent::new(&self.chat)
+                    )
             )
             .child(
-                // Or you can just add AnyElement without a size.
-                div().child("Right Panel").into_any_element(),
+                div().child("Chat").into_any_element(),
             )
     }
 }

@@ -1,7 +1,7 @@
 use gpui::{App, AppContext, Context, Entity, Render, SharedString, Window, div};
 use gpui_component::input::InputState;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TextChannel {
     pub id: u64,
     pub name: SharedString,
@@ -9,11 +9,13 @@ pub struct TextChannel {
     pub is_active: bool,
     pub is_muted: bool,
 
-    pub has_unread: bool,
+    pub unread_messages: usize,
 }
 
 pub struct ChatState {
     input_state: Entity<InputState>,
+
+    pub text_channels: Vec<TextChannel>,
 }
 
 impl ChatState {
@@ -27,6 +29,15 @@ impl ChatState {
 
         Self {
             input_state,
+            text_channels: (0..4).map(|i| {
+                TextChannel {
+                    id: i,
+                    name: format!("Text channel {i}").into(),
+                    is_active: i == 0,
+                    is_muted: false,
+                    unread_messages: i as usize,
+                }
+            }).collect(),
         }
     }
 }
