@@ -1,10 +1,19 @@
-use gpui::{AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Window, div, px};
-use gpui_component::resizable::{
-    ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, h_resizable,
-    resizable_panel, v_resizable,
+use gpui::{
+    AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Window, div,
+    px,
+};
+use gpui_component::{
+    StyledExt, divider::Divider, resizable::{
+        ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, h_resizable,
+        resizable_panel, v_resizable,
+    }
 };
 
-use crate::components::{chat_state::ChatState, left_sidebar::TextChannelsComponent, streaming_state::StreamingState};
+use crate::components::{
+    chat_state::ChatState,
+    left_sidebar::{TextChannelsComponent, VoiceChannelsComponent},
+    streaming_state::StreamingState,
+};
 
 pub struct WorkspaceScreen {
     text_channels_collapsed: bool,
@@ -52,14 +61,35 @@ impl Render for WorkspaceScreen {
                 let sizes = state.sizes();
             })
             .child(
-                resizable_panel()
-                    .size_range(px(288.)..px(384.))
-                    .child(
-                        TextChannelsComponent::new(&self.chat)
-                    )
+                resizable_panel().size_range(px(288.)..px(384.)).child(
+                    div()
+                        .size_full()
+                        .v_flex()
+                        .child(
+                            TextChannelsComponent::new(&self.chat)
+                                .is_collapsed(self.text_channels_collapsed)
+                                .on_toggle_click(cx.listener(|this, ev, _, cx| {
+                                    this.text_channels_collapsed = *ev;
+                                })),
+                        )
+                        .child(Divider::horizontal().mx_3())
+                        .child(
+                            VoiceChannelsComponent::new(&self.streaming)
+                                .is_collapsed(self.voice_channels_collapsed)
+                                .on_toggle_click(cx.listener(|this, ev, _, cx| {
+                                    this.voice_channels_collapsed = *ev;
+                                })),
+                        ),
+                ),
             )
             .child(
-                div().child("Chat").into_any_element(),
+                div()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .child("CHAT IS IN PROGRESS")
+                    .into_any_element(),
             )
     }
 }

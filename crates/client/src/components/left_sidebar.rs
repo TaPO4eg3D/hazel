@@ -1,7 +1,7 @@
 use std::{cell::RefCell, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt as _, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px
+    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, rgb
 };
 use gpui_component::{
     ActiveTheme, Icon, Sizable, Size, StyledExt,
@@ -9,50 +9,82 @@ use gpui_component::{
     label::Label,
 };
 
-use crate::{assets::IconName, components::{animation::HoverAnimationExt, chat_state::ChatState}};
+use crate::{
+    assets::IconName,
+    components::{
+        animation::HoverAnimationExt, chat_state::ChatState, streaming_state::StreamingState,
+    },
+};
+
+type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct TextChannelsComponent {
     chat_state: Entity<ChatState>,
+
+    is_collapsed: bool,
+    on_toggle_click: Option<EventCallback<bool>>,
 }
 
 impl TextChannelsComponent {
     pub fn new(chat_state: &Entity<ChatState>) -> Self {
         Self {
             chat_state: chat_state.clone(),
+
+            is_collapsed: false,
+            on_toggle_click: None,
         }
+    }
+
+    pub fn is_collapsed(mut self, value: bool) -> Self {
+        self.is_collapsed = value;
+
+        self
+    }
+
+    pub fn on_toggle_click(
+        mut self,
+        on_toggle_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_click = Some(Box::new(on_toggle_click));
+
+        self
     }
 }
 
 impl RenderOnce for TextChannelsComponent {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let state = self.chat_state.read(cx);
-
         let secondary = cx.theme().secondary;
+
         let channels = state.text_channels.iter().map(|channel| {
-            div()
-                .id(ElementId::Integer(channel.id))
-                .when(channel.is_active, |this| this.bg(cx.theme().muted))
-                .rounded_lg()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .py_2()
-                        .px_3()
-                        .child(Icon::new(IconName::Hash).mr_2().with_size(Size::Medium))
-                        .child(Label::new(channel.name.clone()).mt(px(0.5))),
-                )
-                .with_hover_animation(
-                    format!("{}-hover-bg-opacity", channel.id),
-                    Animation::new(Duration::from_millis(200))
-                        .with_easing(ease_in_out),
-                    move |this, delta| {
-                        this.bg(
-                            secondary.opacity(delta)
-                        )
-                    }
-                )
+            let is_active = channel.is_active;
+            let muted = cx.theme().muted;
+
+            div().id(ElementId::Integer(channel.id)).child(
+                div()
+                    .rounded_lg()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .py_2()
+                            .px_3()
+                            .child(Icon::new(IconName::Hash).mr_2().with_size(Size::Medium))
+                            .child(Label::new(channel.name.clone()).mt(px(0.5))),
+                    )
+                    .with_hover_animation(
+                        "hover-bg",
+                        Animation::new(Duration::from_millis(200)).with_easing(ease_in_out),
+                        move |this, delta| {
+                            if is_active {
+                                this.bg(muted.opacity(1. - delta.min(0.2)))
+                            } else {
+                                this.bg(secondary.opacity(delta))
+                            }
+                        },
+                    ),
+            )
         });
 
         div()
@@ -71,10 +103,186 @@ impl RenderOnce for TextChannelsComponent {
                         Button::new("collapse")
                             .ml_auto()
                             .cursor_pointer()
-                            .icon(IconName::ChevronDown)
-                            .ghost(),
+                            .icon({
+                                if self.is_collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                }
+                            })
+                            .ghost()
+                            .when_some(self.on_toggle_click, |this, on_toggle_click| {
+                                this.on_click(move |_, window, cx| {
+                                    on_toggle_click(&!self.is_collapsed, window, cx);
+                                })
+                            }),
                     ),
             )
-            .child(div().v_flex().children(channels))
+            .when(!self.is_collapsed, |this| {
+                this.child(div().v_flex().children(channels))
+            })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct VoiceChannelsComponent {
+    streaming_state: Entity<StreamingState>,
+
+    is_collapsed: bool,
+    on_toggle_click: Option<EventCallback<bool>>,
+}
+
+impl VoiceChannelsComponent {
+    pub fn new(streaming_state: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming_state: streaming_state.clone(),
+
+            is_collapsed: false,
+            on_toggle_click: None,
+        }
+    }
+
+    pub fn is_collapsed(mut self, value: bool) -> Self {
+        self.is_collapsed = value;
+
+        self
+    }
+
+    pub fn on_toggle_click(
+        mut self,
+        on_toggle_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_click = Some(Box::new(on_toggle_click));
+
+        self
+    }
+}
+
+impl RenderOnce for VoiceChannelsComponent {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let voice_channels = { self.streaming_state.read(cx).voice_channels.clone() };
+
+        let secondary = cx.theme().secondary;
+
+        let channels = voice_channels.iter().map(|channel| {
+            let muted = cx.theme().muted;
+
+            let members = channel.members.iter().map(|member| {
+                div().id(ElementId::Integer(member.id.value as u64)).child(
+                    div()
+                        .rounded_lg()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .py_2()
+                                .px_3()
+                                .child(Icon::new(IconName::User).mr_2().with_size(Size::Medium))
+                                .child(Label::new(member.name.clone()).mt(px(0.5)))
+                                // Status icons
+                                .child(div().flex().gap_1().ml_auto().when(
+                                    member.is_talking,
+                                    |this| {
+                                        this.child(
+                                            div()
+                                                .size_2()
+                                                .rounded_full()
+                                                .bg(rgb(0x00C950))
+                                        )
+                                    },
+                                )),
+                        )
+                        .with_hover_animation(
+                            "hover-bg",
+                            Animation::new(Duration::from_millis(200)).with_easing(ease_in_out),
+                            move |this, delta| this.bg(secondary.opacity(delta)),
+                        ),
+                )
+            });
+
+            let channel_id = channel.id;
+            let is_active = channel.is_active;
+
+            div()
+                .id(ElementId::Integer(channel.id.value as u64))
+                .v_flex()
+                // Clickable channel title
+                .child(
+                    div()
+                        .id("channel-title")
+                        .child(
+                            div()
+                                .rounded_lg()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .py_2()
+                                        .px_3()
+                                        .child(
+                                            Icon::new(IconName::VolumeFull)
+                                                .mr_2()
+                                                .with_size(Size::Medium),
+                                        )
+                                        .child(Label::new(channel.name.clone()).mt(px(0.5))),
+                                )
+                                .with_hover_animation(
+                                    "hover-bg",
+                                    Animation::new(Duration::from_millis(200))
+                                        .with_easing(ease_in_out),
+                                    move |this, delta| {
+                                        if is_active {
+                                            this.bg(muted.opacity(1. - delta.min(0.2)))
+                                        } else {
+                                            this.bg(secondary.opacity(delta))
+                                        }
+                                    },
+                                ),
+                        )
+                        .on_click(window.listener_for(
+                            &self.streaming_state,
+                            move |state, _, window, cx| {
+                                state.join_voice_channel(&channel_id, window, cx);
+                            },
+                        )),
+                )
+                // Members of the channel
+                .child(div().id("members").mt_1().ml_4().children(members))
+        });
+
+        div()
+            .id("voice-channels")
+            .p_3()
+            .w_full()
+            .v_flex()
+            .child(
+                div()
+                    .mb_2()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(Label::new("Voice channels").text_sm().font_semibold())
+                    .child(
+                        Button::new("collapse")
+                            .ml_auto()
+                            .cursor_pointer()
+                            .icon({
+                                if self.is_collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                }
+                            })
+                            .ghost()
+                            .when_some(self.on_toggle_click, |this, on_toggle_click| {
+                                this.on_click(move |_, window, cx| {
+                                    on_toggle_click(&!self.is_collapsed, window, cx);
+                                })
+                            }),
+                    ),
+            )
+            .when(!self.is_collapsed, |this| {
+                this.child(div().v_flex().children(channels))
+            })
     }
 }

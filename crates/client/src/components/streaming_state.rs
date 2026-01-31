@@ -86,12 +86,22 @@ impl VoiceChannelMember {
     }
 }
 
-#[derive(Default)]
 pub struct StreamingState {
     pub voice_channels: Vec<VoiceChannel>,
 
     pub is_capture_enabled: bool,
     pub is_playback_enabled: bool,
+}
+
+impl Default for StreamingState {
+    fn default() -> Self {
+        Self {
+            voice_channels: vec![],
+
+            is_playback_enabled: true,
+            is_capture_enabled: true,
+        }
+    }
 }
 
 impl StreamingState {
@@ -115,7 +125,7 @@ impl StreamingState {
             .find(|channel| channel.id == id)
     }
 
-    pub fn on_voice_channel_select(
+    pub fn join_voice_channel(
         &mut self,
         id: &VoiceChannelId,
         _window: &mut Window,
