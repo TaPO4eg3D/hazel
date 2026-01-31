@@ -1,4 +1,4 @@
-use std::{fmt::format, path::PathBuf};
+use std::{fmt::format, path::PathBuf, rc::Rc};
 
 use clap::Parser;
 use gpui::*;
@@ -35,11 +35,13 @@ pub struct MainWindow {
 }
 
 impl MainWindow {
-    fn set_workspace_screen(&mut self, cx: &mut App) {
+    fn set_workspace_screen(&mut self, cx: &mut Context<Self>) {
         self.current_screen = Screen::MainWorkspace;
         self.workspace_screen.update(cx, |this, cx| {
             this.init(cx);
         });
+
+        cx.notify();
     }
 }
 
@@ -124,13 +126,20 @@ impl Render for MainWindow {
 }
 
 pub fn init_theme(cx: &mut App) {
-    let theme = ThemeRegistry::global(cx)
+    Assets::load_fonts(cx)
+        .expect("Font load should not fail");
+
+    let config = ThemeRegistry::global(cx)
         .themes()
         .get("Default Dark")
         .unwrap()
         .clone();
 
-    Theme::global_mut(cx).apply_config(&theme);
+    let mut config = (*config).clone();
+    config.font_family = Some("Geist".into());
+
+    let config = Rc::new(config);
+    Theme::global_mut(cx).apply_config(&config);
 }
 
 #[derive(Parser, Debug)]
@@ -146,6 +155,7 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+
         gpui_tokio::init(cx);
         gpui_audio::init(cx);
 
