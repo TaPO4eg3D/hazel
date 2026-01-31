@@ -11,7 +11,7 @@ use gpui_component::{
 
 use crate::components::{
     chat_state::ChatState,
-    left_sidebar::{TextChannelsComponent, VoiceChannelsComponent},
+    left_sidebar::{ControlPanel, TextChannelsComponent, VoiceChannelsComponent},
     streaming_state::StreamingState,
 };
 
@@ -79,7 +79,11 @@ impl Render for WorkspaceScreen {
                                 .on_toggle_click(cx.listener(|this, ev, _, cx| {
                                     this.voice_channels_collapsed = *ev;
                                 })),
-                        ),
+                        )
+                        .child(Divider::horizontal().mx_3().mt_auto())
+                        .child(
+                            ControlPanel::new(&self.streaming)
+                        )
                 ),
             )
             .child(

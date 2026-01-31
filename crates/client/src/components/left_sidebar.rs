@@ -4,9 +4,7 @@ use gpui::{
     Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, rgb
 };
 use gpui_component::{
-    ActiveTheme, Icon, Sizable, Size, StyledExt,
-    button::{Button, ButtonVariants},
-    label::Label,
+    ActiveTheme, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, label::Label
 };
 
 use crate::{
@@ -284,5 +282,106 @@ impl RenderOnce for VoiceChannelsComponent {
             .when(!self.is_collapsed, |this| {
                 this.child(div().v_flex().children(channels))
             })
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ControlPanel {
+    streaming_state: Entity<StreamingState>,
+}
+
+impl ControlPanel {
+    pub fn new(state: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming_state: state.clone(),
+        }
+    }
+}
+
+impl RenderOnce for ControlPanel {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+            .id("control-panel")
+            .p_3()
+            .v_flex()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .v_flex()
+                            .child(
+                                Label::new("VOICE CONNECTED")
+                                    .text_xs()
+                                    .text_color(rgb(0x00C950))
+                                    .font_bold()
+                            )
+                            .child(
+                                Label::new("Gaming")
+                                    .text_sm()
+                            )
+                    )
+                    .child(
+                        Button::new("disconnect")
+                            .ml_auto()
+                            .cursor_pointer()
+                            .icon({
+                                IconName::PhoneOff
+                            })
+                            .ghost()
+                    )
+            )
+            .child(
+                div()
+                    .w_full()
+                    .mt_2()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .child(
+                                Button::new("capture-toggle")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .border_r_0()
+                                    .rounded_r_none()
+                                    .icon({
+                                        IconName::Mic
+                                    })
+                                    .flex_grow()
+                            ).child(
+                                Button::new("capture-select")
+                                    .outline()
+                                    .rounded_l_none()
+                                    .icon({
+                                        IconName::ChevronUp
+                                    })
+                            ).flex_grow()
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .child(
+                                Button::new("playback-toggle")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .border_r_0()
+                                    .rounded_r_none()
+                                    .icon({
+                                        IconName::Headphones
+                                    })
+                                    .flex_grow()
+                            ).child(
+                                Button::new("playback-select")
+                                    .outline()
+                                    .rounded_l_none()
+                                    .icon({
+                                        IconName::ChevronUp
+                                    })
+                            ).flex_grow()
+                    )
+            )
     }
 }

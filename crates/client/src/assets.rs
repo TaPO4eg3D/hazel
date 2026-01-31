@@ -69,6 +69,7 @@ pub enum IconName {
     MessageCircle,
     ChevronsDownUp,
     ChevronsUpDown,
+    ChevronUp,
     ChevronDown,
     ChevronRight,
     AudioLines,
