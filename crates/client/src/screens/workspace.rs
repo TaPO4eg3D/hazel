@@ -35,7 +35,7 @@ impl WorkspaceScreen {
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let chat = cx.new(|cx| ChatState::new(window, cx));
-        let streaming = cx.new(|_| StreamingState::default());
+        let streaming = cx.new(|cx| StreamingState::new(cx));
 
         Self {
             chat,
