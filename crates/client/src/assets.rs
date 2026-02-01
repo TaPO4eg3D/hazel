@@ -44,7 +44,7 @@ impl Assets {
                     .expect("Assets should never return None");
                 embedded_fonts.push(font_bytes);
 
-                println!("Loaded font: {}", font_path);
+                // println!("Loaded font: {}", font_path);
             }
         }
 
