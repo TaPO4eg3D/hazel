@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use gpui::{AppContext, AsyncApp, Context, Render, SharedString, WeakEntity, Window, div};
+use gpui::{AppContext, AsyncApp, Context, Entity, Render, SharedString, WeakEntity, Window, div};
+use gpui_component::slider::SliderState;
 use rpc::{
     common::Empty,
     models::{
@@ -89,20 +90,44 @@ impl VoiceChannelMember {
 pub struct StreamingState {
     pub voice_channels: Vec<VoiceChannel>,
 
+    pub capture_volume: Entity<SliderState>,
+    pub playback_volume: Entity<SliderState>,
+
     pub is_capture_enabled: bool,
     pub is_playback_enabled: bool,
 }
 
-impl Default for StreamingState {
-    fn default() -> Self {
+impl StreamingState {
+    pub fn new<C: AppContext>(cx: &mut C) -> Self {
         Self {
             voice_channels: vec![],
+
+            capture_volume: cx.new(|_| SliderState::new()),
+            playback_volume: cx.new(|_| SliderState::new()
+                .min(0.)
+                .max(100.)
+                .default_value(100.)
+                .step(1.)
+            ),
 
             is_playback_enabled: true,
             is_capture_enabled: true,
         }
     }
 }
+
+// impl Default for StreamingState {
+//     fn default() -> Self {
+//         Self {
+//             voice_channels: vec![],
+//
+//             capture_volume: 
+//
+//             is_playback_enabled: true,
+//             is_capture_enabled: true,
+//         }
+//     }
+// }
 
 impl StreamingState {
     pub fn get_active_channel(&self) -> Option<&VoiceChannel> {

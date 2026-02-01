@@ -4,7 +4,7 @@ use gpui::{
     Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, relative, rgb, white
 };
 use gpui_component::{
-    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, divider::Divider, label::Label, popover::Popover
+    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, divider::Divider, label::Label, popover::Popover, slider::Slider
 };
 
 use crate::{
@@ -412,6 +412,11 @@ impl RenderOnce for PlaybackControl {
                 )
         });
 
+        let playback_volume = {
+            self.streaming_state.read(cx)
+                .playback_volume.clone()
+        };
+
         div()
             .flex()
             .child(
@@ -448,6 +453,23 @@ impl RenderOnce for PlaybackControl {
                                     .gap_1()
                                     .w_full()
                                     .children(output_devices)
+                            )
+                            .child(Divider::horizontal().my_2())
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        Label::new("Volume")
+                                            .text_xs()
+                                    )
+                                    .child(
+                                        Label::new(format!("{}%", playback_volume.read(cx).value()))
+                                            .text_xs()
+                                            .ml_auto()
+                                    )
+                            )
+                            .child(
+                                Slider::new(&playback_volume)
                             )
                     )
             )
