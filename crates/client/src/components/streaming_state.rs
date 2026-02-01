@@ -102,10 +102,15 @@ impl StreamingState {
         Self {
             voice_channels: vec![],
 
-            capture_volume: cx.new(|_| SliderState::new()),
+            capture_volume: cx.new(|_| SliderState::new()
+                .min(0.)
+                .max(150.)
+                .default_value(100.)
+                .step(1.)
+            ),
             playback_volume: cx.new(|_| SliderState::new()
                 .min(0.)
-                .max(100.)
+                .max(150.)
                 .default_value(100.)
                 .step(1.)
             ),
@@ -115,19 +120,6 @@ impl StreamingState {
         }
     }
 }
-
-// impl Default for StreamingState {
-//     fn default() -> Self {
-//         Self {
-//             voice_channels: vec![],
-//
-//             capture_volume: 
-//
-//             is_playback_enabled: true,
-//             is_capture_enabled: true,
-//         }
-//     }
-// }
 
 impl StreamingState {
     pub fn get_active_channel(&self) -> Option<&VoiceChannel> {
