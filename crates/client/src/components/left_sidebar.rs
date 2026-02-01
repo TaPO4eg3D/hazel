@@ -1,10 +1,17 @@
 use std::{cell::RefCell, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, relative, rgb, white
+    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement,
+    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window,
+    bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, relative, rgb, white,
 };
 use gpui_component::{
-    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, divider::Divider, label::Label, popover::Popover, slider::Slider
+    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt,
+    button::{Button, ButtonVariants},
+    divider::Divider,
+    label::Label,
+    popover::Popover,
+    slider::Slider,
 };
 
 use crate::{
@@ -328,150 +335,131 @@ impl RenderOnce for ControlPanel {
                     .mt_2()
                     .flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .child(
-                                Button::new("capture-toggle")
-                                    .cursor_pointer()
-                                    .outline()
-                                    .border_r_0()
-                                    .rounded_r_none()
-                                    .icon(IconName::Mic)
-                                    .flex_grow(),
-                            )
-                            .child(
-                                Popover::new("capture-popover")
-                                    .max_w(px(600.))
-                                    .anchor(Anchor::BottomCenter)
-                                    .trigger(
-                                        Button::new("capture-select")
-                                            .outline()
-                                            .rounded_l_none()
-                                            .icon(IconName::ChevronUp)
-                                    )
-                                    .child("This is a Popover on the Top Center."),
-                            )
-                            .flex_grow(),
-                    )
-                    .child(
-                        PlaybackControl::new(&self.streaming_state)
-                    ),
+                    .child(AudioDeviceControl::new(
+                        &self.streaming_state,
+                        AudioDeviceType::Capture,
+                    ))
+                    .child(AudioDeviceControl::new(
+                        &self.streaming_state,
+                        AudioDeviceType::Playback,
+                    )),
             )
     }
 }
 
+enum AudioDeviceType {
+    Capture,
+    Playback,
+}
+
 #[derive(IntoElement)]
-struct PlaybackControl {
+struct AudioDeviceControl {
+    device_type: AudioDeviceType,
     streaming_state: Entity<StreamingState>,
 }
 
-impl PlaybackControl {
-    fn new(state: &Entity<StreamingState>) -> Self {
+impl AudioDeviceControl {
+    fn new(state: &Entity<StreamingState>, device_type: AudioDeviceType) -> Self {
         Self {
+            device_type,
             streaming_state: state.clone(),
         }
     }
 }
 
-impl RenderOnce for PlaybackControl {
+impl RenderOnce for AudioDeviceControl {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let output_devices = (0..5).map(|i| {
+        let available_devices = (0..5).map(|i| {
             div()
                 .id(ElementId::Integer(i))
                 .w_full()
                 .rounded_md()
-                .hover(|this| {
-                    this.bg(cx.theme().secondary)
-                })
+                .hover(|this| this.bg(cx.theme().secondary))
                 .p_2()
                 .flex()
                 .items_center()
                 .child(
-                    div()
-                        .pl_1()
-                        .child(
-                            div()
-                                .size_2()
-                                .rounded_full()
-                                .flex_none()
-                                .when(i == 0, |this| {
-                                    this.bg(white())
-                                })
-                        )
+                    div().pl_1().child(
+                        div()
+                            .size_2()
+                            .rounded_full()
+                            .flex_none()
+                            .when(i == 0, |this| this.bg(white())),
+                    ),
                 )
                 .child(
                     // An additional container to force the label to wrap
-                    div()
-                        .pl_4()
-                        .w_full()
-                        .child(
-                            Label::new("Long name of an output device ( quite long indeed )")
-                                .text_sm()
-                        )
+                    div().pl_4().w_full().child(
+                        Label::new("Long name of an audio device ( quite long indeed )").text_sm(),
+                    ),
                 )
         });
 
-        let playback_volume = {
-            self.streaming_state.read(cx)
-                .playback_volume.clone()
+        let device_volume = {
+            match self.device_type {
+                AudioDeviceType::Capture => self.streaming_state.read(cx).capture_volume.clone(),
+                AudioDeviceType::Playback => self.streaming_state.read(cx).playback_volume.clone(),
+            }
         };
 
         div()
+            .id(match self.device_type {
+                AudioDeviceType::Capture => "capture-control",
+                AudioDeviceType::Playback => "playback-control",
+            })
             .flex()
             .child(
-                Button::new("playback-toggle")
+                Button::new("active-toggle")
                     .cursor_pointer()
                     .outline()
                     .border_r_0()
                     .rounded_r_none()
-                    .icon(IconName::Headphones)
+                    .icon(match self.device_type {
+                        AudioDeviceType::Capture => IconName::Mic,
+                        AudioDeviceType::Playback => IconName::Headphones,
+                    })
                     .flex_grow(),
             )
             .child(
-                Popover::new("playback-popover")
+                Popover::new("popover")
                     .w_64()
                     .anchor(Anchor::BottomCenter)
                     .trigger(
-                        Button::new("playback-select")
+                        Button::new("device-select")
                             .outline()
                             .rounded_l_none()
                             .icon(IconName::ChevronUp),
-                    ).child(
+                    )
+                    .child(
                         div()
                             .v_flex()
                             .w_full()
                             .child(
-                                Label::new("Output Control")
-                                    .text_sm()
+                                Label::new(match self.device_type {
+                                    AudioDeviceType::Capture => "Input Control",
+                                    AudioDeviceType::Playback => "Output Control",
+                                })
+                                .text_sm(),
                             )
                             .child(Divider::horizontal().my_2())
                             .child(
                                 div()
-                                    .id("output-devices")
+                                    .id("devices-list")
                                     .v_flex()
                                     .gap_1()
                                     .w_full()
-                                    .children(output_devices)
+                                    .children(available_devices),
                             )
                             .child(Divider::horizontal().my_2())
                             .child(
-                                div()
-                                    .flex()
-                                    .child(
-                                        Label::new("Volume")
-                                            .text_xs()
-                                    )
-                                    .child(
-                                        Label::new(format!("{}%", playback_volume.read(cx).value()))
-                                            .text_xs()
-                                            .ml_auto()
-                                    )
+                                div().flex().child(Label::new("Volume").text_xs()).child(
+                                    Label::new(format!("{}%", device_volume.read(cx).value()))
+                                        .text_xs()
+                                        .ml_auto(),
+                                ),
                             )
-                            .child(
-                                Slider::new(&playback_volume)
-                            )
-                    )
+                            .child(Slider::new(&device_volume)),
+                    ),
             )
             .flex_grow()
     }
