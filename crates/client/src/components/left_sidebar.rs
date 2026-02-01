@@ -1,10 +1,10 @@
 use std::{cell::RefCell, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, rgb
+    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, relative, rgb, white
 };
 use gpui_component::{
-    ActiveTheme, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, label::Label
+    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt, button::{Button, ButtonVariants}, divider::Divider, label::Label, popover::Popover
 };
 
 use crate::{
@@ -181,12 +181,7 @@ impl RenderOnce for VoiceChannelsComponent {
                                 .child(div().flex().gap_1().ml_auto().when(
                                     member.is_talking,
                                     |this| {
-                                        this.child(
-                                            div()
-                                                .size_2()
-                                                .rounded_full()
-                                                .bg(rgb(0x00C950))
-                                        )
+                                        this.child(div().size_2().rounded_full().bg(rgb(0x00C950)))
                                     },
                                 )),
                         )
@@ -315,22 +310,17 @@ impl RenderOnce for ControlPanel {
                                 Label::new("VOICE CONNECTED")
                                     .text_xs()
                                     .text_color(rgb(0x00C950))
-                                    .font_bold()
+                                    .font_bold(),
                             )
-                            .child(
-                                Label::new("Gaming")
-                                    .text_sm()
-                            )
+                            .child(Label::new("Gaming").text_sm()),
                     )
                     .child(
                         Button::new("disconnect")
                             .ml_auto()
                             .cursor_pointer()
-                            .icon({
-                                IconName::PhoneOff
-                            })
-                            .ghost()
-                    )
+                            .icon(IconName::PhoneOff)
+                            .ghost(),
+                    ),
             )
             .child(
                 div()
@@ -347,41 +337,120 @@ impl RenderOnce for ControlPanel {
                                     .outline()
                                     .border_r_0()
                                     .rounded_r_none()
-                                    .icon({
-                                        IconName::Mic
-                                    })
-                                    .flex_grow()
-                            ).child(
-                                Button::new("capture-select")
-                                    .outline()
-                                    .rounded_l_none()
-                                    .icon({
-                                        IconName::ChevronUp
-                                    })
-                            ).flex_grow()
+                                    .icon(IconName::Mic)
+                                    .flex_grow(),
+                            )
+                            .child(
+                                Popover::new("capture-popover")
+                                    .max_w(px(600.))
+                                    .anchor(Anchor::BottomCenter)
+                                    .trigger(
+                                        Button::new("capture-select")
+                                            .outline()
+                                            .rounded_l_none()
+                                            .icon(IconName::ChevronUp)
+                                    )
+                                    .child("This is a Popover on the Top Center."),
+                            )
+                            .flex_grow(),
                     )
                     .child(
+                        PlaybackControl::new(&self.streaming_state)
+                    ),
+            )
+    }
+}
+
+#[derive(IntoElement)]
+struct PlaybackControl {
+    streaming_state: Entity<StreamingState>,
+}
+
+impl PlaybackControl {
+    fn new(state: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming_state: state.clone(),
+        }
+    }
+}
+
+impl RenderOnce for PlaybackControl {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let output_devices = (0..5).map(|i| {
+            div()
+                .id(ElementId::Integer(i))
+                .w_full()
+                .rounded_md()
+                .hover(|this| {
+                    this.bg(cx.theme().secondary)
+                })
+                .p_2()
+                .flex()
+                .items_center()
+                .child(
+                    div()
+                        .pl_1()
+                        .child(
+                            div()
+                                .size_2()
+                                .rounded_full()
+                                .flex_none()
+                                .when(i == 0, |this| {
+                                    this.bg(white())
+                                })
+                        )
+                )
+                .child(
+                    // An additional container to force the label to wrap
+                    div()
+                        .pl_4()
+                        .w_full()
+                        .child(
+                            Label::new("Long name of an output device ( quite long indeed )")
+                                .text_sm()
+                        )
+                )
+        });
+
+        div()
+            .flex()
+            .child(
+                Button::new("playback-toggle")
+                    .cursor_pointer()
+                    .outline()
+                    .border_r_0()
+                    .rounded_r_none()
+                    .icon(IconName::Headphones)
+                    .flex_grow(),
+            )
+            .child(
+                Popover::new("playback-popover")
+                    .w_64()
+                    .anchor(Anchor::BottomCenter)
+                    .trigger(
+                        Button::new("playback-select")
+                            .outline()
+                            .rounded_l_none()
+                            .icon(IconName::ChevronUp),
+                    ).child(
                         div()
-                            .flex()
+                            .v_flex()
+                            .w_full()
                             .child(
-                                Button::new("playback-toggle")
-                                    .cursor_pointer()
-                                    .outline()
-                                    .border_r_0()
-                                    .rounded_r_none()
-                                    .icon({
-                                        IconName::Headphones
-                                    })
-                                    .flex_grow()
-                            ).child(
-                                Button::new("playback-select")
-                                    .outline()
-                                    .rounded_l_none()
-                                    .icon({
-                                        IconName::ChevronUp
-                                    })
-                            ).flex_grow()
+                                Label::new("Output Control")
+                                    .text_sm()
+                            )
+                            .child(Divider::horizontal().my_2())
+                            .child(
+                                div()
+                                    .id("output-devices")
+                                    .v_flex()
+                                    .gap_1()
+                                    .w_full()
+                                    .children(output_devices)
+                            )
                     )
             )
+            .flex_grow()
     }
 }
