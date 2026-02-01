@@ -1,11 +1,20 @@
-use std::{sync::{Arc, Condvar, Mutex, atomic::{AtomicPtr, Ordering}}, thread::{self, Thread}};
+use std::{
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicPtr, Ordering},
+    },
+    thread::{self, Thread},
+};
 
-use pipewire::{self as pw, channel};
+use pipewire::{self as pw, channel, types::ObjectType};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
-use crate::audio::{AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, linux::{capture::CaptureStream, playback::PlaybackStream}};
+use crate::audio::{
+    AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE,
+    linux::{capture::CaptureStream, playback::PlaybackStream},
+};
 
 pub mod capture;
 pub mod playback;
@@ -26,7 +35,7 @@ impl Notifier {
         let handle = {
             let guard = self.thread.lock().unwrap();
 
-            guard.clone() 
+            guard.clone()
         };
 
         if let Some(thread) = handle {
@@ -39,7 +48,6 @@ impl Notifier {
         *guard = Some(std::thread::current());
     }
 }
-
 
 pub(crate) struct LinuxCapture {
     notifier: Notifier,
@@ -56,7 +64,7 @@ impl LinuxCapture {
 
         self.capture_consumer.pop_slice(buf)
     }
-    
+
     pub fn get_controller(&self) -> pw::channel::Sender<AudioLoopCommand> {
         self.pw_sender.clone()
     }
@@ -108,18 +116,77 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
         let context = pw::context::ContextRc::new(&mainloop, None)?;
         let core = context.connect_rc(None)?;
 
+        let registry = core.get_registry()?;
         let capture = CaptureStream::new(core.clone(), notifier, capture_producer)?;
         let capture_stream = capture.stream.clone();
 
-        let playback = PlaybackStream::new(core, playback_consumer)?;
+        let playback = PlaybackStream::new(core.clone(), playback_consumer)?;
         let playback_stream = playback.stream.clone();
+
+        let listener = registry
+            .add_listener_local()
+            .global({
+                let capture_stream = capture_stream.clone();
+                let playback_stream = playback_stream.clone();
+
+                move |obj| {
+                    let Some(props) = obj.props else {
+                        return;
+                    };
+
+                    match obj.type_ {
+                        ObjectType::Node => {
+                            let Some(class) = props.get("media.class") else {
+                                return;
+                            };
+
+                            let node_name = props
+                                .get("node.nick")
+                                .or_else(|| props.get("node.name"))
+                                .unwrap_or("Unknown Device");
+
+                            match class {
+                                "Audio/Sink" => {
+                                    println!("Sink: {node_name:?},  {}", obj.id);
+                                }
+                                "Audio/Source" => {
+                                    println!("Source: {node_name:?}, {}", obj.id);
+                                }
+                                _ => {}
+                            }
+                        }
+                        ObjectType::Link => {
+                            let Some(input_node) = props.get("link.input.node") else {
+                                return;
+                            };
+
+                            let Some(output_node) = props.get("link.output.node") else {
+                                return;
+                            };
+
+                            let input_node: u32 = input_node.parse().unwrap();
+                            let output_node: u32 = output_node.parse().unwrap();
+
+                            if input_node == capture_stream.node_id() {
+                                println!("Capture: {obj:?}");
+                            }
+
+                            if output_node == playback_stream.node_id() {
+                                println!("Playback: {obj:?}");
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .register();
 
         // TODO: Maybe it's better to emit a loop event
         // and deactivate inside the event handler (to clean up leftovers)
         let _attached = pw_receiver.attach(mainloop.loop_(), move |msg| match msg {
             AudioLoopCommand::SetEnabledCapture(active) => {
                 _ = capture_stream.set_active(active);
-            },
+            }
             AudioLoopCommand::SetEnabledPlayback(active) => {
                 _ = playback_stream.set_active(active);
             }
