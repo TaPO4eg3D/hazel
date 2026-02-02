@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicPtr, Ordering},
     },
     thread::{self, Thread},
@@ -19,6 +19,8 @@ use crate::audio::{
 pub mod capture;
 pub mod playback;
 
+/// Wakes up a sleeping thread when data
+/// is available for consumption
 #[derive(Clone)]
 pub(crate) struct Notifier {
     thread: Arc<Mutex<Option<Thread>>>,
@@ -49,8 +51,18 @@ impl Notifier {
     }
 }
 
+#[derive(Debug)]
+struct AudioDevice {
+    id: u32,
+    name: String,
+
+    is_active: bool,
+}
+
 pub(crate) struct LinuxCapture {
-    notifier: Notifier,
+    capture_notifier: Notifier,
+
+    input_devices: Arc<RwLock<Vec<AudioDevice>>>,
 
     pw_sender: pw::channel::Sender<AudioLoopCommand>,
     capture_consumer: HeapCons<f32>,
@@ -70,13 +82,15 @@ impl LinuxCapture {
     }
 
     pub fn update_working_thread(&mut self) {
-        self.notifier.update_thread();
+        self.capture_notifier.update_thread();
     }
 }
 
 pub struct LinuxPlayback {
     pw_sender: pw::channel::Sender<AudioLoopCommand>,
     playback_producer: HeapProd<f32>,
+
+    output_devices: Arc<RwLock<Vec<AudioDevice>>>,
 }
 
 impl LinuxPlayback {
@@ -96,16 +110,25 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
-    let notifier = Notifier::new();
+    let input_devices = Arc::new(RwLock::new(vec![]));
+    let output_devices = Arc::new(RwLock::new(vec![]));
+
+    let capture_notifier = Notifier::new();
+
     let capture = LinuxCapture {
-        pw_sender: pw_sender.clone(),
-        notifier: notifier.clone(),
         capture_consumer,
+
+        pw_sender: pw_sender.clone(),
+        capture_notifier: capture_notifier.clone(),
+
+        input_devices: input_devices.clone(),
     };
 
     let playback = LinuxPlayback {
         pw_sender,
         playback_producer,
+
+        output_devices: output_devices.clone(),
     };
 
     thread::spawn(move || {
@@ -117,7 +140,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
         let core = context.connect_rc(None)?;
 
         let registry = core.get_registry()?;
-        let capture = CaptureStream::new(core.clone(), notifier, capture_producer)?;
+        let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
         let capture_stream = capture.stream.clone();
 
         let playback = PlaybackStream::new(core.clone(), playback_consumer)?;
@@ -128,6 +151,9 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
             .global({
                 let capture_stream = capture_stream.clone();
                 let playback_stream = playback_stream.clone();
+
+                let input_devices = input_devices.clone();
+                let output_devices = output_devices.clone();
 
                 move |obj| {
                     let Some(props) = obj.props else {
@@ -147,10 +173,34 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
 
                             match class {
                                 "Audio/Sink" => {
-                                    println!("Sink: {node_name:?},  {}", obj.id);
+                                    let mut output_devices = output_devices.write().unwrap();
+
+                                    if output_devices.iter().any(|device| device.id == obj.id) {
+                                        return;
+                                    }
+
+                                    output_devices.push(AudioDevice {
+                                        id: obj.id,
+                                        name: node_name.to_string(),
+                                        // On this stage we don't know if a device is
+                                        // linked to our app
+                                        is_active: false,
+                                    });
                                 }
                                 "Audio/Source" => {
-                                    println!("Source: {node_name:?}, {}", obj.id);
+                                    let mut input_devices = input_devices.write().unwrap();
+
+                                    if input_devices.iter().any(|device| device.id == obj.id) {
+                                        return;
+                                    }
+
+                                    input_devices.push(AudioDevice {
+                                        id: obj.id,
+                                        name: node_name.to_string(),
+                                        // On this stage we don't know if a device is
+                                        // linked to our app
+                                        is_active: false,
+                                    });
                                 }
                                 _ => {}
                             }
@@ -168,14 +218,43 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback) {
                             let output_node: u32 = output_node.parse().unwrap();
 
                             if input_node == capture_stream.node_id() {
-                                println!("Capture: {obj:?}");
+                                let mut input_devices = input_devices.write()
+                                    .unwrap();
+
+                                input_devices.iter_mut()
+                                    .for_each(|device| {
+                                        device.is_active = device.id == output_node;
+                                    });
                             }
 
                             if output_node == playback_stream.node_id() {
-                                println!("Playback: {obj:?}");
+                                let mut output_devices = output_devices.write()
+                                    .unwrap();
+
+                                output_devices.iter_mut()
+                                    .for_each(|device| {
+                                        device.is_active = device.id == input_node;
+                                    });
                             }
                         }
                         _ => {}
+                    }
+                }
+            })
+            .global_remove(move |id| {
+                {
+                    let mut input_devices = input_devices.write().unwrap();
+
+                    if input_devices.iter().any(|device| device.id == id) {
+                        input_devices.retain(|device| device.id != id);
+                    }
+                }
+
+                {
+                    let mut output_devices = output_devices.write().unwrap();
+
+                    if output_devices.iter().any(|device| device.id == id) {
+                        output_devices.retain(|device| device.id != id);
                     }
                 }
             })
