@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use capture::audio::AudioDevice;
 use gpui::{AppContext, AsyncApp, Context, Entity, Render, SharedString, WeakEntity, Window, div};
 use gpui_component::slider::SliderState;
 use rpc::{
@@ -95,6 +96,9 @@ pub struct StreamingState {
 
     pub is_capture_enabled: bool,
     pub is_playback_enabled: bool,
+
+    pub input_devices: Vec<AudioDevice>,
+    pub output_devices: Vec<AudioDevice>,
 }
 
 impl StreamingState {
@@ -114,6 +118,9 @@ impl StreamingState {
                 .default_value(100.)
                 .step(1.)
             ),
+
+            input_devices: vec![],
+            output_devices: vec![],
 
             is_playback_enabled: true,
             is_capture_enabled: true,
@@ -346,8 +353,12 @@ impl StreamingState {
                 let input = registry.get_input_devices();
                 let output = registry.get_output_devices();
 
-                println!("INPUT: {input:?}");
-                println!("OUTPUT: {output:?}");
+                this.update(cx, move |this, cx| {
+                    this.input_devices = input;
+                    this.output_devices = output;
+
+                    cx.notify();
+                }).ok();
             }
         }).detach();
 
