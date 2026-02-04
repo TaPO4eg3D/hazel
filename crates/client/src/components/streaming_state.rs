@@ -336,10 +336,20 @@ impl StreamingState {
     }
 
     pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
-        // TODO: Move
-        Streaming::watch_devices(cx, {
-            move |registry| {
-        }});
+        cx.spawn(async move |this, cx| {
+            let mut subscription = Streaming::get_device_registry(cx)
+                .subscribe();
+
+            loop {
+                let registry = subscription.recv().await;
+
+                let input = registry.get_input_devices();
+                let output = registry.get_output_devices();
+
+                println!("INPUT: {input:?}");
+                println!("OUTPUT: {output:?}");
+            }
+        }).detach();
 
         cx.spawn(async move |this, cx| {
             let self_id = ConnectionManger::get_user_id(cx);

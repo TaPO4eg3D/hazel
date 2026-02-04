@@ -1,9 +1,8 @@
 use std::{
-    sync::{
+    ops::Sub, sync::{
         Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicPtr, Ordering},
-    },
-    thread::{self, Thread},
+    }, task::{Poll, Waker}, thread::{self, Thread}
 };
 
 use pipewire::{self as pw, channel, registry, types::ObjectType};
@@ -54,12 +53,56 @@ impl Notifier {
 #[derive(Default, Clone)]
 pub struct DeviceRegistry {
     inner: Arc<RwLock<DeviceRegistryInner>>,
-    notifier: Notifier,
+}
+
+pub struct Subscription {
+    is_first_fetch: bool,
+
+    registry: DeviceRegistry,
+}
+
+pub struct RecvFuture {
+    first: bool,
+    registry: DeviceRegistry,
+}
+
+impl Future for RecvFuture {
+    type Output = DeviceRegistry;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        if !self.first {
+            return Poll::Ready(self.registry.clone());
+        }
+
+        self.as_mut().first = false;
+
+        let waker = cx.waker().clone();
+        let mut registry = self.registry.inner.write().unwrap();
+        registry.tasks.push(waker);
+
+        Poll::Pending
+    }
+}
+
+impl Subscription {
+    pub fn recv(&mut self) -> RecvFuture {
+        let future = RecvFuture {
+            first: !self.is_first_fetch,
+            registry: self.registry.clone(),
+        };
+
+        self.is_first_fetch = false;
+
+        future
+    }
 }
 
 impl DeviceRegistry {
-    pub fn listen_updates(&self) {
-        self.notifier.listen_updates();
+    pub fn subscribe(self) -> Subscription {
+        Subscription {
+            is_first_fetch: true,
+            registry: self,
+        }
     }
 
     pub fn get_input_devices(&self) -> Vec<AudioDevice> {
@@ -78,14 +121,14 @@ impl DeviceRegistry {
         let mut registry = self.inner.write().unwrap();
         registry.input.push(device);
 
-        self.notifier.notify();
+        registry.notify();
     }
 
     fn add_output(&self, device: AudioDevice) {
         let mut registry = self.inner.write().unwrap();
         registry.output.push(device);
 
-        self.notifier.notify();
+        registry.notify();
     }
 
     fn set_active_input(&self, id: u32) {
@@ -96,7 +139,7 @@ impl DeviceRegistry {
             .iter_mut()
             .for_each(|item| item.is_active = item.id == id);
 
-        self.notifier.notify();
+        registry.notify();
     }
 
     fn set_active_output(&self, id: u32) {
@@ -107,7 +150,7 @@ impl DeviceRegistry {
             .iter_mut()
             .for_each(|item| item.is_active = item.id == id);
 
-        self.notifier.notify();
+        registry.notify();
     }
 
     fn device_exists(&self, id: u32) -> bool {
@@ -126,7 +169,6 @@ impl DeviceRegistry {
             registry.input.retain(|item| item.id != id);
             registry.output.retain(|item| item.id != id);
 
-            self.notifier.notify();
         }
     }
 }
@@ -135,6 +177,16 @@ impl DeviceRegistry {
 struct DeviceRegistryInner {
     input: Vec<AudioDevice>,
     output: Vec<AudioDevice>,
+
+    tasks: Vec<Waker>,
+}
+
+impl DeviceRegistryInner {
+    fn notify(&mut self) {
+        while let Some(waker) = self.tasks.pop() {
+            waker.wake();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
