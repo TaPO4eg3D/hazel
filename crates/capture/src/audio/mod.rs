@@ -1,9 +1,16 @@
 use core::panic;
 use std::{
-    cell::UnsafeCell, cmp::Reverse, collections::{BinaryHeap, VecDeque}, mem::MaybeUninit, ptr::NonNull, sync::{
+    cell::UnsafeCell,
+    cmp::Reverse,
+    collections::{BinaryHeap, VecDeque},
+    mem::MaybeUninit,
+    ptr::NonNull,
+    sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-    }, thread, time::Instant
+    },
+    thread,
+    time::Instant,
 };
 
 use anyhow::Result as AResult;
@@ -15,7 +22,9 @@ use streaming_common::FFMpegPacketPayload;
 use crossbeam::channel;
 
 use crate::audio::{
-    decode::AudioDecoder, encode::AudioEncoder, linux::{LinuxCapture, LinuxPlayback}
+    decode::AudioDecoder,
+    encode::AudioEncoder,
+    linux::{DeviceRegistry, LinuxCapture, LinuxPlayback},
 };
 
 pub mod linux;
@@ -165,8 +174,7 @@ impl<'a> EncodedRecv<'a> {
 
 impl<'a> CaptureReciever<'a> {
     fn new(capture: &'a Capture) -> CaptureReciever<'a> {
-        let mut recievers = capture.consumers
-            .write().unwrap();
+        let mut recievers = capture.consumers.write().unwrap();
 
         let idx = capture.idx_count.fetch_add(1, Ordering::AcqRel);
 
@@ -186,23 +194,30 @@ impl<'a> CaptureReciever<'a> {
             self.encoder.encode(&samples);
         }
 
-        EncodedRecv { encoder: &mut self.encoder }
+        EncodedRecv {
+            encoder: &mut self.encoder,
+        }
     }
 
-    pub fn recv_encoded_with<'b>(&'b mut self, f: impl Fn(Vec<f32>) -> Option<Vec<f32>>) -> EncodedRecv<'b> {
+    pub fn recv_encoded_with<'b>(
+        &'b mut self,
+        f: impl Fn(Vec<f32>) -> Option<Vec<f32>>,
+    ) -> EncodedRecv<'b> {
         if let Ok(samples) = self.rx.recv()
-            && let Some(samples) = f(samples) {
-                self.encoder.encode(&samples);
-            }
+            && let Some(samples) = f(samples)
+        {
+            self.encoder.encode(&samples);
+        }
 
-        EncodedRecv { encoder: &mut self.encoder }
+        EncodedRecv {
+            encoder: &mut self.encoder,
+        }
     }
 }
 
 impl<'a> Drop for CaptureReciever<'a> {
     fn drop(&mut self) {
-        let mut recievers = self.capture.consumers
-            .write().unwrap();
+        let mut recievers = self.capture.consumers.write().unwrap();
 
         recievers.retain(|(id, _)| *id != self.idx);
 
@@ -217,37 +232,40 @@ impl Capture {
         let is_enabled = Arc::new(AtomicBool::new(false));
         let platform_loop_controller = platform_capture.get_controller();
 
-        let consumers: Arc<RwLock<Vec<CaptureConsumer>>> = 
-            Arc::new(RwLock::new(Vec::new()));
+        let consumers: Arc<RwLock<Vec<CaptureConsumer>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let handle = thread::spawn({
-            let consumers = consumers.clone();
-            let is_enabled = is_enabled.clone();
+        let handle = thread::Builder::new()
+            .name("capture-controller".into())
+            .spawn({
+                let consumers = consumers.clone();
+                let is_enabled = is_enabled.clone();
 
-            move || {
-                let mut buf = vec![0.; (DEFAULT_RATE * DEFAULT_CHANNELS) as usize];
-                platform_capture.update_working_thread();
+                move || {
+                    let mut buf = vec![0.; (DEFAULT_RATE * DEFAULT_CHANNELS) as usize];
 
-                // We start with disabled capturing
-                thread::park();
+                    // IMPORTANT: without this function, the thread
+                    // will not be unparked on new data
+                    platform_capture.listen_updates();
 
-                loop {
-                    if !is_enabled.load(Ordering::Relaxed) {
-                        std::thread::park();
-                    }
+                    // We start with disabled capturing
+                    thread::park();
 
-                    let len = platform_capture.pop(&mut buf);
-                    
-                    let consumers = consumers.read()
-                        .unwrap();
+                    loop {
+                        if !is_enabled.load(Ordering::Relaxed) {
+                            std::thread::park();
+                        }
 
-                    for (_, consumer) in consumers.iter() {
-                        _ = consumer.send(buf[0..len].to_vec());
+                        let len = platform_capture.pop(&mut buf);
+
+                        let consumers = consumers.read().unwrap();
+
+                        for (_, consumer) in consumers.iter() {
+                            _ = consumer.send(buf[0..len].to_vec());
+                        }
                     }
                 }
-            }
-        });
-
+            })
+            .unwrap();
 
         Self {
             is_enabled,
@@ -266,7 +284,9 @@ impl Capture {
     pub fn set_enabled(&self, value: bool) {
         self.is_enabled.store(value, Ordering::Relaxed);
 
-        _ = self.platform_loop_controller.send(AudioLoopCommand::SetEnabledCapture(value));
+        _ = self
+            .platform_loop_controller
+            .send(AudioLoopCommand::SetEnabledCapture(value));
 
         if value {
             self.handle.thread().unpark();
@@ -290,21 +310,24 @@ impl Playback {
         let volume = Arc::new(AtomicU8::new(140));
         let is_enabled = Arc::new(AtomicBool::new(true));
 
-        thread::spawn({
-            let is_enabled = is_enabled.clone();
+        thread::Builder::new()
+            .name("playback-controller".into())
+            .spawn({
+                let is_enabled = is_enabled.clone();
 
-            move || {
-                loop {
-                    if let Ok(packet) = rx.recv() {
-                        if !is_enabled.load(Ordering::Relaxed) {
-                            continue;
+                move || {
+                    loop {
+                        if let Ok(packet) = rx.recv() {
+                            if !is_enabled.load(Ordering::Relaxed) {
+                                continue;
+                            }
+
+                            platform_playback.push(&packet);
                         }
-
-                        platform_playback.push(&packet);
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
 
         Self {
             tx,
@@ -357,7 +380,10 @@ impl Playback {
         todo!()
     }
 
-    pub fn process_streaming<'a>(&self, clients: impl Iterator<Item = &'a mut StreamingClientState>) {
+    pub fn process_streaming<'a>(
+        &self,
+        clients: impl Iterator<Item = &'a mut StreamingClientState>,
+    ) {
         let mut buf: Vec<f32> = vec![];
 
         for client in clients {
@@ -370,11 +396,11 @@ impl Playback {
     }
 }
 
-pub fn init() -> (Capture, Playback) {
-    let (capture, playback) = linux::init();
+pub fn init() -> (Capture, Playback, DeviceRegistry) {
+    let (capture, playback, device_registry) = linux::init();
 
     let capture = Capture::new(capture);
     let playback = Playback::new(playback);
 
-    (capture, playback)
+    (capture, playback, device_registry)
 }

@@ -336,6 +336,11 @@ impl StreamingState {
     }
 
     pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
+        // TODO: Move
+        Streaming::watch_devices(cx, {
+            move |registry| {
+        }});
+
         cx.spawn(async move |this, cx| {
             let self_id = ConnectionManger::get_user_id(cx);
             let mut timer = smol::Timer::interval(Duration::from_millis(250));
