@@ -198,8 +198,6 @@ fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<R
     }
 }
 
-type DeviceUpdateCallback = Arc<Mutex<Option<Box<dyn Fn(DeviceRegistry) + Send + Sync>>>>;
-
 struct GlobalStreaming {
     capture: Capture,
     playback: Playback,
@@ -209,8 +207,6 @@ struct GlobalStreaming {
 
     reciever_state: Arc<Mutex<ReceiverState>>,
     sender_state: Arc<SenderState>,
-
-    on_device_update: DeviceUpdateCallback,
 }
 
 impl Global for GlobalStreaming {}
@@ -228,10 +224,9 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| stream.playback.clone())
     }
 
-    pub fn watch_devices<C: AppContext>(cx: &mut C, f: impl Fn(DeviceRegistry) + Send + Sync + 'static) {
+    pub fn get_device_registry<C: AppContext>(cx: &mut C) -> DeviceRegistry {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            let mut handle = stream.on_device_update.lock().unwrap();
-            *handle = Some(Box::new(f));
+            stream.device_registry.clone()
         })
     }
 
@@ -294,32 +289,6 @@ pub fn init(cx: &mut App) {
         })
         .unwrap();
 
-    let handle: DeviceUpdateCallback = Arc::new(Mutex::new(None));
-
-    thread::Builder::new()
-        .name("device-watcher".into())
-        .spawn({
-            let handle = handle.clone();
-            let device_registry = device_registry.clone();
-
-            move || {
-                device_registry.listen_updates();
-
-                loop {
-                    {
-                        let handle = handle.lock().unwrap();
-
-                        if let Some(handle) = handle.as_ref() {
-                            (*handle)(device_registry.clone());
-                        }
-                    }
-
-                    thread::park();
-                }
-            }
-        })
-        .unwrap();
-
     cx.set_global(GlobalStreaming {
         capture,
         playback,
@@ -327,6 +296,5 @@ pub fn init(cx: &mut App) {
         stream_addr,
         reciever_state,
         device_registry,
-        on_device_update: handle,
     });
 }
