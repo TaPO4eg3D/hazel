@@ -1,11 +1,18 @@
 use std::{
-    cell::RefCell, net::{SocketAddr, UdpSocket}, sync::{Arc, Mutex, RwLock, Weak, atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering}}, thread, time::{Duration, Instant}
+    cell::RefCell,
+    net::{SocketAddr, UdpSocket},
+    sync::{
+        Arc, Mutex, RwLock, Weak,
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
-use capture::audio::{self, Capture, Playback, StreamingClientState};
-use gpui::{App, AppContext, AsyncApp, Global};
+use capture::audio::{self, Capture, Playback, StreamingClientState, linux::DeviceRegistry};
+use gpui::{App, AppContext, AsyncApp, BorrowAppContext, Global};
 
 use rpc::models::markers::UserId;
 use streaming_common::{FFMpegPacketPayload, UDPPacket, UDPPacketType};
@@ -27,15 +34,13 @@ impl VoiceMemberSharedData {
 
     pub fn is_talking(&self) -> bool {
         let now = Instant::now();
-        let last_packet = self.last_packet.read()
-            .unwrap();
+        let last_packet = self.last_packet.read().unwrap();
 
         now - *last_packet < Duration::from_millis(250)
     }
-    
+
     fn update_timestamp(&self) {
-        let mut last_packet = self.last_packet.write()
-            .unwrap();
+        let mut last_packet = self.last_packet.write().unwrap();
 
         *last_packet = Instant::now();
     }
@@ -47,12 +52,12 @@ struct VoiceMember {
 }
 
 impl VoiceMember {
-    fn new(shared: Weak<VoiceMemberSharedData>) -> Self { 
+    fn new(shared: Weak<VoiceMemberSharedData>) -> Self {
         let user_id = shared.upgrade().unwrap().id;
 
         Self {
             shared_state: shared,
-            streaming_state: StreamingClientState::new(user_id.value)
+            streaming_state: StreamingClientState::new(user_id.value),
         }
     }
 }
@@ -71,12 +76,7 @@ impl SenderState {
     }
 }
 
-fn spawn_sender(
-    addr: Addr,
-    socket: Arc<UdpSocket>,
-    state: Arc<SenderState>,
-    capture: Capture,
-) {
+fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, capture: Capture) {
     let mut buf = BytesMut::new();
     let mut recv = capture.get_recv();
 
@@ -92,10 +92,7 @@ fn spawn_sender(
                 return None;
             }
 
-            let max_volume = *(samples
-                .iter()
-                .max_by(|a, b| a.total_cmp(b))
-                .unwrap()); // Safe due to the check above
+            let max_volume = *(samples.iter().max_by(|a, b| a.total_cmp(b)).unwrap()); // Safe due to the check above
 
             if max_volume < transmit_volume {
                 let now = Instant::now();
@@ -108,10 +105,8 @@ fn spawn_sender(
 
                             return None;
                         }
-                    },
-                    None => {
-                        *last_silence.borrow_mut() = Some(now)
                     }
+                    None => *last_silence.borrow_mut() = Some(now),
                 }
             } else {
                 state.is_talking.store(true, Ordering::Relaxed);
@@ -147,30 +142,23 @@ struct ReceiverState {
 impl ReceiverState {
     fn cleanup(&mut self) {
         self.voice_members
-            .retain(|member| {
-                member.shared_state.strong_count() != 0
-            });
+            .retain(|member| member.shared_state.strong_count() != 0);
     }
 }
 
 impl ReceiverState {
     pub fn get_voiced_member_mut(&mut self, user_id: i32) -> Option<&mut VoiceMember> {
-        self.voice_members.iter_mut()
-            .find(|client| {
-                if let Some(client) = client.shared_state.upgrade() {
-                    return client.id.value == user_id
-                }
+        self.voice_members.iter_mut().find(|client| {
+            if let Some(client) = client.shared_state.upgrade() {
+                return client.id.value == user_id;
+            }
 
-                false
-            })
+            false
+        })
     }
 }
 
-fn spawn_receiver(
-    socket: Arc<UdpSocket>,
-    playback: Playback,
-    state: Arc<Mutex<ReceiverState>>,
-) {
+fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<ReceiverState>>) {
     let mut buf = BytesMut::with_capacity(4800 * 2);
 
     loop {
@@ -187,7 +175,7 @@ fn spawn_receiver(
             state.cleanup();
 
             let Some(member) = state.get_voiced_member_mut(packet.user_id) else {
-                continue
+                continue;
             };
 
             match packet.payload {
@@ -196,34 +184,40 @@ fn spawn_receiver(
                         shared_state.update_timestamp();
                     }
                     member.streaming_state.push(packet);
-                    
+
                     playback.process_streaming(
-                        state.voice_members.iter_mut()
-                            .map(|member| &mut member.streaming_state)
+                        state
+                            .voice_members
+                            .iter_mut()
+                            .map(|member| &mut member.streaming_state),
                     );
-                },
+                }
                 _ => todo!(),
             }
         }
     }
 }
 
+type DeviceUpdateCallback = Arc<Mutex<Option<Box<dyn Fn(DeviceRegistry) + Send + Sync>>>>;
+
 struct GlobalStreaming {
     capture: Capture,
     playback: Playback,
+    device_registry: DeviceRegistry,
 
     stream_addr: Addr,
 
     reciever_state: Arc<Mutex<ReceiverState>>,
     sender_state: Arc<SenderState>,
+
+    on_device_update: DeviceUpdateCallback,
 }
 
 impl Global for GlobalStreaming {}
 
 pub struct Streaming {}
 
-impl Streaming
-{
+impl Streaming {
     pub fn is_talking<C: AppContext>(cx: &C) -> bool {
         cx.read_global(|stream: &GlobalStreaming, _| {
             stream.sender_state.is_talking.load(Ordering::Relaxed)
@@ -231,21 +225,23 @@ impl Streaming
     }
 
     pub fn get_playback<C: AppContext>(cx: &C) -> Playback {
+        cx.read_global(|stream: &GlobalStreaming, _| stream.playback.clone())
+    }
+
+    pub fn watch_devices<C: AppContext>(cx: &mut C, f: impl Fn(DeviceRegistry) + Send + Sync + 'static) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.playback.clone()
+            let mut handle = stream.on_device_update.lock().unwrap();
+            *handle = Some(Box::new(f));
         })
     }
 
     pub fn get_capture<C: AppContext>(cx: &C) -> Capture {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.capture.clone()
-        })
+        cx.read_global(|stream: &GlobalStreaming, _| stream.capture.clone())
     }
 
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            let mut state = stream.stream_addr.lock()
-                .unwrap();
+            let mut state = stream.stream_addr.lock().unwrap();
 
             *state = Some((user_id, addr));
 
@@ -255,8 +251,7 @@ impl Streaming
 
     pub fn add_voice_member<C: AppContext>(cx: &C, shared: Weak<VoiceMemberSharedData>) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            let mut state = stream.reciever_state.lock()
-                .unwrap();
+            let mut state = stream.reciever_state.lock().unwrap();
 
             state.voice_members.push(VoiceMember::new(shared));
         });
@@ -267,37 +262,71 @@ pub fn init(cx: &mut App) {
     let stream_addr: Addr = Arc::new(Mutex::new(None));
 
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (capture, playback) = audio::init();
+    let (capture, playback, device_registry) = audio::init();
 
     let sender_state = Arc::new(SenderState::new());
     let reciever_state = Arc::new(Mutex::new(ReceiverState::default()));
 
-    thread::spawn({
-        let addr = stream_addr.clone();
-        let capture = capture.clone();
-        let socket = socket.clone();
-        let state = sender_state.clone();
+    thread::Builder::new()
+        .name("udp-sender".into())
+        .spawn({
+            let addr = stream_addr.clone();
+            let capture = capture.clone();
+            let socket = socket.clone();
+            let state = sender_state.clone();
 
-        move || {
-            spawn_sender(addr, socket, state, capture);
-        }
-    });
+            move || {
+                spawn_sender(addr, socket, state, capture);
+            }
+        })
+        .unwrap();
 
-    thread::spawn({
-        let socket = socket.clone();
-        let playback = playback.clone();
-        let state = reciever_state.clone();
+    thread::Builder::new()
+        .name("udp-receiver".into())
+        .spawn({
+            let socket = socket.clone();
+            let playback = playback.clone();
+            let state = reciever_state.clone();
 
-        move || {
-            spawn_receiver(socket, playback, state);
-        }
-    });
+            move || {
+                spawn_receiver(socket, playback, state);
+            }
+        })
+        .unwrap();
 
-    cx.set_global(GlobalStreaming { 
+    let handle: DeviceUpdateCallback = Arc::new(Mutex::new(None));
+
+    thread::Builder::new()
+        .name("device-watcher".into())
+        .spawn({
+            let handle = handle.clone();
+            let device_registry = device_registry.clone();
+
+            move || {
+                device_registry.listen_updates();
+
+                loop {
+                    {
+                        let handle = handle.lock().unwrap();
+
+                        if let Some(handle) = handle.as_ref() {
+                            (*handle)(device_registry.clone());
+                        }
+                    }
+
+                    thread::park();
+                }
+            }
+        })
+        .unwrap();
+
+    cx.set_global(GlobalStreaming {
         capture,
         playback,
         sender_state,
         stream_addr,
         reciever_state,
+        device_registry,
+        on_device_update: handle,
     });
 }
