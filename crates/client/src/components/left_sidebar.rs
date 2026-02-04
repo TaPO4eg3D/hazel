@@ -369,9 +369,18 @@ impl AudioDeviceControl {
 
 impl RenderOnce for AudioDeviceControl {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let available_devices = (0..5).map(|i| {
+        let devices = match self.device_type {
+            AudioDeviceType::Playback => {
+                self.streaming_state.read(cx).output_devices.clone()
+            },
+            AudioDeviceType::Capture => {
+                self.streaming_state.read(cx).input_devices.clone()
+            },
+        };
+
+        let available_devices = devices.into_iter().map(|device| {
             div()
-                .id(ElementId::Integer(i))
+                .id(ElementId::Integer(device.id as u64))
                 .w_full()
                 .rounded_md()
                 .hover(|this| this.bg(cx.theme().secondary))
@@ -384,13 +393,13 @@ impl RenderOnce for AudioDeviceControl {
                             .size_2()
                             .rounded_full()
                             .flex_none()
-                            .when(i == 0, |this| this.bg(white())),
+                            .when(device.is_active, |this| this.bg(white())),
                     ),
                 )
                 .child(
                     // An additional container to force the label to wrap
                     div().pl_4().w_full().child(
-                        Label::new("Long name of an audio device ( quite long indeed )").text_sm(),
+                        Label::new(device.name).text_sm(),
                     ),
                 )
         });
