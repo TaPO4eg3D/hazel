@@ -353,7 +353,9 @@ impl StreamingState {
 
         cx.spawn(async move |this, cx| {
             let self_id = ConnectionManger::get_user_id(cx);
-            let mut timer = smol::Timer::interval(Duration::from_millis(250));
+
+            // Because we don't need to fetch this status very often
+            let mut timer = smol::Timer::interval(Duration::from_millis(100));
             
             loop {
                 timer.next().await;
