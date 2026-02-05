@@ -104,7 +104,7 @@ impl StreamingCompatInto for Packet {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct DeviceRegistry {
     inner: Arc<RwLock<DeviceRegistryInner>>,
 }
@@ -152,6 +152,12 @@ impl Subscription {
 }
 
 impl DeviceRegistry {
+    pub fn new(controller: pipewire::channel::Sender<AudioLoopCommand>) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(DeviceRegistryInner::new(controller)))
+        }
+    }
+
     pub fn subscribe(self) -> Subscription {
         Subscription {
             is_first_fetch: true,
@@ -171,6 +177,22 @@ impl DeviceRegistry {
         registry.output.clone()
     }
 
+    pub fn set_active_input(&self, device: &AudioDevice) {
+        let registry = self.inner.read().unwrap();
+
+        _ = registry.platform_loop_controller.send(AudioLoopCommand::SetActiveInputDevice(
+            device.clone()
+        ));
+    }
+
+    pub fn set_active_output(&self, device: &AudioDevice) {
+        let registry = self.inner.read().unwrap();
+
+        _ = registry.platform_loop_controller.send(AudioLoopCommand::SetActiveOutputDevice(
+            device.clone()
+        ));
+    }
+
     fn add_input(&self, device: AudioDevice) {
         let mut registry = self.inner.write().unwrap();
         registry.input.push(device);
@@ -185,7 +207,7 @@ impl DeviceRegistry {
         registry.notify();
     }
 
-    fn set_active_input(&self, id: u32) {
+    fn mark_active_input(&self, id: u32) {
         let mut registry = self.inner.write().unwrap();
 
         registry
@@ -196,7 +218,7 @@ impl DeviceRegistry {
         registry.notify();
     }
 
-    fn set_active_output(&self, id: u32) {
+    fn mark_active_output(&self, id: u32) {
         let mut registry = self.inner.write().unwrap();
 
         registry
@@ -227,15 +249,26 @@ impl DeviceRegistry {
     }
 }
 
-#[derive(Default)]
 struct DeviceRegistryInner {
     input: Vec<AudioDevice>,
     output: Vec<AudioDevice>,
+
+    platform_loop_controller: pipewire::channel::Sender<AudioLoopCommand>,
 
     tasks: Vec<Waker>,
 }
 
 impl DeviceRegistryInner {
+    fn new(controller: pipewire::channel::Sender<AudioLoopCommand>) -> Self {
+        Self {
+            input: vec![],
+            output: vec![],
+            tasks: vec![],
+
+            platform_loop_controller: controller,
+        }
+    }
+
     fn notify(&mut self) {
         while let Some(waker) = self.tasks.pop() {
             waker.wake();
@@ -246,7 +279,9 @@ impl DeviceRegistryInner {
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
     pub id: u32,
+
     pub name: String,
+    pub display_name: String,
 
     pub is_active: bool,
 }
@@ -279,6 +314,9 @@ impl StreamingClientState {
 pub enum AudioLoopCommand {
     SetEnabledCapture(bool),
     SetEnabledPlayback(bool),
+
+    SetActiveInputDevice(AudioDevice),
+    SetActiveOutputDevice(AudioDevice),
 }
 
 /// (id, Sender)

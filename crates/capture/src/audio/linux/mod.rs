@@ -1,17 +1,18 @@
 use std::{
-    ops::Sub, sync::{
+    cell::RefCell, collections::HashMap, ops::Sub, rc::Rc, sync::{
         Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicPtr, Ordering},
     }, task::{Poll, Waker}, thread::{self, Thread}
 };
 
-use pipewire::{self as pw, channel, registry, types::ObjectType};
+use pipewire::{self as pw, channel, properties::properties, registry, sys::pw_proxy_add_listener, types::ObjectType};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, linux::{capture::CaptureStream, playback::PlaybackStream}
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry,
+    linux::{capture::CaptureStream, playback::PlaybackStream},
 };
 
 pub mod capture;
@@ -85,6 +86,46 @@ impl LinuxPlayback {
     }
 }
 
+// fn device_set_route_properties(
+//     device: &AudioDevice,
+//     route_index: i32,
+//     route_device: i32,
+// ) {
+//     let mut route_properties = Vec::new();
+//     route_properties.push(Property {
+//         key: libspa_sys::SPA_PARAM_ROUTE_index,
+//         flags: PropertyFlags::empty(),
+//         value: Value::Int(route_index),
+//     });
+//     route_properties.push(Property {
+//         key: libspa_sys::SPA_PARAM_ROUTE_device,
+//         flags: PropertyFlags::empty(),
+//         value: Value::Int(route_device),
+//     });
+//
+//     route_properties.push(Property {
+//         key: libspa_sys::SPA_PARAM_ROUTE_save,
+//         flags: PropertyFlags::empty(),
+//         value: Value::Bool(true),
+//     });
+//     let route_properties = route_properties;
+//
+//     let values = PodSerializer::serialize(
+//         std::io::Cursor::new(Vec::new()),
+//         &Value::Object(Object {
+//             type_: libspa_sys::SPA_TYPE_OBJECT_ParamRoute,
+//             id: libspa_sys::SPA_PARAM_Route,
+//             properties: route_properties,
+//         }),
+//     );
+//
+//     if let Ok((values, _)) = values {
+//         if let Some(pod) = Pod::from_bytes(&values.into_inner()) {
+//             device.set_param(ParamType::Route, 0, pod);
+//         }
+//     }
+// }
+
 pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
     // We capture in mono and there's no point to store
     // more than 60ms
@@ -106,11 +147,11 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
     };
 
     let playback = LinuxPlayback {
-        pw_sender,
+        pw_sender: pw_sender.clone(),
         playback_producer,
     };
 
-    let _device_registry = DeviceRegistry::default();
+    let _device_registry = DeviceRegistry::new(pw_sender);
     let device_registry = _device_registry.clone();
 
     thread::Builder::new()
@@ -123,19 +164,23 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
             let context = pw::context::ContextRc::new(&mainloop, None)?;
             let core = context.connect_rc(None)?;
 
-            let registry = core.get_registry()?;
+            let registry = core.get_registry_rc()?;
             let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
             let capture_stream = capture.stream.clone();
 
             let playback = PlaybackStream::new(core.clone(), playback_consumer)?;
             let playback_stream = playback.stream.clone();
 
+            let routing_meta: Rc<RefCell<Option<pw::metadata::Metadata>>> = Default::default();
+
             let _listener = registry
+                .clone()
                 .add_listener_local()
                 .global({
                     let capture_stream = capture_stream.clone();
                     let playback_stream = playback_stream.clone();
 
+                    let routing_meta = routing_meta.clone();
                     let device_registry = device_registry.clone();
 
                     move |obj| {
@@ -145,14 +190,22 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
                         match obj.type_ {
                             ObjectType::Node => {
-                                let Some(class) = props.get("media.class") else {
+                                let Some(class) = props.get(*pw::keys::MEDIA_CLASS) else {
                                     return;
                                 };
 
-                                let node_name = props
-                                    .get("node.nick")
-                                    .or_else(|| props.get("node.name"))
+                                let display_name = props
+                                    .get(*pw::keys::NODE_NICK)
+                                    .or_else(|| props.get(*pw::keys::NODE_NAME))
                                     .unwrap_or("Unknown Device");
+
+                                let Some(name) = props
+                                    .get(*pw::keys::NODE_NAME)
+                                    .or_else(|| props.get("object.serial"))
+                                else {
+                                    println!("Invalid Pipewire object: {}!", obj.id);
+                                    return;
+                                };
 
                                 match class {
                                     "Audio/Sink" => {
@@ -162,11 +215,13 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
                                         device_registry.add_output(AudioDevice {
                                             id: obj.id,
-                                            name: node_name.to_string(),
+                                            name: name.into(),
+                                            display_name: display_name.into(),
                                             // On this stage we don't know if a device is
                                             // linked to our app
                                             is_active: false,
                                         });
+
                                     }
                                     "Audio/Source" => {
                                         if device_registry.device_exists(obj.id) {
@@ -175,7 +230,8 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
                                         device_registry.add_input(AudioDevice {
                                             id: obj.id,
-                                            name: node_name.to_string(),
+                                            name: name.into(),
+                                            display_name: display_name.to_string(),
                                             // On this stage we don't know if a device is
                                             // linked to our app
                                             is_active: false,
@@ -183,13 +239,33 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                     }
                                     _ => {}
                                 }
-                            }
-                            ObjectType::Link => {
-                                let Some(input_node) = props.get("link.input.node") else {
+                            },
+                            ObjectType::Metadata => {
+                                let Some(name) = props.get("metadata.name") else {
                                     return;
                                 };
 
-                                let Some(output_node) = props.get("link.output.node") else {
+                                if name == "default" {
+                                    let mut routing_meta = routing_meta.borrow_mut();
+                                    let node = match registry.bind(obj) {
+                                        Ok(node) => node,
+                                        Err(err) => {
+                                            println!("Failed to bind routing metadata: {err:?}");
+                                            return;
+                                        }
+                                    };
+
+                                    *routing_meta = Some(node);
+                                }
+
+                            },
+                            ObjectType::Link => {
+                                let Some(input_node) = props.get(*pw::keys::LINK_INPUT_NODE) else {
+                                    return;
+                                };
+
+                                let Some(output_node) = props.get(*pw::keys::LINK_OUTPUT_NODE)
+                                else {
                                     return;
                                 };
 
@@ -197,11 +273,11 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                 let output_node: u32 = output_node.parse().unwrap();
 
                                 if input_node == capture_stream.node_id() {
-                                    device_registry.set_active_input(output_node);
+                                    device_registry.mark_active_input(output_node);
                                 }
 
                                 if output_node == playback_stream.node_id() {
-                                    device_registry.set_active_output(input_node);
+                                    device_registry.mark_active_output(input_node);
                                 }
                             }
                             _ => {}
@@ -221,6 +297,30 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                 }
                 AudioLoopCommand::SetEnabledPlayback(active) => {
                     _ = playback_stream.set_active(active);
+                }
+                AudioLoopCommand::SetActiveInputDevice(device) => {
+                    let metadata = routing_meta.borrow();
+
+                    if let Some(node) = &*metadata {
+                        node.set_property(
+                            capture_stream.node_id(),
+                            "target.object",
+                            None,
+                            Some(&device.name)
+                        );
+                    }
+                }
+                AudioLoopCommand::SetActiveOutputDevice(device) => {
+                    let metadata = routing_meta.borrow();
+
+                    if let Some(node) = &*metadata {
+                        node.set_property(
+                            playback_stream.node_id(),
+                            "target.object",
+                            None,
+                            Some(&device.name)
+                        );
+                    }
                 }
             });
 
