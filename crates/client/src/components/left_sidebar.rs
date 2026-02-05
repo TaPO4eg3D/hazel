@@ -18,7 +18,7 @@ use crate::{
     assets::IconName,
     components::{
         animation::HoverAnimationExt, chat_state::ChatState, streaming_state::StreamingState,
-    },
+    }, gpui_audio::Streaming,
 };
 
 type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;
@@ -347,6 +347,7 @@ impl RenderOnce for ControlPanel {
     }
 }
 
+#[derive(Clone, Copy)]
 enum AudioDeviceType {
     Capture,
     Playback,
@@ -393,15 +394,29 @@ impl RenderOnce for AudioDeviceControl {
                             .size_2()
                             .rounded_full()
                             .flex_none()
-                            .when(device.is_active, |this| this.bg(white())),
+                            .when(device.is_active, |this| this.bg(white()))
                     ),
                 )
                 .child(
                     // An additional container to force the label to wrap
                     div().pl_4().w_full().child(
-                        Label::new(device.name).text_sm(),
+                        Label::new(device.display_name.clone()).text_sm(),
                     ),
                 )
+                .when(!device.is_active, |this| {
+                    this.on_click(move |_, _, cx| {
+                        let registry = Streaming::get_device_registry(cx);
+
+                        match self.device_type {
+                            AudioDeviceType::Capture => {
+                                registry.set_active_input(&device);
+                            },
+                            AudioDeviceType::Playback => {
+                                registry.set_active_output(&device);
+                            },
+                        }
+                    })
+                })
         });
 
         let device_volume = {
