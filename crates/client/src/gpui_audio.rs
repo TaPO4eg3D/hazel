@@ -64,6 +64,8 @@ impl VoiceMember {
 
 struct SenderState {
     transmit_volume: AtomicF32,
+    volume_modifier: AtomicF32,
+
     is_talking: AtomicBool,
 }
 
@@ -72,6 +74,7 @@ impl SenderState {
         Self {
             is_talking: AtomicBool::new(false),
             transmit_volume: AtomicF32::new(0.010),
+            volume_modifier: AtomicF32::new(1.0),
         }
     }
 }
@@ -84,13 +87,17 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
 
     loop {
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
+        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
 
-        let mut encoded_recv = recv.recv_encoded_with(|samples| {
+        let mut encoded_recv = recv.recv_encoded_with(|mut samples| {
             if samples.is_empty() {
                 state.is_talking.store(false, Ordering::Relaxed);
 
                 return None;
             }
+
+            samples.iter_mut()
+                .for_each(|sample| *sample = (*sample * volume_modifier).clamp(0., 1.));
 
             let max_volume = *(samples.iter().max_by(|a, b| a.total_cmp(b)).unwrap()); // Safe due to the check above
 
@@ -217,6 +224,12 @@ impl Streaming {
     pub fn is_talking<C: AppContext>(cx: &C) -> bool {
         cx.read_global(|stream: &GlobalStreaming, _| {
             stream.sender_state.is_talking.load(Ordering::Relaxed)
+        })
+    }
+
+    pub fn set_volume_modifier<C: AppContext>(cx: &C, value: f32) {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            stream.sender_state.volume_modifier.store(value, Ordering::Relaxed);
         })
     }
 

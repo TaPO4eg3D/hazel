@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use capture::audio::AudioDevice;
 use gpui::{AppContext, AsyncApp, Context, Entity, Render, SharedString, WeakEntity, Window, div};
-use gpui_component::slider::SliderState;
+use gpui_component::slider::{SliderState, SliderValue};
 use rpc::{
     common::Empty,
     models::{
@@ -102,8 +102,8 @@ pub struct StreamingState {
 }
 
 impl StreamingState {
-    pub fn new<C: AppContext>(cx: &mut C) -> Self {
-        Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let state = Self {
             voice_channels: vec![],
 
             capture_volume: cx.new(|_| SliderState::new()
@@ -124,7 +124,18 @@ impl StreamingState {
 
             is_playback_enabled: true,
             is_capture_enabled: true,
-        }
+        };
+
+        cx.subscribe(&state.capture_volume, |_, state, _, cx| {
+            let state = state.read(cx);
+
+            if let SliderValue::Single(value) = state.value() {
+                Streaming::set_volume_modifier(cx, value / 100.);
+            }
+
+        }).detach();
+
+        state
     }
 }
 
