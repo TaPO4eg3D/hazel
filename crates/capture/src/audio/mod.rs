@@ -562,6 +562,7 @@ impl Playback {
     pub fn process_streaming<'a>(
         &self,
         clients: impl Iterator<Item = &'a mut StreamingClientState>,
+        post_process: impl Fn(Vec<f32>) -> Vec<f32>,
     ) {
         let mut buf: Vec<f32> = vec![];
 
@@ -570,7 +571,7 @@ impl Playback {
         }
 
         if !buf.is_empty() {
-            self.send_samples(buf);
+            self.send_samples(post_process(buf));
         }
     }
 }

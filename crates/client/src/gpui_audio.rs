@@ -96,8 +96,9 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
                 return None;
             }
 
-            samples.iter_mut()
-                .for_each(|sample| *sample = (*sample * volume_modifier).clamp(0., 1.));
+            samples
+                .iter_mut()
+                .for_each(|sample| *sample *= volume_modifier);
 
             let max_volume = *(samples.iter().max_by(|a, b| a.total_cmp(b)).unwrap()); // Safe due to the check above
 
@@ -141,9 +142,18 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
     }
 }
 
-#[derive(Default)]
 struct ReceiverState {
     voice_members: Vec<VoiceMember>,
+    volume_modifier: f32,
+}
+
+impl Default for ReceiverState {
+    fn default() -> Self {
+        Self {
+            voice_members: vec![],
+            volume_modifier: 1.,
+        }
+    }
 }
 
 impl ReceiverState {
@@ -192,11 +202,19 @@ fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<R
                     }
                     member.streaming_state.push(packet);
 
+                    let volume_modifier = state.volume_modifier;
                     playback.process_streaming(
                         state
                             .voice_members
                             .iter_mut()
                             .map(|member| &mut member.streaming_state),
+                        |mut samples| {
+                            samples
+                                .iter_mut()
+                                .for_each(|v| *v *= volume_modifier);
+
+                            samples
+                        },
                     );
                 }
                 _ => todo!(),
@@ -227,9 +245,19 @@ impl Streaming {
         })
     }
 
-    pub fn set_volume_modifier<C: AppContext>(cx: &C, value: f32) {
+    pub fn set_input_volume_modifier<C: AppContext>(cx: &C, value: f32) {
         cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.sender_state.volume_modifier.store(value, Ordering::Relaxed);
+            stream
+                .sender_state
+                .volume_modifier
+                .store(value, Ordering::Relaxed);
+        })
+    }
+
+    pub fn set_output_volume_modifier<C: AppContext>(cx: &C, value: f32) {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            let mut state = stream.reciever_state.lock().unwrap();
+            state.volume_modifier = value;
         })
     }
 
@@ -238,9 +266,7 @@ impl Streaming {
     }
 
     pub fn get_device_registry<C: AppContext>(cx: &mut C) -> DeviceRegistry {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.device_registry.clone()
-        })
+        cx.read_global(|stream: &GlobalStreaming, _| stream.device_registry.clone())
     }
 
     pub fn get_capture<C: AppContext>(cx: &C) -> Capture {

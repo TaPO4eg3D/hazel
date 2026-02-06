@@ -130,9 +130,16 @@ impl StreamingState {
             let state = state.read(cx);
 
             if let SliderValue::Single(value) = state.value() {
-                Streaming::set_volume_modifier(cx, value / 100.);
+                Streaming::set_input_volume_modifier(cx, value / 100.);
             }
+        }).detach();
 
+        cx.subscribe(&state.playback_volume, |_, state, _, cx| {
+            let state = state.read(cx);
+
+            if let SliderValue::Single(value) = state.value() {
+                Streaming::set_output_volume_modifier(cx, value / 100.);
+            }
         }).detach();
 
         state
