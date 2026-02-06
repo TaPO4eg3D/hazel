@@ -18,7 +18,8 @@ use crate::{
     assets::IconName,
     components::{
         animation::HoverAnimationExt, chat_state::ChatState, streaming_state::StreamingState,
-    }, gpui_audio::Streaming,
+    },
+    gpui_audio::Streaming,
 };
 
 type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;
@@ -302,6 +303,14 @@ impl ControlPanel {
 
 impl RenderOnce for ControlPanel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let active_channel_name = {
+            self.streaming_state
+                .read(cx)
+                .get_active_channel()
+                .map(|channel| channel.name.clone())
+        };
+        let is_connected = active_channel_name.is_some();
+
         div()
             .id("control-panel")
             .p_3()
@@ -313,21 +322,39 @@ impl RenderOnce for ControlPanel {
                     .child(
                         div()
                             .v_flex()
-                            .child(
-                                Label::new("VOICE CONNECTED")
-                                    .text_xs()
-                                    .text_color(rgb(0x00C950))
-                                    .font_bold(),
-                            )
-                            .child(Label::new("Gaming").text_sm()),
+                            .when(!is_connected, |this| {
+                                this.child(
+                                    Label::new("VOICE DISCONNECTED")
+                                        .text_xs()
+                                        .text_color(rgb(0xBF242C))
+                                        .font_bold(),
+                                )
+                                .child(
+                                    Label::new("Select a channel")
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .font_medium(),
+                                )
+                            })
+                            .when_some(active_channel_name, |this, name| {
+                                this.child(
+                                    Label::new("VOICE CONNECTED")
+                                        .text_xs()
+                                        .text_color(rgb(0x00C950))
+                                        .font_bold(),
+                                )
+                                .child(Label::new(name).text_sm().font_medium())
+                            }),
                     )
-                    .child(
-                        Button::new("disconnect")
-                            .ml_auto()
-                            .cursor_pointer()
-                            .icon(IconName::PhoneOff)
-                            .ghost(),
-                    ),
+                    .when(is_connected, |this| {
+                        this.child(
+                            Button::new("disconnect")
+                                .ml_auto()
+                                .cursor_pointer()
+                                .icon(IconName::PhoneOff)
+                                .ghost(),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -371,12 +398,8 @@ impl AudioDeviceControl {
 impl RenderOnce for AudioDeviceControl {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let devices = match self.device_type {
-            AudioDeviceType::Playback => {
-                self.streaming_state.read(cx).output_devices.clone()
-            },
-            AudioDeviceType::Capture => {
-                self.streaming_state.read(cx).input_devices.clone()
-            },
+            AudioDeviceType::Playback => self.streaming_state.read(cx).output_devices.clone(),
+            AudioDeviceType::Capture => self.streaming_state.read(cx).input_devices.clone(),
         };
 
         let available_devices = devices.into_iter().map(|device| {
@@ -394,14 +417,15 @@ impl RenderOnce for AudioDeviceControl {
                             .size_2()
                             .rounded_full()
                             .flex_none()
-                            .when(device.is_active, |this| this.bg(white()))
+                            .when(device.is_active, |this| this.bg(white())),
                     ),
                 )
                 .child(
                     // An additional container to force the label to wrap
-                    div().pl_4().w_full().child(
-                        Label::new(device.display_name.clone()).text_sm(),
-                    ),
+                    div()
+                        .pl_4()
+                        .w_full()
+                        .child(Label::new(device.display_name.clone()).text_sm()),
                 )
                 .when(!device.is_active, |this| {
                     this.on_click(move |_, _, cx| {
@@ -410,10 +434,10 @@ impl RenderOnce for AudioDeviceControl {
                         match self.device_type {
                             AudioDeviceType::Capture => {
                                 registry.set_active_input(&device);
-                            },
+                            }
                             AudioDeviceType::Playback => {
                                 registry.set_active_output(&device);
-                            },
+                            }
                         }
                     })
                 })
