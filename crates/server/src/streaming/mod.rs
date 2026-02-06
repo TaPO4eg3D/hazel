@@ -62,16 +62,16 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
             state.active_stream = Some(addr);
         }
 
-        let Some(users) = state.channels.voice_channels.get(&voice_channel) else {
+        let Some(voice_users) = state.channels.voice_channels.get(&voice_channel) else {
             continue;
         };
 
-        for user in users.iter() {
-            if *user == currend_user_id {
+        for user in voice_users.iter() {
+            if user.id == currend_user_id {
                 continue;
             }
 
-            if let Some(user) = state.connected_clients.get(user) {
+            if let Some(user) = state.connected_clients.get(&user.id) {
                 let addr = { user.read().unwrap().active_stream };
 
                 if let Some(addr) = addr {

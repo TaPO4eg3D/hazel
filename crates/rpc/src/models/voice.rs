@@ -8,6 +8,9 @@ use crate::{common::Empty, models::markers::{UserId, VoiceChannelId}};
 pub struct VoiceChannelMember {
     pub id: UserId,
     pub name: String,
+
+    pub is_muted: bool,
+    pub is_sound_off: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,11 +45,31 @@ pub struct JoinVoiceChannel {
     error: JoinVoiceChannelError,
 }
 
+#[rpc_method]
+pub struct LeaveVoiceChannel {
+    request: Empty,
+    response: (),
+    error: (),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct VoiceUserState {
+    pub is_mic_off: bool,
+    pub is_sound_off: bool,
+}
+
+#[rpc_method]
+pub struct UpdateVoiceUserState {
+    request: VoiceUserState,
+    response: (),
+    error: (),
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum VoiceChannelUpdateMessage {
     UserConnected(UserId),
     UserDisconnected(UserId),
+    UserStateUpdated((UserId, VoiceUserState))
 }
 
 #[derive(Serialize, Deserialize)]

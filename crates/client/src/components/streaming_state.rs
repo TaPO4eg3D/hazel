@@ -8,10 +8,11 @@ use rpc::{
     models::{
         auth::{GetUserInfo, GetUserPayload},
         common::RPCMethod as _,
+        general::UserConnectionUpdate,
         markers::{UserId, VoiceChannelId},
         voice::{
-            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, VoiceChannelUpdate,
-            VoiceChannelUpdateMessage,
+            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, UpdateVoiceUserState,
+            VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceUserState,
         },
     },
 };
@@ -106,18 +107,20 @@ impl StreamingState {
         let state = Self {
             voice_channels: vec![],
 
-            capture_volume: cx.new(|_| SliderState::new()
-                .min(0.)
-                .max(200.)
-                .default_value(100.)
-                .step(1.)
-            ),
-            playback_volume: cx.new(|_| SliderState::new()
-                .min(0.)
-                .max(200.)
-                .default_value(100.)
-                .step(1.)
-            ),
+            capture_volume: cx.new(|_| {
+                SliderState::new()
+                    .min(0.)
+                    .max(200.)
+                    .default_value(100.)
+                    .step(1.)
+            }),
+            playback_volume: cx.new(|_| {
+                SliderState::new()
+                    .min(0.)
+                    .max(200.)
+                    .default_value(100.)
+                    .step(1.)
+            }),
 
             input_devices: vec![],
             output_devices: vec![],
@@ -132,7 +135,8 @@ impl StreamingState {
             if let SliderValue::Single(value) = state.value() {
                 Streaming::set_input_volume_modifier(cx, value / 100.);
             }
-        }).detach();
+        })
+        .detach();
 
         cx.subscribe(&state.playback_volume, |_, state, _, cx| {
             let state = state.read(cx);
@@ -140,7 +144,8 @@ impl StreamingState {
             if let SliderValue::Single(value) = state.value() {
                 Streaming::set_output_volume_modifier(cx, value / 100.);
             }
-        }).detach();
+        })
+        .detach();
 
         state
     }
@@ -167,6 +172,35 @@ impl StreamingState {
             .find(|channel| channel.id == id)
     }
 
+    pub fn sync_server_state(&mut self, cx: &mut Context<Self>) {
+        if self.get_active_channel().is_none() {
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            let Some((is_sound_off, is_mic_off)) = this
+                .read_with(cx, |this, _cx| {
+                    (!this.is_playback_enabled, !this.is_capture_enabled)
+                })
+                .ok()
+            else {
+                return;
+            };
+
+            let _response = UpdateVoiceUserState::execute(
+                &connection,
+                &VoiceUserState {
+                    is_sound_off,
+                    is_mic_off,
+                },
+            )
+            .await;
+        })
+        .detach();
+    }
+
     pub fn toggle_capture(&mut self, cx: &mut Context<Self>) {
         self.is_capture_enabled = !self.is_capture_enabled;
 
@@ -176,9 +210,11 @@ impl StreamingState {
             let playback = Streaming::get_playback(cx);
             playback.set_enabled(true);
         }
-        
+
         let capture = Streaming::get_capture(cx);
         capture.set_enabled(self.is_capture_enabled);
+
+        self.sync_server_state(cx);
     }
 
     pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
@@ -193,6 +229,8 @@ impl StreamingState {
 
         let playback = Streaming::get_playback(cx);
         playback.set_enabled(self.is_playback_enabled);
+
+        self.sync_server_state(cx);
     }
 
     pub fn join_voice_channel(
@@ -204,7 +242,8 @@ impl StreamingState {
         let id = *id;
 
         if let Some(channel) = self.get_active_channel()
-            && channel.id == id {
+            && channel.id == id
+        {
             return;
         }
 
@@ -232,20 +271,18 @@ impl StreamingState {
             let user_id = ConnectionManger::get_user_id(cx).unwrap();
             let server_ip = ConnectionManger::get_server_ip(cx).unwrap();
 
-            Streaming::connect(
-                cx,
-                user_id,
-                format!("{server_ip}:9899").parse()
-                    .unwrap(),
-            );
+            Streaming::connect(cx, user_id, format!("{server_ip}:9899").parse().unwrap());
 
-            this.read_with(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let capture = Streaming::get_capture(cx);
                 capture.set_enabled(this.is_capture_enabled);
 
                 let playback = Streaming::get_playback(cx);
                 playback.set_enabled(this.is_playback_enabled);
-            }).ok();
+
+                this.sync_server_state(cx);
+            })
+            .ok();
         })
         .detach();
     }
@@ -365,6 +402,23 @@ impl StreamingState {
                         })
                         .ok();
                     }
+                    VoiceChannelUpdateMessage::UserStateUpdated((user_id, state)) => {
+                        this.update(cx, |this, cx| {
+                            let Some(channel) = this.get_voice_channel_mut(channel_id) else {
+                                return;
+                            };
+
+                            if let Some(user) =
+                                channel.members.iter_mut().find(|user| user.id == user_id)
+                            {
+                                user.is_mic_off = state.is_mic_off;
+                                user.is_sound_off = state.is_sound_off;
+
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
                 }
             }
         })
@@ -373,8 +427,7 @@ impl StreamingState {
 
     pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let mut subscription = Streaming::get_device_registry(cx)
-                .subscribe();
+            let mut subscription = Streaming::get_device_registry(cx).subscribe();
 
             loop {
                 let registry = subscription.recv().await;
@@ -387,16 +440,18 @@ impl StreamingState {
                     this.output_devices = output;
 
                     cx.notify();
-                }).ok();
+                })
+                .ok();
             }
-        }).detach();
+        })
+        .detach();
 
         cx.spawn(async move |this, cx| {
             let self_id = ConnectionManger::get_user_id(cx);
 
             // Because we don't need to fetch this status very often
             let mut timer = smol::Timer::interval(Duration::from_millis(100));
-            
+
             loop {
                 timer.next().await;
 
@@ -417,8 +472,10 @@ impl StreamingState {
                     if updated {
                         cx.notify();
                     }
-                }).ok();
+                })
+                .ok();
             }
-        }).detach();
+        })
+        .detach();
     }
 }
