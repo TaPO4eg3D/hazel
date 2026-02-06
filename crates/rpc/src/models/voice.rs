@@ -1,4 +1,4 @@
-use rpc_macros::rpc_method;
+use rpc_macros::{RPCNotification, rpc_method};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -18,7 +18,7 @@ pub struct VoiceChannel {
     pub members: Vec<VoiceChannelMember>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, RPCNotification)]
 pub struct VoiceChannelUpdate {
     pub channel_id: VoiceChannelId,
     pub message: VoiceChannelUpdateMessage,

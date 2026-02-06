@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemStruct, Fields, Error};
+use syn::{DeriveInput, Error, Fields, ItemStruct, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn rpc_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -56,6 +56,24 @@ pub fn rpc_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
             type Request = #request_type;
             type Response = crate::models::common::APIResult<#response_type, #error_type>;
 
+            fn key() -> &'static str {
+                #name_str
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+#[proc_macro_derive(RPCNotification)]
+pub fn derive_rpc_notification(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = &input.ident;
+    let name_str = name.to_string();
+
+    let expanded = quote! {
+        impl crate::models::common::RPCNotification for #name {
             fn key() -> &'static str {
                 #name_str
             }

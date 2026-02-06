@@ -108,13 +108,13 @@ impl StreamingState {
 
             capture_volume: cx.new(|_| SliderState::new()
                 .min(0.)
-                .max(150.)
+                .max(200.)
                 .default_value(100.)
                 .step(1.)
             ),
             playback_volume: cx.new(|_| SliderState::new()
                 .min(0.)
-                .max(150.)
+                .max(200.)
                 .default_value(100.)
                 .step(1.)
             ),
@@ -289,7 +289,7 @@ impl StreamingState {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let mut subscription = connection.subscribe::<VoiceChannelUpdate>("VoiceChannelUpdate");
+            let mut subscription = connection.subscribe::<VoiceChannelUpdate>();
             while let Some(event) = subscription.recv().await {
                 let channel_id = event.channel_id;
                 let channel = this
