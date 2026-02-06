@@ -450,6 +450,15 @@ impl RenderOnce for AudioDeviceControl {
             }
         };
 
+        let is_enabled = match self.device_type {
+            AudioDeviceType::Capture => {
+                self.streaming_state.read(cx).is_capture_enabled
+            }
+            AudioDeviceType::Playback => {
+                self.streaming_state.read(cx).is_playback_enabled
+            }
+        };
+
         div()
             .id(match self.device_type {
                 AudioDeviceType::Capture => "capture-control",
@@ -459,13 +468,32 @@ impl RenderOnce for AudioDeviceControl {
             .child(
                 Button::new("active-toggle")
                     .cursor_pointer()
-                    .outline()
                     .border_r_0()
                     .rounded_r_none()
+                    .when_else(
+                        is_enabled,
+                        |this| this.outline(),
+                        |this| this.danger()
+                    )
                     .icon(match self.device_type {
-                        AudioDeviceType::Capture => IconName::Mic,
-                        AudioDeviceType::Playback => IconName::Headphones,
+                        AudioDeviceType::Capture if is_enabled => IconName::Mic,
+                        AudioDeviceType::Capture => IconName::MicOff,
+                        AudioDeviceType::Playback if is_enabled => IconName::Headphones,
+                        AudioDeviceType::Playback => IconName::HeadphoneOff,
                     })
+                    .on_click(
+                        window.listener_for(
+                            &self.streaming_state,
+                            move |this, _, _, cx| match self.device_type {
+                                AudioDeviceType::Capture => {
+                                    this.toggle_capture(cx);
+                                }
+                                AudioDeviceType::Playback => {
+                                    this.toggle_playback(cx);
+                                }
+                            },
+                        ),
+                    )
                     .flex_grow(),
             )
             .child(

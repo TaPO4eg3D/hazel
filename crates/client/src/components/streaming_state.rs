@@ -183,10 +183,13 @@ impl StreamingState {
 
     pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
         self.is_playback_enabled = !self.is_playback_enabled;
-        self.is_capture_enabled = self.is_playback_enabled;
 
-        let capture = Streaming::get_capture(cx);
-        capture.set_enabled(self.is_capture_enabled);
+        if !self.is_playback_enabled {
+            self.is_capture_enabled = false;
+
+            let capture = Streaming::get_capture(cx);
+            capture.set_enabled(false);
+        }
 
         let playback = Streaming::get_playback(cx);
         playback.set_enabled(self.is_playback_enabled);
@@ -235,6 +238,14 @@ impl StreamingState {
                 format!("{server_ip}:9899").parse()
                     .unwrap(),
             );
+
+            this.read_with(cx, |this, cx| {
+                let capture = Streaming::get_capture(cx);
+                capture.set_enabled(this.is_capture_enabled);
+
+                let playback = Streaming::get_playback(cx);
+                playback.set_enabled(this.is_playback_enabled);
+            }).ok();
         })
         .detach();
     }
