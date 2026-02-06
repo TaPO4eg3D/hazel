@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, ElementId, Entity, InteractiveElement,
-    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, rgb, white,
+    Animation, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _,
+    RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out,
+    prelude::FluentBuilder, px, rgb, white,
 };
 use gpui_component::{
     ActiveTheme, Anchor, Icon, Sizable, Size, StyledExt,
@@ -14,6 +15,7 @@ use gpui_component::{
 };
 
 use crate::{
+    ConnectionManger,
     assets::IconName,
     components::{
         animation::HoverAnimationExt, chat_state::ChatState, streaming_state::StreamingState,
@@ -169,10 +171,19 @@ impl RenderOnce for VoiceChannelsComponent {
 
         let secondary = cx.theme().secondary;
 
+        let current_user = ConnectionManger::get_user_id(cx);
+        let (is_mic_off, is_sound_off) = {
+            let state = self.streaming_state.read(cx);
+
+            (!state.is_capture_enabled, !state.is_playback_enabled)
+        };
+
         let channels = voice_channels.iter().map(|channel| {
             let muted = cx.theme().muted;
 
             let members = channel.members.iter().map(|member| {
+                let is_me = current_user.is_some_and(|id| member.id == id);
+
                 div().id(ElementId::Integer(member.id.value as u64)).child(
                     div()
                         .rounded_lg()
@@ -185,12 +196,32 @@ impl RenderOnce for VoiceChannelsComponent {
                                 .child(Icon::new(IconName::User).mr_2().with_size(Size::Medium))
                                 .child(Label::new(member.name.clone()).mt(px(0.5)))
                                 // Status icons
-                                .child(div().flex().gap_1().ml_auto().when(
-                                    member.is_talking,
-                                    |this| {
-                                        this.child(div().size_2().rounded_full().bg(rgb(0x00C950)))
-                                    },
-                                )),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_1()
+                                        .ml_auto()
+                                        .when(member.is_mic_off || is_me && is_mic_off, |this| {
+                                            this.child(
+                                                Icon::new(IconName::MicOff)
+                                                    .text_color(cx.theme().danger)
+                                                    .with_size(Size::XSmall),
+                                            )
+                                        })
+                                        .when(member.is_sound_off || is_me && is_sound_off, |this| {
+                                            this.child(
+                                                Icon::new(IconName::HeadphoneOff)
+                                                    .text_color(cx.theme().danger)
+                                                    .with_size(Size::XSmall),
+                                            )
+                                        })
+                                        // `is_talking` is special since it's managed internally
+                                        .when(member.is_talking, |this| {
+                                            this.child(
+                                                div().size_2().rounded_full().bg(rgb(0x00C950)),
+                                            )
+                                        }),
+                                ),
                         )
                         .with_hover_animation(
                             "hover-bg",
@@ -450,12 +481,8 @@ impl RenderOnce for AudioDeviceControl {
         };
 
         let is_enabled = match self.device_type {
-            AudioDeviceType::Capture => {
-                self.streaming_state.read(cx).is_capture_enabled
-            }
-            AudioDeviceType::Playback => {
-                self.streaming_state.read(cx).is_playback_enabled
-            }
+            AudioDeviceType::Capture => self.streaming_state.read(cx).is_capture_enabled,
+            AudioDeviceType::Playback => self.streaming_state.read(cx).is_playback_enabled,
         };
 
         div()
@@ -469,11 +496,7 @@ impl RenderOnce for AudioDeviceControl {
                     .cursor_pointer()
                     .border_r_0()
                     .rounded_r_none()
-                    .when_else(
-                        is_enabled,
-                        |this| this.outline(),
-                        |this| this.danger()
-                    )
+                    .when_else(is_enabled, |this| this.outline(), |this| this.danger())
                     .icon(match self.device_type {
                         AudioDeviceType::Capture if is_enabled => IconName::Mic,
                         AudioDeviceType::Capture => IconName::MicOff,

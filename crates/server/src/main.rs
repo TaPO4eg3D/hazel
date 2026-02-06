@@ -7,6 +7,8 @@ use dashmap::DashMap;
 
 use rpc::{
     models::{
+        common::RPCNotification,
+        general::{UserConnectionUpdate, UserConnectionUpdateMessage},
         markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
         voice::{VoiceChannelUpdate, VoiceChannelUpdateMessage},
     },
@@ -30,10 +32,28 @@ mod streaming;
 
 pub type GlobalRouter = RpcRouter<AppState, ConnectionState>;
 
+pub struct VoiceUser {
+    id: UserId,
+
+    is_muted: bool,
+    is_sound_off: bool,
+}
+
+impl VoiceUser {
+    pub fn new(id: UserId) -> Self {
+        Self {
+            id,
+
+            is_muted: false,
+            is_sound_off: false,
+        }
+    }
+}
+
 /// This state holds connected users to respective channels
 pub struct ChannelsState {
     pub text_channels: DashMap<TextChannelId, Vec<UserId>>,
-    pub voice_channels: DashMap<VoiceChannelId, Vec<UserId>>,
+    pub voice_channels: DashMap<VoiceChannelId, Vec<VoiceUser>>,
 }
 
 impl ChannelsState {
@@ -46,11 +66,11 @@ impl ChannelsState {
             return false;
         };
 
-        let Some(mut user_ids) = self.voice_channels.get_mut(&channel_id) else {
+        let Some(mut users) = self.voice_channels.get_mut(&channel_id) else {
             return false;
         };
 
-        user_ids.retain(|id| *id != user_id);
+        users.retain(|user| user.id != user_id);
 
         true
     }
@@ -113,16 +133,19 @@ impl ConnectionStateInner {
             .collect::<Vec<_>>();
 
         for writer in writers {
-            writer
-                .write(
-                    "VoiceChannelUpdate".into(),
-                    VoiceChannelUpdate {
-                        channel_id,
-                        message: VoiceChannelUpdateMessage::UserDisconnected(user_id),
-                    },
-                    None,
-                )
-                .await;
+            VoiceChannelUpdate {
+                channel_id,
+                message: VoiceChannelUpdateMessage::UserDisconnected(user_id),
+            }
+            .notify(&writer)
+            .await;
+
+            UserConnectionUpdate {
+                user_id,
+                message: UserConnectionUpdateMessage::UserDisconnected,
+            }
+            .notify(&writer)
+            .await;
         }
     }
 
@@ -168,18 +191,14 @@ async fn main() {
     let config = toml::from_str::<Config>(&config).expect("Invalid config");
 
     let state = init_state().await;
-    let router = {
-        let state = state.clone();
-
-        RpcRouter::new(state, |writer| {
-            Arc::new(RwLock::new(ConnectionStateInner {
-                user: None,
-                active_voice_channel: None,
-                active_stream: None,
-                writer,
-            }))
-        })
-    };
+    let router = RpcRouter::new(state.clone(), move |writer| {
+        Arc::new(RwLock::new(ConnectionStateInner {
+            user: None,
+            active_voice_channel: None,
+            active_stream: None,
+            writer,
+        }))
+    });
 
     let router = messages::merge(router);
     let router = auth::merge(router);

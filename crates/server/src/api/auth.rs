@@ -1,15 +1,13 @@
 use rpc::models::{
         auth::{
             GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload, SessionKey, UserInfo
-        },
-        common::{APIError, RPCMethod as _},
-        markers::TaggedEntity,
+        }, common::{APIError, RPCMethod as _, RPCNotification}, general::{UserConnectionUpdate, UserConnectionUpdateMessage}, markers::TaggedEntity
     };
 
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AppState, ConnectionState, GlobalRouter, api::common::{DbErrReponseCompat as _, RPCServer}
+    AppState, ConnectionState, GlobalRouter, api::common::{DbErrReponseCompat as _, RPCHandle}
 };
 use crate::{
     entity::user::{self, Entity as User},
@@ -20,7 +18,7 @@ use sea_orm::{DbErr, entity::*, query::*};
 
 const KEY: &[u8] = b"TODO";
 
-impl RPCServer for GetSessionKey {
+impl RPCHandle for GetSessionKey {
     async fn handle(
         app_state: AppState,
         _connection_state: ConnectionState,
@@ -66,7 +64,7 @@ impl RPCServer for GetSessionKey {
     }
 }
 
-impl RPCServer for Login {
+impl RPCHandle for Login {
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
@@ -94,6 +92,19 @@ impl RPCServer for Login {
             state.user = Some(user);
         }
 
+        let writers = app_state
+            .connected_clients
+            .iter()
+            .map(|user| user.read().unwrap().writer.clone())
+            .collect::<Vec<_>>();
+
+        for writer in writers {
+            UserConnectionUpdate {
+                user_id,
+                message: UserConnectionUpdateMessage::UserConnected,
+            }.notify(&writer).await;
+        }
+
         app_state
             .connected_clients
             .insert(user_id, connection_state);
@@ -102,7 +113,7 @@ impl RPCServer for Login {
     }
 }
 
-impl RPCServer for GetUserInfo {
+impl RPCHandle for GetUserInfo {
     async fn handle(
         app_state: AppState,
         _connection_state: ConnectionState,

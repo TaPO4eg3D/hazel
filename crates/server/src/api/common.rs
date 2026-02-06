@@ -15,7 +15,7 @@ impl DbErrReponseCompat for DbErr {
     }
 }
 
-pub trait RPCServer: RPCMethod {
+pub trait RPCHandle: RPCMethod {
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
