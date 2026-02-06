@@ -1,8 +1,13 @@
 use gpui::{
-    AppContext, ClickEvent, Context, Element, ElementId, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, px, red, rgb, white
+    AppContext, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, rgb,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, StyledExt, WindowExt, button::{Button, ButtonVariants}, divider::Divider, input::{Input, InputEvent, InputState}, label::Label
+    ActiveTheme, Disableable, Icon, StyledExt, WindowExt,
+    button::{Button, ButtonVariants},
+    divider::Divider,
+    input::{Input, InputEvent, InputState},
+    label::Label,
 };
 use rpc::models::{
     auth::{
@@ -216,7 +221,12 @@ impl LoginScreen {
 const INPUT_BG: u32 = 0x262626;
 
 impl LoginScreen {
-    fn create_input(&self, state: &Entity<InputState>, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Input {
+    fn create_input(
+        &self,
+        state: &Entity<InputState>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Input {
         let is_focused = {
             let state = state.read(cx);
             state.focus_handle(cx).is_focused(window)
@@ -230,89 +240,84 @@ impl LoginScreen {
             .rounded_md()
             .disabled(self.is_connecting)
             .when(is_focused, |this| {
-                this
-                    .border_1()
-                    .border_color(rgb(0x323333))
+                this.border_1().border_color(rgb(0x323333))
             })
     }
 }
 
 impl Render for LoginScreen {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
         // Background container
-        div().id("login-card").flex().items_center().justify_center().h_full().child(
-            // Card
-            div()
-                .w_96()
-                .border_1()
-                .rounded_lg()
-                .bg(cx.theme().secondary)
-                .border_color(cx.theme().secondary_active)
-                .child(
-                    // Card Content
-                    div()
-                        .p_4()
-                        .child(
-                            Label::new("HAZEL")
-                                .mt_4()
-                                .text_center()
-                                .text_xl()
-                                .font_bold(),
-                        )
-                        .child(
-                            Label::new(
-                                "Enter any credentials if you're logging for the first time. \
-                                Account will be created automatically",
+        div()
+            .id("login-card")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h_full()
+            .child(
+                // Card
+                div()
+                    .w_96()
+                    .border_1()
+                    .rounded_lg()
+                    .bg(cx.theme().secondary)
+                    .border_color(cx.theme().secondary_active)
+                    .child(
+                        // Card Content
+                        div()
+                            .p_4()
+                            .child(
+                                Label::new("HAZEL")
+                                    .mt_4()
+                                    .text_center()
+                                    .text_xl()
+                                    .font_bold(),
                             )
-                            .text_color(rgb(0x727272))
-                            .mt_4()
-                            .mb_4()
-                            .text_center()
-                            .text_xs()
-                        )
-                        .child(
-                            div()
-                                .mb_2()
-                                .child(
-                                    Label::new("Username")
-                                        .text_xs()
+                            .child(
+                                Label::new(
+                                    "Enter any credentials if you're logging for the first time. \
+                                Account will be created automatically",
                                 )
-                                .child(self.create_input(&self.username, window, cx))
-                        )
-                        .child(
-                            div()
-                                .child(
-                                    Label::new("Password")
-                                        .text_xs()
-                                )
-                                .child(self.create_input(&self.password, window, cx))
-                        )
-                        .child(
-                            Divider::horizontal()
+                                .text_color(rgb(0x727272))
                                 .mt_4()
                                 .mb_4()
-                        )
-                        .child(
-                            div()
-                                .mb_2()
-                                .child(
-                                    Label::new("Server IP")
-                                        .text_xs()
-                                )
-                                .child(self.create_input(&self.server_address, window, cx))
-                        )
-                        .child(
-                            Button::new("login-btn")
-                                .mt_4()
-                                .label("Login")
-                                .primary()
-                                .disabled(!self.is_form_valid || self.is_connecting)
-                                .loading(self.is_connecting)
-                                .loading_icon(Icon::new(IconName::Loader))
-                                .when(self.is_connecting, |this| this.label("Connecting..."))
-                                .on_click(cx.listener(Self::login_btn_click)),
-                        )
-                ),
-        )
+                                .text_center()
+                                .text_xs(),
+                            )
+                            .child(
+                                div()
+                                    .mb_2()
+                                    .child(Label::new("Username").text_xs())
+                                    .child(self.create_input(&self.username, window, cx)),
+                            )
+                            .child(
+                                div()
+                                    .child(Label::new("Password").text_xs())
+                                    .child(self.create_input(&self.password, window, cx)),
+                            )
+                            .child(Divider::horizontal().mt_4().mb_4())
+                            .child(
+                                div()
+                                    .mb_2()
+                                    .child(Label::new("Server IP").text_xs())
+                                    .child(self.create_input(&self.server_address, window, cx)),
+                            )
+                            .child(
+                                Button::new("login-btn")
+                                    .mt_4()
+                                    .label("Login")
+                                    .primary()
+                                    .disabled(!self.is_form_valid || self.is_connecting)
+                                    .loading(self.is_connecting)
+                                    .loading_icon(Icon::new(IconName::Loader))
+                                    .when(self.is_connecting, |this| this.label("Connecting..."))
+                                    .on_click(cx.listener(Self::login_btn_click)),
+                            ),
+                    ),
+            )
     }
 }

@@ -1,11 +1,11 @@
 use std::{
-    cell::RefCell, collections::HashMap, ops::Sub, rc::Rc, sync::{
-        Arc, Condvar, Mutex, RwLock,
-        atomic::{AtomicPtr, Ordering},
-    }, task::{Poll, Waker}, thread::{self, Thread}
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    thread::{self, Thread},
 };
 
-use pipewire::{self as pw, channel, properties::properties, registry, sys::pw_proxy_add_listener, types::ObjectType};
+use pipewire::{self as pw, types::ObjectType};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
 use ffmpeg_next::{self as ffmpeg};
@@ -221,7 +221,6 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                             // linked to our app
                                             is_active: false,
                                         });
-
                                     }
                                     "Audio/Source" => {
                                         if device_registry.device_exists(obj.id) {
@@ -239,7 +238,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                     }
                                     _ => {}
                                 }
-                            },
+                            }
                             ObjectType::Metadata => {
                                 let Some(name) = props.get("metadata.name") else {
                                     return;
@@ -257,8 +256,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
                                     *routing_meta = Some(node);
                                 }
-
-                            },
+                            }
                             ObjectType::Link => {
                                 let Some(input_node) = props.get(*pw::keys::LINK_INPUT_NODE) else {
                                     return;
@@ -306,7 +304,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                             capture_stream.node_id(),
                             "target.object",
                             None,
-                            Some(&device.name)
+                            Some(&device.name),
                         );
                     }
                 }
@@ -318,7 +316,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                             playback_stream.node_id(),
                             "target.object",
                             None,
-                            Some(&device.name)
+                            Some(&device.name),
                         );
                     }
                 }

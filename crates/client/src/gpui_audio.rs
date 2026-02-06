@@ -3,7 +3,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     sync::{
         Arc, Mutex, RwLock, Weak,
-        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -12,10 +12,10 @@ use std::{
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{self, Capture, DeviceRegistry, Playback, StreamingClientState};
-use gpui::{App, AppContext, AsyncApp, BorrowAppContext, Global};
+use gpui::{App, AppContext, Global};
 
 use rpc::models::markers::UserId;
-use streaming_common::{FFMpegPacketPayload, UDPPacket, UDPPacketType};
+use streaming_common::{UDPPacket, UDPPacketType};
 
 type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
