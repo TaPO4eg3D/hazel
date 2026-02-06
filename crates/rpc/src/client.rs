@@ -21,7 +21,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::common::{parse_rpc_method, parse_uuid, process_payload};
+use crate::{common::{parse_rpc_method, parse_uuid, process_payload}, models::common::RPCNotification};
 
 use anyhow::Result as AResult;
 
@@ -293,16 +293,16 @@ impl Connection {
         })
     }
 
-    pub fn subscribe<Out>(&self, key: &str) -> Subscription<Out>
+    pub fn subscribe<Out>(&self) -> Subscription<Out>
     where
-        Out: DeserializeOwned
+        Out: RPCNotification
     {
         let key_map = Arc::downgrade(&self.key_map);
-        let (sender, subscription) = Subscription::new(key, key_map);
+        let (sender, subscription) = Subscription::new(Out::key(), key_map);
 
         let uuid = subscription.uuid;
         self.key_map
-            .entry(key.into())
+            .entry(Out::key().into())
             .and_modify({
                 let sender = sender.clone();
 

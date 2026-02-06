@@ -3,7 +3,10 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::client::Connection;
+use crate::{
+    client::Connection,
+    server::{Response, RpcWriter},
+};
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError<T: Debug> {
@@ -36,13 +39,26 @@ pub trait RPCMethod {
     fn key() -> &'static str;
 
     #[allow(async_fn_in_trait)]
-    async fn execute(
-        connection: &Connection,
-        payload: &Self::Request,
-    ) -> Self::Response {
-        connection.execute(
-            Self::key(),
-            payload
-        ).await.expect("invalid params")
+    async fn execute(connection: &Connection, payload: &Self::Request) -> Self::Response {
+        connection
+            .execute(Self::key(), payload)
+            .await
+            .expect("invalid params")
+    }
+}
+
+pub trait RPCNotification: Serialize + DeserializeOwned {
+    fn key() -> &'static str;
+
+    #[allow(async_fn_in_trait)]
+    async fn notify(self, writer: &RpcWriter)
+    where
+        Self: Sized,
+    {
+        writer.write(
+            Self::key().into(),
+            self,
+            None,
+        ).await
     }
 }
