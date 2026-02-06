@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, Context, Entity, Render, SharedString, Window, div};
+use gpui::{AppContext, Context, Entity, Render, SharedString, Window, div};
 use gpui_component::input::InputState;
 
 #[derive(Clone, Debug)]
@@ -43,7 +43,7 @@ impl ChatState {
 }
 
 impl Render for ChatState {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
         div()
     }
 }

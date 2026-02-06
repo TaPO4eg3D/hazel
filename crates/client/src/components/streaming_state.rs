@@ -1,7 +1,7 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use capture::audio::AudioDevice;
-use gpui::{AppContext, AsyncApp, Context, Entity, Render, SharedString, WeakEntity, Window, div};
+use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
 use gpui_component::slider::{SliderState, SliderValue};
 use rpc::{
     common::Empty,
@@ -260,7 +260,7 @@ impl StreamingState {
             return;
         };
 
-        this.update(cx, move |this, cx| {
+        this.update(cx, move |this, _cx| {
             this.voice_channels = channels
                 .into_iter()
                 .map(|channel| VoiceChannel {

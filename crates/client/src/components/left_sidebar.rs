@@ -1,12 +1,11 @@
-use std::{cell::RefCell, time::Duration};
+use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, App, AppContext, ElementId, Entity, InteractiveElement,
-    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window,
-    bounce, div, ease_in_out, linear, prelude::FluentBuilder, px, red, relative, rgb, white,
+    Animation, App, ElementId, Entity, InteractiveElement,
+    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, rgb, white,
 };
 use gpui_component::{
-    ActiveTheme, Anchor, Icon, Selectable, Sizable, Size, StyledExt,
+    ActiveTheme, Anchor, Icon, Sizable, Size, StyledExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     label::Label,
@@ -302,7 +301,7 @@ impl ControlPanel {
 }
 
 impl RenderOnce for ControlPanel {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_channel_name = {
             self.streaming_state
                 .read(cx)

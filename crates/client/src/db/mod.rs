@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, AsyncApp, Entity, Global, ReadGlobal};
+use gpui::{AsyncApp, Global};
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};
 
 use crate::gpui_tokio::Tokio;
@@ -26,15 +26,11 @@ impl DBConnectionManager {
     }
 
     pub fn get(cx: &mut AsyncApp) -> DatabaseConnection {
-        cx.read_global(|this: &Self, _| {
-            this.db.clone()
-        })
+        cx.read_global(|this: &Self, _| this.db.clone())
     }
 
     pub async fn get_registry(db: &DatabaseConnection) -> RegistryModel {
-        let item = Registry::find().one(db)
-            .await
-            .unwrap();
+        let item = Registry::find().one(db).await.unwrap();
 
         match item {
             Some(item) => item,
@@ -42,10 +38,8 @@ impl DBConnectionManager {
                 let item = registry::ActiveModel {
                     ..Default::default()
                 };
-                
-                item.insert(db)
-                    .await
-                    .unwrap()
+
+                item.insert(db).await.unwrap()
             }
         }
     }
@@ -60,4 +54,3 @@ pub async fn init(cx: &mut AsyncApp, profile: String) -> anyhow::Result<()> {
 
     Ok(())
 }
-

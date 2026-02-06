@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
-use crate::{common::Empty, models::markers::UserId};
+use crate::models::markers::UserId;
 
 type HmacSha256 = Hmac<Sha256>;
 

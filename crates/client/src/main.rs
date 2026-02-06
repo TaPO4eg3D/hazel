@@ -1,4 +1,4 @@
-use std::{fmt::format, path::PathBuf, rc::Rc};
+use std::rc::Rc;
 
 use clap::Parser;
 use gpui::*;
@@ -7,7 +7,7 @@ use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
 use anyhow::Result as AResult;
 use rpc::{
     client::Connection,
-    models::{auth::{Login, LoginError, LoginPayload, SessionKey}, common::RPCMethod, markers::{Id, UserId}},
+    models::{auth::{Login, LoginPayload, SessionKey}, common::RPCMethod, markers::{Id, UserId}},
 };
 
 pub mod assets;

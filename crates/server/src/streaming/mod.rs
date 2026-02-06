@@ -1,26 +1,21 @@
 use anyhow::Result as AResult;
-use bytes::{Buf, BytesMut};
-use rpc::models::markers::{Id, User, UserId};
+use bytes::BytesMut;
+use rpc::models::markers::{Id, User};
 use tokio::net::UdpSocket;
 
-use crate::{AppState, config::{self, Config}};
+use crate::AppState;
 use streaming_common::UDPPacket;
 
+pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
+    let sock = UdpSocket::bind(udp_addr).await.unwrap();
 
-pub async fn open_udp_socket(
-    state: AppState,
-    udp_addr: &str
-) -> AResult<()> {
-    let sock = UdpSocket::bind(udp_addr)
-        .await
-        .unwrap();
-
-    // TODO: Come up with a reasonable capacity
-    let mut buf = BytesMut::with_capacity(4800 * 10);
+    // Two seconds of dual channel 48kHz if we don't
+    // count the size of UDPPacket header
+    let mut buf = BytesMut::with_capacity(4800 * 4);
 
     loop {
         buf.clear();
-        buf.resize(4800 * 10, 0);
+        buf.resize(4800 * 4, 0);
 
         let (bytes_read, addr) = sock.recv_from(&mut buf).await?;
 
@@ -38,11 +33,9 @@ pub async fn open_udp_socket(
         };
         let currend_user_id = Id::<User>::new(packet.user_id);
 
-        // TODO: Do something with it, it shouldn't be that bad
         let (voice_channel, addr_differs) = match state.connected_clients.get(&currend_user_id) {
             Some(state) => {
-                let state = state.read()
-                    .unwrap();
+                let state = state.read().unwrap();
 
                 let Some(channel_id) = state.active_voice_channel else {
                     continue;
@@ -53,7 +46,7 @@ pub async fn open_udp_socket(
                 } else {
                     (channel_id, true)
                 }
-            },
+            }
             None => {
                 continue;
             }
@@ -64,10 +57,7 @@ pub async fn open_udp_socket(
                 continue;
             };
 
-            // TODO: Has a potential to block, we **ABSOLUTELY** can't do it here
-            // but whatever, I just want it to work for now
-            let mut state = state.write()
-                .unwrap();
+            let mut state = state.write().unwrap();
 
             state.active_stream = Some(addr);
         }
@@ -75,16 +65,14 @@ pub async fn open_udp_socket(
         let Some(users) = state.channels.voice_channels.get(&voice_channel) else {
             continue;
         };
-        
+
         for user in users.iter() {
             if *user == currend_user_id {
                 continue;
             }
 
             if let Some(user) = state.connected_clients.get(user) {
-                let addr = { 
-                    user.read().unwrap().active_stream 
-                };
+                let addr = { user.read().unwrap().active_stream };
 
                 if let Some(addr) = addr {
                     _ = sock.send_to(&buf[..bytes_read], addr).await;

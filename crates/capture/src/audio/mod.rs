@@ -1,15 +1,12 @@
-use core::panic;
 use std::{
-    cell::UnsafeCell, cmp::Reverse, collections::{BinaryHeap, VecDeque}, mem::MaybeUninit, ptr::NonNull, sync::{
+    cmp::Reverse, collections::{BinaryHeap, VecDeque}, sync::{
         Arc, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-    }, task::{Poll, Waker}, thread, time::Instant
+    }, task::{Poll, Waker}, thread
 };
 
-use anyhow::Result as AResult;
 
 use ffmpeg_next::{Packet, codec};
-use pipewire::client;
 use streaming_common::FFMpegPacketPayload;
 
 use crossbeam::channel;

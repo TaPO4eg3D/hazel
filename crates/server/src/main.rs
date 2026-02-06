@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use dashmap::{DashMap, mapref::entry};
+use dashmap::DashMap;
 
 use rpc::{
     models::{
@@ -106,7 +106,9 @@ impl ConnectionStateInner {
             return;
         };
 
-        let writers = state.connected_clients.iter()
+        let writers = state
+            .connected_clients
+            .iter()
             .map(|user| user.read().unwrap().writer.clone())
             .collect::<Vec<_>>();
 
@@ -182,7 +184,6 @@ async fn main() {
     let router = messages::merge(router);
     let router = auth::merge(router);
     let router = voice::merge(router);
-
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {

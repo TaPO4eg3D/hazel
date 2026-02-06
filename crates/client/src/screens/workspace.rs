@@ -4,8 +4,8 @@ use gpui::{
 };
 use gpui_component::{
     StyledExt, divider::Divider, resizable::{
-        ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, h_resizable,
-        resizable_panel, v_resizable,
+        h_resizable,
+        resizable_panel,
     }
 };
 
@@ -54,11 +54,11 @@ impl Render for WorkspaceScreen {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         h_resizable("my-layout")
-            .on_resize(|state, window, cx| {
+            .on_resize(|state, _window, cx| {
                 // Handle resize event
                 // You can read the panel sizes from the state.
                 let state = state.read(cx);
-                let sizes = state.sizes();
+                let _sizes = state.sizes();
             })
             .child(
                 resizable_panel().size_range(px(288.)..px(384.)).child(
@@ -68,7 +68,7 @@ impl Render for WorkspaceScreen {
                         .child(
                             TextChannelsComponent::new(&self.chat)
                                 .is_collapsed(self.text_channels_collapsed)
-                                .on_toggle_click(cx.listener(|this, ev, _, cx| {
+                                .on_toggle_click(cx.listener(|this, ev, _, _cx| {
                                     this.text_channels_collapsed = *ev;
                                 })),
                         )
@@ -76,7 +76,7 @@ impl Render for WorkspaceScreen {
                         .child(
                             VoiceChannelsComponent::new(&self.streaming)
                                 .is_collapsed(self.voice_channels_collapsed)
-                                .on_toggle_click(cx.listener(|this, ev, _, cx| {
+                                .on_toggle_click(cx.listener(|this, ev, _, _cx| {
                                     this.voice_channels_collapsed = *ev;
                                 })),
                         )
