@@ -278,8 +278,6 @@ impl Streaming {
             let mut state = stream.stream_addr.lock().unwrap();
 
             *state = Some((user_id, addr));
-
-            stream.capture.set_enabled(true);
         });
     }
 
