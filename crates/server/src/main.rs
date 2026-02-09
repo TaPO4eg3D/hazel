@@ -173,6 +173,11 @@ async fn init_state() -> AppState {
         .await
         .unwrap();
 
+    db.get_schema_registry("hazel_server::entity::*")
+        .sync(&db)
+        .await
+        .unwrap();
+
     AppState {
         db,
         channels: Arc::new(ChannelsState {

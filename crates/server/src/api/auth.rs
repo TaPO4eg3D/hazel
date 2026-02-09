@@ -1,13 +1,19 @@
+use chrono::{NaiveDateTime, Utc};
 use rpc::models::{
-        auth::{
-            GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload, SessionKey, UserInfo
-        }, common::{APIError, RPCMethod as _, RPCNotification}, general::{UserConnectionUpdate, UserConnectionUpdateMessage}, markers::TaggedEntity
-    };
+    auth::{
+        GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
+        GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload, SessionKey, UserInfo,
+    },
+    common::{APIError, RPCMethod as _, RPCNotification},
+    general::{UserConnectionUpdate, UserConnectionUpdateMessage},
+    markers::TaggedEntity,
+};
 
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AppState, ConnectionState, GlobalRouter, api::common::{DbErrReponseCompat as _, RPCHandle}
+    AppState, ConnectionState, GlobalRouter,
+    api::common::{DbErrReponseCompat as _, RPCHandle},
 };
 use crate::{
     entity::user::{self, Entity as User},
@@ -48,12 +54,15 @@ impl RPCHandle for GetSessionKey {
                     username: Set(login),
                     password: Set(password),
                     banned: Set(false),
+                    created_at: Set(Utc::now().naive_utc()),
                     ..Default::default()
                 };
 
                 let user = user.insert(&app_state.db).await.map_err(|err| match err {
-                    DbErr::RecordNotInserted => APIError::Err(GetSessionKeyError::UserAlreadyExists),
-                    _ => err.into_api_error()
+                    DbErr::RecordNotInserted => {
+                        APIError::Err(GetSessionKeyError::UserAlreadyExists)
+                    }
+                    _ => err.into_api_error(),
                 })?;
 
                 let key = SessionKey::new(user.id, KEY);
@@ -102,7 +111,9 @@ impl RPCHandle for Login {
             UserConnectionUpdate {
                 user_id,
                 message: UserConnectionUpdateMessage::UserConnected,
-            }.notify(&writer).await;
+            }
+            .notify(&writer)
+            .await;
         }
 
         app_state
@@ -124,11 +135,10 @@ impl RPCHandle for GetUserInfo {
             .await
             .map_err(DbErr::into_api_error)?;
 
-        Ok(user
-            .map(|user| UserInfo {
-                id: user.tagged_id(),
-                username: user.username,
-            }))
+        Ok(user.map(|user| UserInfo {
+            id: user.tagged_id(),
+            username: user.username,
+        }))
     }
 }
 
