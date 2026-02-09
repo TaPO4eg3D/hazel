@@ -5,7 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use castaway::cast;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{tcp::OwnedReadHalf, TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, tcp::OwnedReadHalf},
     sync::mpsc,
 };
 
@@ -37,20 +37,16 @@ pub struct RpcWriter {
 
 impl RpcWriter {
     fn new(sender: mpsc::Sender<Vec<u8>>) -> Self {
-        Self {
-            inner: sender
-        }
+        Self { inner: sender }
     }
 
     pub async fn write<T: Response>(&self, key: String, value: T, uuid: Option<Uuid>) {
         if let Some(body_bytes) = value.bytes() {
             let key_bytes = key.as_bytes();
 
-            let key_len = u8::try_from(key_bytes.len())
-                .expect("Key is way too big"); // TODO: Do not fail
+            let key_len = u8::try_from(key_bytes.len()).expect("Key is way too big"); // TODO: Do not fail
 
-            let body_len = u32::try_from(body_bytes.len())
-                .expect("Body is way too big"); // TODO: Do not fail
+            let body_len = u32::try_from(body_bytes.len()).expect("Body is way too big"); // TODO: Do not fail
 
             let mut response = Vec::<u8>::with_capacity(body_len as usize);
 
@@ -72,8 +68,7 @@ impl RpcWriter {
     }
 }
 
-pub struct RpcRouter<AppState, ConnState>
-{
+pub struct RpcRouter<AppState, ConnState> {
     state: AppState,
     on_connect_hook: Arc<dyn Fn(RpcWriter) -> ConnState + Send + Sync + 'static>,
     routing_table: HashMap<String, DynHandler<ConnState>>,
@@ -104,7 +99,7 @@ where
 {
     pub fn new<F>(state: AppState, f: F) -> Self
     where
-        F: Fn(RpcWriter) -> ConnState + Send + Sync + 'static
+        F: Fn(RpcWriter) -> ConnState + Send + Sync + 'static,
     {
         Self {
             state,
@@ -159,7 +154,7 @@ async fn process_connection<AppState, ConnState>(
 ) -> AResult<ConnState>
 where
     AppState: Clone + Send + Sync + 'static,
-    ConnState: Clone + Send + Sync + 'static
+    ConnState: Clone + Send + Sync + 'static,
 {
     let mut buf = BytesMut::with_capacity(1024);
     let (mut reader, mut writer) = stream.into_split();
@@ -179,23 +174,30 @@ where
 
     loop {
         if buf.is_empty() {
-            let bytes_read = reader.read_buf(&mut buf).await?;
-
-            if bytes_read == 0 {
-                return Ok(conn_state);
+            match reader.read_buf(&mut buf).await {
+                Err(_) => return Ok(conn_state),
+                Ok(bytes_read) if bytes_read == 0 => return Ok(conn_state),
+                _ => {}
             }
         }
 
         let (method, bytes_read) = parse_rpc_method(&mut buf, &mut reader).await?;
         let (uuid, bytes_read) = parse_uuid(&mut buf, &mut reader, bytes_read + 1).await?;
 
-        let f = router.routing_table.get(&method)
-            .unwrap(); // TODO: Do not fail and report incorrect endpoint name
+        let f = router.routing_table.get(&method).unwrap(); // TODO: Do not fail and report incorrect endpoint name
 
         let conn_state = conn_state.clone();
         let rpc_writer = rpc_writer.clone();
 
-        let bytes_read = (f)(uuid, &mut buf, &mut reader, conn_state, rpc_writer, bytes_read).await?;
+        let bytes_read = (f)(
+            uuid,
+            &mut buf,
+            &mut reader,
+            conn_state,
+            rpc_writer,
+            bytes_read,
+        )
+        .await?;
 
         if buf.len() > bytes_read {
             buf = buf.split_off(bytes_read);
@@ -208,11 +210,11 @@ where
 pub async fn serve<AppState, ConnState>(
     addr: &str,
     router: RpcRouter<AppState, ConnState>,
-    on_disconnect: impl Fn(AppState, ConnState) -> Pin<
-        Box<dyn Future<Output = ()> + Send + Sync>
-    > + Send + Sync + 'static,
-)
-where
+    on_disconnect: impl Fn(AppState, ConnState) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>>
+    + Send
+    + Sync
+    + 'static,
+) where
     AppState: Clone + Send + Sync + 'static,
     ConnState: Clone + Send + Sync + 'static,
 {
@@ -234,9 +236,7 @@ where
                 tokio::spawn(async move {
                     let state = router.state.clone();
 
-                    let conn_state = process_connection(router, stream)
-                        .await
-                        .unwrap();
+                    let conn_state = process_connection(router, stream).await.unwrap();
 
                     on_disconnect(state, conn_state).await;
                 });
