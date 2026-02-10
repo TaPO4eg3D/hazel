@@ -1,7 +1,11 @@
 //! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
 
-use std::ptr;
+use std::{ptr, thread};
 
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Producer, Split as _},
+};
 use windows::Win32::{
     Foundation::{HANDLE, WAIT_OBJECT_0},
     Media::Audio::{
@@ -17,12 +21,15 @@ use windows::Win32::{
 };
 
 pub const DEFAULT_RATE: u32 = 48000;
+pub const DEFAULT_CHANNELS: u32 = 2;
 
 pub mod capture;
 pub mod playback;
 
-struct WindowsCapture {
+struct CaptureStream {
     event_handle: HANDLE,
+
+    capture_producer: HeapProd<f32>,
 
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
@@ -30,7 +37,7 @@ struct WindowsCapture {
     format_ptr: *mut WAVEFORMATEX,
 }
 
-impl Drop for WindowsCapture {
+impl Drop for CaptureStream {
     fn drop(&mut self) {
         unsafe {
             _ = self.audio_client.Stop();
@@ -40,8 +47,8 @@ impl Drop for WindowsCapture {
     }
 }
 
-impl WindowsCapture {
-    fn new() -> windows::core::Result<Self> {
+impl CaptureStream {
+    fn new(capture_producer: HeapProd<f32>) -> windows::core::Result<Self> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -82,6 +89,7 @@ impl WindowsCapture {
 
             Ok(Self {
                 event_handle,
+                capture_producer,
                 audio_client,
                 capture_client,
                 format_ptr,
@@ -89,7 +97,7 @@ impl WindowsCapture {
         }
     }
 
-    fn process(&self) -> windows::core::Result<()> {
+    fn process(&mut self) -> windows::core::Result<()> {
         unsafe {
             let format = *self.format_ptr;
             let mut packet_length = self.capture_client.GetNextPacketSize()?;
@@ -114,16 +122,7 @@ impl WindowsCapture {
                     let samples =
                         std::slice::from_raw_parts(buffer_ptr as *const f32, total_samples);
 
-                    let mut sum = 0.0;
-                    for &sample in samples {
-                        sum += sample * sample;
-                    }
-                    let rms = (sum / total_samples as f32).sqrt();
-
-                    let bars = (rms * 50.0) as usize;
-                    println!("Raw Input: [{}]", "#".repeat(bars));
-                } else {
-                    println!("Silent...");
+                    self.capture_producer.push_slice(samples);
                 }
 
                 self.capture_client.ReleaseBuffer(num_frames_read)?;
@@ -135,17 +134,20 @@ impl WindowsCapture {
     }
 }
 
-struct WindowsPlayback {
+struct PlaybackStream {
     event_handle: HANDLE,
+
+    playback_consumer: HeapCons<f32>,
 
     audio_client: IAudioClient,
     render_client: IAudioRenderClient,
 
     format_ptr: *mut WAVEFORMATEX,
+    buffer_frame_count: u32,
 }
 
-impl WindowsPlayback {
-    fn new() -> windows::core::Result<Self> {
+impl PlaybackStream {
+    fn new(playback_consumer: HeapCons<f32>) -> windows::core::Result<Self> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -179,6 +181,8 @@ impl WindowsPlayback {
             )?;
             audio_client.SetEventHandle(event_handle)?;
 
+            let buffer_frame_count = audio_client.GetBufferSize()?;
+
             let render_client: IAudioRenderClient = audio_client.GetService()?;
             audio_client
                 .Start()
@@ -186,39 +190,91 @@ impl WindowsPlayback {
 
             Ok(Self {
                 event_handle,
+                playback_consumer,
                 audio_client,
                 render_client,
+                buffer_frame_count,
                 format_ptr,
             })
         }
     }
 
-    fn process(&self) -> windows::core::Result<()> {
+    fn process(&mut self) -> windows::core::Result<()> {
+        unsafe {
+            let format = *self.format_ptr;
+
+            // Frames in the buffer
+            let num_padding_frames = self.audio_client.GetCurrentPadding()?;
+            let num_frames_available = (self.buffer_frame_count - num_padding_frames) as usize;
+
+            if num_frames_available > 0 {
+                let buffer_ptr =
+                    self.render_client.GetBuffer(num_frames_available as u32)? as *mut f32;
+                let buffer = std::slice::from_raw_parts_mut(
+                    buffer_ptr,
+                    num_frames_available * format.nChannels as usize,
+                );
+
+                // Testing loopback
+                let mut i = 0;
+                while let Some(sample) = self.playback_consumer.try_pop() {
+                    if i + 1 >= buffer.len() {
+                        break;
+                    }
+
+                    buffer[i] = sample;
+                    buffer[i + 1] = sample;
+
+                    i += 2;
+                }
+
+                self.render_client
+                    .ReleaseBuffer(num_frames_available as u32, 0)?;
+            }
+        }
+
         Ok(())
     }
 }
 
-pub fn init() -> windows::core::Result<()> {
-    unsafe {
-        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+pub fn init() {
+    // We capture in mono and there's no point to store
+    // more than 60ms
+    let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
+    let (capture_producer, capture_consumer) = ring.split();
 
-        let capture = WindowsCapture::new()?;
-        let playback = WindowsPlayback::new()?;
+    let ring = HeapRb::<f32>::new((DEFAULT_RATE * DEFAULT_CHANNELS) as usize);
+    let (playback_producer, playback_consumer) = ring.split();
 
-        loop {
-            let wait_result = WaitForMultipleObjects(
-                &[capture.event_handle, playback.event_handle],
-                false, // wake on any
-                2000,
-            );
+    _ = thread::Builder::new()
+        .name("wasapi-loop".into())
+        .spawn(move || unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED)
+                .ok()
+                .expect("Failed to init COM library");
 
-            if wait_result == WAIT_OBJECT_0 {
-                capture.process().unwrap();
-            } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
-                playback.process().unwrap();
-            } else {
-                panic!("Timeout!");
+            let mut capture = CaptureStream::new(capture_producer).expect("Failed to init capture");
+            let mut playback =
+                PlaybackStream::new(capture_consumer).expect("Failed to init playback");
+
+            loop {
+                let wait_result = WaitForMultipleObjects(
+                    &[capture.event_handle, playback.event_handle],
+                    false, // wake on any
+                    2000,
+                );
+
+                // TODO: We need to recreate the streams on errors.
+                // Usually it means the device has been unplugged
+                if wait_result == WAIT_OBJECT_0 {
+                    capture.process().unwrap();
+                } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
+                    playback.process().unwrap();
+                } else {
+                    panic!("Timeout!");
+                }
             }
-        }
-    }
+        })
+        .unwrap()
+        .join();
 }
