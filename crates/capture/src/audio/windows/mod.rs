@@ -1,84 +1,105 @@
-use std::{
-    ptr::{self, read_unaligned},
-    thread,
-    time::Duration,
-};
+//! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
+
+use std::ptr;
 
 use windows::Win32::{
-    Foundation::WAIT_OBJECT_0,
+    Foundation::{HANDLE, WAIT_OBJECT_0},
     Media::Audio::{
         AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-        IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
-        eCapture, eConsole,
+        IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
+        MMDeviceEnumerator, WAVEFORMATEX, eCapture, eConsole, eRender,
     },
     System::{
-        Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
-        Threading::{CreateEventA, WaitForSingleObject},
+        Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree},
+        Threading::{CreateEventW, WaitForMultipleObjects, WaitForSingleObject},
     },
 };
 
 pub const DEFAULT_RATE: u32 = 48000;
 
-struct WindowsCapture {}
+pub mod capture;
+pub mod playback;
 
-pub fn init() -> windows::core::Result<()> {
-    unsafe {
-        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+struct WindowsCapture {
+    event_handle: HANDLE,
 
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+    audio_client: IAudioClient,
+    capture_client: IAudioCaptureClient,
 
-        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
-        let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+    format_ptr: *mut WAVEFORMATEX,
+}
 
-        let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
-        let format = &mut *format_ptr;
+impl Drop for WindowsCapture {
+    fn drop(&mut self) {
+        unsafe {
+            _ = self.audio_client.Stop();
 
-        format.nChannels = 1;
-        format.nSamplesPerSec = DEFAULT_RATE;
-        // Asuming f32, idk if that's a safe assumption
-        format.nAvgBytesPerSec = DEFAULT_RATE * 4 * format.nChannels as u32;
-        format.nBlockAlign = 4 * format.nChannels;
+            CoTaskMemFree(Some(self.format_ptr as *const _));
+        }
+    }
+}
 
-        let audio_event_handle = CreateEventA(None, false, false, None)?;
+impl WindowsCapture {
+    fn new() -> windows::core::Result<Self> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 
-        // Ask for 20ms (units are 100ns)
-        let req_buffer_duration = 200_000;
-        audio_client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            // Ask Windows to resample if needed
-            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
-                | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            req_buffer_duration,
-            0,
-            format_ptr,
-            None,
-        )?;
-        audio_client.SetEventHandle(audio_event_handle)?;
+            let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
+            let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
 
-        let capture_client: IAudioCaptureClient = audio_client.GetService()?;
-        audio_client
-            .Start()
-            .expect("Failed to start audio capturing");
+            let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
+            let format = &mut *format_ptr;
 
-        loop {
-            // returns the number of **frames** available (oh my dear frames..)
-            let mut packet_length = capture_client.GetNextPacketSize()?;
+            format.nChannels = 1; // We always want mono for capture
+            format.nSamplesPerSec = DEFAULT_RATE;
+            // TODO: Assuming f32 for now. Make it more robust
+            format.nAvgBytesPerSec = DEFAULT_RATE * 4 * format.nChannels as u32;
+            format.nBlockAlign = 4 * format.nChannels;
 
-            let wait_result = WaitForSingleObject(audio_event_handle, 2000);
-            if wait_result != WAIT_OBJECT_0 {
-                println!("Timeout or Error waiting for audio buffer.");
-                break;
-            }
+            let event_handle = CreateEventW(None, false, false, None)?;
+
+            // Ask for 20ms (units are 100ns)
+            let req_buffer_duration = 200_000;
+            audio_client.Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                // Ask Windows to resample if needed
+                AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+                    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                req_buffer_duration,
+                0,
+                format_ptr,
+                None,
+            )?;
+            audio_client.SetEventHandle(event_handle)?;
+
+            let capture_client: IAudioCaptureClient = audio_client.GetService()?;
+            audio_client
+                .Start()
+                .expect("Failed to start audio capturing");
+
+            Ok(Self {
+                event_handle,
+                audio_client,
+                capture_client,
+                format_ptr,
+            })
+        }
+    }
+
+    fn process(&self) -> windows::core::Result<()> {
+        unsafe {
+            let format = *self.format_ptr;
+            let mut packet_length = self.capture_client.GetNextPacketSize()?;
 
             while packet_length != 0 {
                 let mut buffer_ptr: *mut u8 = ptr::null_mut();
                 let mut num_frames_read = 0;
                 let mut flags = 0;
 
-                capture_client.GetBuffer(
+                self.capture_client.GetBuffer(
                     &mut buffer_ptr,
                     &mut num_frames_read,
                     &mut flags,
@@ -99,18 +120,105 @@ pub fn init() -> windows::core::Result<()> {
                     }
                     let rms = (sum / total_samples as f32).sqrt();
 
-                    // Visualizer
                     let bars = (rms * 50.0) as usize;
-                    // println!("Raw Input: [{}]", "#".repeat(bars));
+                    println!("Raw Input: [{}]", "#".repeat(bars));
                 } else {
                     println!("Silent...");
                 }
 
-                capture_client.ReleaseBuffer(num_frames_read)?;
-                packet_length = capture_client.GetNextPacketSize()?;
+                self.capture_client.ReleaseBuffer(num_frames_read)?;
+                packet_length = self.capture_client.GetNextPacketSize()?;
             }
         }
 
         Ok(())
+    }
+}
+
+struct WindowsPlayback {
+    event_handle: HANDLE,
+
+    audio_client: IAudioClient,
+    render_client: IAudioRenderClient,
+
+    format_ptr: *mut WAVEFORMATEX,
+}
+
+impl WindowsPlayback {
+    fn new() -> windows::core::Result<Self> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
+            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+            let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+
+            let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
+            let format = &mut *format_ptr;
+
+            format.nChannels = 2; // We always want stereo for playback
+            format.nSamplesPerSec = DEFAULT_RATE;
+            // TODO: Assuming f32 for now. Make it more robust
+            format.nAvgBytesPerSec = DEFAULT_RATE * 4 * format.nChannels as u32;
+            format.nBlockAlign = 4 * format.nChannels;
+
+            let event_handle = CreateEventW(None, false, false, None)?;
+
+            // Ask for 40ms (units are 100ns)
+            let req_buffer_duration = 400_000;
+            audio_client.Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                // Ask Windows to resample if needed
+                AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+                    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                req_buffer_duration,
+                0,
+                format_ptr,
+                None,
+            )?;
+            audio_client.SetEventHandle(event_handle)?;
+
+            let render_client: IAudioRenderClient = audio_client.GetService()?;
+            audio_client
+                .Start()
+                .expect("Failed to start audio capturing");
+
+            Ok(Self {
+                event_handle,
+                audio_client,
+                render_client,
+                format_ptr,
+            })
+        }
+    }
+
+    fn process(&self) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
+pub fn init() -> windows::core::Result<()> {
+    unsafe {
+        CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
+
+        let capture = WindowsCapture::new()?;
+        let playback = WindowsPlayback::new()?;
+
+        loop {
+            let wait_result = WaitForMultipleObjects(
+                &[capture.event_handle, playback.event_handle],
+                false, // wake on any
+                2000,
+            );
+
+            if wait_result == WAIT_OBJECT_0 {
+                capture.process().unwrap();
+            } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
+                playback.process().unwrap();
+            } else {
+                panic!("Timeout!");
+            }
+        }
     }
 }
