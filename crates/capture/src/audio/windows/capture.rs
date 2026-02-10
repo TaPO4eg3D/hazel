@@ -1,0 +1,127 @@
+use std::ptr;
+
+use ringbuf::{HeapProd, traits::Producer};
+use windows::Win32::{
+    Foundation::HANDLE,
+    Media::Audio::{
+        AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+        IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
+        eCapture, eConsole,
+    },
+    System::{
+        Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree},
+        Threading::CreateEventW,
+    },
+};
+
+use crate::audio::DEFAULT_RATE;
+
+pub(crate) struct CaptureStream {
+    pub(crate) event_handle: HANDLE,
+    pub(crate) capture_producer: Option<HeapProd<f32>>,
+
+    audio_client: IAudioClient,
+    capture_client: IAudioCaptureClient,
+
+    format_ptr: *mut WAVEFORMATEX,
+}
+
+impl Drop for CaptureStream {
+    fn drop(&mut self) {
+        unsafe {
+            _ = self.audio_client.Stop();
+
+            CoTaskMemFree(Some(self.format_ptr as *const _));
+        }
+    }
+}
+
+impl CaptureStream {
+    pub(crate) fn new(capture_producer: HeapProd<f32>) -> windows::core::Result<Self> {
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
+            let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
+            let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+
+            let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
+            let format = &mut *format_ptr;
+
+            format.nChannels = 1; // We always want mono for capture
+            format.nSamplesPerSec = DEFAULT_RATE;
+            // TODO: Assuming f32 for now. Make it more robust
+            format.nAvgBytesPerSec = DEFAULT_RATE * 4 * format.nChannels as u32;
+            format.nBlockAlign = 4 * format.nChannels;
+
+            let event_handle = CreateEventW(None, false, false, None)?;
+
+            // Ask for 20ms (units are 100ns)
+            let req_buffer_duration = 200_000;
+            audio_client.Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                // Ask Windows to resample if needed
+                AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
+                    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                req_buffer_duration,
+                0,
+                format_ptr,
+                None,
+            )?;
+            audio_client.SetEventHandle(event_handle)?;
+
+            let capture_client: IAudioCaptureClient = audio_client.GetService()?;
+            audio_client
+                .Start()
+                .expect("Failed to start audio capturing");
+
+            windows::core::Result::Ok(Self {
+                event_handle,
+                capture_producer: Some(capture_producer),
+                audio_client,
+                capture_client,
+                format_ptr,
+            })
+        }
+    }
+
+    pub(crate) fn process(&mut self) -> windows::core::Result<()> {
+        unsafe {
+            let format = *self.format_ptr;
+            let mut packet_length = self.capture_client.GetNextPacketSize()?;
+
+            while packet_length != 0 {
+                let mut buffer_ptr: *mut u8 = ptr::null_mut();
+                let mut num_frames_read = 0;
+                let mut flags = 0;
+
+                self.capture_client.GetBuffer(
+                    &mut buffer_ptr,
+                    &mut num_frames_read,
+                    &mut flags,
+                    None,
+                    None,
+                )?;
+
+                // If the pointer is valid (not silent/glitch)
+                if flags == 0 {
+                    let total_samples = (num_frames_read as usize) * (format.nChannels as usize);
+
+                    let samples =
+                        std::slice::from_raw_parts(buffer_ptr as *const f32, total_samples);
+
+                    if let Some(producer) = self.capture_producer.as_mut() {
+                        producer.push_slice(samples);
+                    }
+                }
+
+                self.capture_client.ReleaseBuffer(num_frames_read)?;
+                packet_length = self.capture_client.GetNextPacketSize()?;
+            }
+        }
+
+        Ok(())
+    }
+}
