@@ -6,18 +6,24 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},
 };
-use windows::Win32::{
-    Foundation::{HANDLE, WAIT_OBJECT_0},
-    Media::Audio::{
-        AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-        IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
-        MMDeviceEnumerator, WAVEFORMATEX, eCapture, eConsole, eRender,
+use windows::{
+    Win32::{
+        Foundation::{HANDLE, WAIT_OBJECT_0},
+        Media::Audio::{
+            AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+            AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
+            IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator, WAVEFORMATEX,
+            eCapture, eConsole, eRender,
+        },
+        System::{
+            Com::{
+                CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+            },
+            Threading::{CreateEventW, WaitForMultipleObjects, WaitForSingleObject},
+        },
     },
-    System::{
-        Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree},
-        Threading::{CreateEventW, WaitForMultipleObjects, WaitForSingleObject},
-    },
+    core::implement,
 };
 
 pub const DEFAULT_RATE: u32 = 48000;
@@ -29,7 +35,7 @@ pub mod playback;
 struct CaptureStream {
     event_handle: HANDLE,
 
-    capture_producer: HeapProd<f32>,
+    capture_producer: Option<HeapProd<f32>>,
 
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
@@ -87,9 +93,9 @@ impl CaptureStream {
                 .Start()
                 .expect("Failed to start audio capturing");
 
-            Ok(Self {
+            windows::core::Result::Ok(Self {
                 event_handle,
-                capture_producer,
+                capture_producer: Some(capture_producer),
                 audio_client,
                 capture_client,
                 format_ptr,
@@ -122,7 +128,9 @@ impl CaptureStream {
                     let samples =
                         std::slice::from_raw_parts(buffer_ptr as *const f32, total_samples);
 
-                    self.capture_producer.push_slice(samples);
+                    if let Some(producer) = self.capture_producer.as_mut() {
+                        producer.push_slice(samples);
+                    }
                 }
 
                 self.capture_client.ReleaseBuffer(num_frames_read)?;
@@ -137,7 +145,7 @@ impl CaptureStream {
 struct PlaybackStream {
     event_handle: HANDLE,
 
-    playback_consumer: HeapCons<f32>,
+    playback_consumer: Option<HeapCons<f32>>,
 
     audio_client: IAudioClient,
     render_client: IAudioRenderClient,
@@ -190,7 +198,7 @@ impl PlaybackStream {
 
             Ok(Self {
                 event_handle,
-                playback_consumer,
+                playback_consumer: Some(playback_consumer),
                 audio_client,
                 render_client,
                 buffer_frame_count,
@@ -216,16 +224,19 @@ impl PlaybackStream {
                 );
 
                 // Testing loopback
-                let mut i = 0;
-                while let Some(sample) = self.playback_consumer.try_pop() {
-                    if i + 1 >= buffer.len() {
-                        break;
+                if let Some(consumer) = self.playback_consumer.as_mut() {
+                    let mut i = 0;
+
+                    while let Some(sample) = consumer.try_pop() {
+                        if i + 1 >= buffer.len() {
+                            break;
+                        }
+
+                        buffer[i] = sample;
+                        buffer[i + 1] = sample;
+
+                        i += 2;
                     }
-
-                    buffer[i] = sample;
-                    buffer[i + 1] = sample;
-
-                    i += 2;
                 }
 
                 self.render_client
@@ -233,6 +244,44 @@ impl PlaybackStream {
             }
         }
 
+        Ok(())
+    }
+}
+
+#[implement(IMMNotificationClient)]
+struct DeviceNotifier {}
+
+impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
+    fn OnDeviceAdded(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceRemoved(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDefaultDeviceChanged(
+        &self,
+        flow: windows::Win32::Media::Audio::EDataFlow,
+        role: windows::Win32::Media::Audio::ERole,
+        pwstrdefaultdeviceid: &windows_core::PCWSTR,
+    ) -> windows_core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceStateChanged(
+        &self,
+        pwstrdeviceid: &windows_core::PCWSTR,
+        dwnewstate: windows::Win32::Media::Audio::DEVICE_STATE,
+    ) -> windows_core::Result<()> {
+        Ok(())
+    }
+
+    fn OnPropertyValueChanged(
+        &self,
+        pwstrdeviceid: &windows_core::PCWSTR,
+        key: &windows::Win32::Foundation::PROPERTYKEY,
+    ) -> windows_core::Result<()> {
         Ok(())
     }
 }
@@ -253,6 +302,17 @@ pub fn init() {
                 .ok()
                 .expect("Failed to init COM library");
 
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                    .expect("Failed to create device enumerator");
+
+            let notifier = DeviceNotifier {};
+            let notification_client: IMMNotificationClient = notifier.into();
+
+            enumerator
+                .RegisterEndpointNotificationCallback(&notification_client)
+                .unwrap();
+
             let mut capture = CaptureStream::new(capture_producer).expect("Failed to init capture");
             let mut playback =
                 PlaybackStream::new(capture_consumer).expect("Failed to init playback");
@@ -264,12 +324,22 @@ pub fn init() {
                     2000,
                 );
 
-                // TODO: We need to recreate the streams on errors.
-                // Usually it means the device has been unplugged
                 if wait_result == WAIT_OBJECT_0 {
-                    capture.process().unwrap();
+                    // Failure most likely means that device has changed
+                    if capture.process().is_err() {
+                        let producer = capture.capture_producer.take().unwrap();
+
+                        capture = CaptureStream::new(producer)
+                            .expect("Failed to recreate the capture stream");
+                    }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
-                    playback.process().unwrap();
+                    // Failure most likely means that device has changed
+                    if playback.process().is_err() {
+                        let consumer = playback.playback_consumer.take().unwrap();
+
+                        playback = PlaybackStream::new(consumer)
+                            .expect("Failed to recreate the playback stream");
+                    }
                 } else {
                     panic!("Timeout!");
                 }

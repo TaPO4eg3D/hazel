@@ -23,6 +23,7 @@ libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 
 [target.'cfg(windows)'.dependencies]
+windows-core = "0.62.2"
 windows = { version = "0.62", features = [
     "Win32_Media_Audio",
     "Win32_System_Com",
