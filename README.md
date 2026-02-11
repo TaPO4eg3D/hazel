@@ -8,7 +8,10 @@ Modern VoIP software with snappy UI and self-hosting capabilities.
 - ffmpeg
 - libopus
 
-**ONLY WORKS IN LINUX FOR NOW**
+**Supported operating systems**
+
+- Linux
+- Windows
 
 ## Screenshots
 
