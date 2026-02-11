@@ -1,37 +1,31 @@
 //! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
 
 use std::{
-    ptr,
     sync::{Arc, Mutex},
     thread,
 };
 
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
-    traits::{Consumer, Producer, Split as _},
+    traits::{Consumer, Observer as _, Producer, Split as _},
 };
 use windows::{
     Win32::{
         Foundation::{HANDLE, WAIT_OBJECT_0},
         Media::Audio::{
-            AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-            IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
-            IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator, WAVEFORMATEX,
-            eCapture, eConsole, eRender,
+            IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl,
+            MMDeviceEnumerator,
         },
         System::{
-            Com::{
-                CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
-            },
-            Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject},
+            Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
+            Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
         },
     },
     core::implement,
 };
 
 use crate::audio::{
-    AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE,
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
     windows::{capture::CaptureStream, playback::PlaybackStream},
 };
 
@@ -76,9 +70,40 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
     }
 }
 
-pub struct WindowsCapture {}
+pub struct WindowsCapture {
+    notifier: Notifier,
+    loop_controller: CommandSender<AudioLoopCommand>,
+    capture_consumer: HeapCons<f32>,
+}
 
-pub struct WindowsPlayback {}
+impl WindowsCapture {
+    pub fn get_controller(&self) -> CommandSender<AudioLoopCommand> {
+        self.loop_controller.clone()
+    }
+
+    pub fn listen_updates(&self) {
+        self.notifier.listen_updates();
+    }
+
+    pub fn pop(&mut self, buf: &mut [f32]) -> usize {
+        if self.capture_consumer.occupied_len() == 0 {
+            std::thread::park();
+        }
+
+        self.capture_consumer.pop_slice(buf)
+    }
+}
+
+pub struct WindowsPlayback {
+    playback_producer: HeapProd<f32>,
+    loop_controller: CommandSender<AudioLoopCommand>,
+}
+
+impl WindowsPlayback {
+    pub fn push(&mut self, data: &[f32]) {
+        self.playback_producer.push_slice(data);
+    }
+}
 
 struct ChannelState<T> {
     inner: Arc<Mutex<Option<T>>>,
@@ -156,7 +181,7 @@ fn chnannel<T>() -> (EventHandle, ChannelState<T>, CommandSender<T>) {
     }
 }
 
-pub fn init() {
+pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     // We capture in mono and there's no point to store
     // more than 60ms
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
@@ -166,6 +191,20 @@ pub fn init() {
     let (playback_producer, playback_consumer) = ring.split();
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
+
+    let capture_notifier = Notifier::new();
+    let capture = WindowsCapture {
+        capture_consumer,
+        loop_controller: sender.clone(),
+        notifier: capture_notifier.clone(),
+    };
+
+    let playback = WindowsPlayback {
+        playback_producer,
+        loop_controller: sender.clone(),
+    };
+
+    let _device_registry = DeviceRegistry::new(sender);
 
     _ = thread::Builder::new()
         .name("wasapi-loop".into())
@@ -185,38 +224,63 @@ pub fn init() {
                 .RegisterEndpointNotificationCallback(&notification_client)
                 .unwrap();
 
-            let mut capture = CaptureStream::new(capture_producer).expect("Failed to init capture");
-            let mut playback =
-                PlaybackStream::new(capture_consumer).expect("Failed to init playback");
+            let mut capture_stream = CaptureStream::new(capture_producer, capture_notifier.clone())
+                .expect("Failed to init capture");
+            let mut playback_stream =
+                PlaybackStream::new(playback_consumer).expect("Failed to init playback");
 
             let command_event = command_event;
+            let mut preffered_device: Option<AudioDevice> = None;
+
             loop {
                 let wait_result = WaitForMultipleObjects(
-                    &[capture.event_handle, playback.event_handle, command_event.0],
+                    &[
+                        capture_stream.event_handle,
+                        playback_stream.event_handle,
+                        command_event.0,
+                    ],
                     false, // wake on any
                     2000,
                 );
 
                 if wait_result == WAIT_OBJECT_0 {
                     // Failure most likely means that device has changed
-                    if capture.process().is_err() {
-                        let producer = capture.capture_producer.take().unwrap();
+                    if capture_stream.process().is_err() {
+                        let producer = capture_stream.capture_producer.take().unwrap();
 
-                        capture = CaptureStream::new(producer)
+                        capture_stream = CaptureStream::new(producer, capture_notifier.clone())
                             .expect("Failed to recreate the capture stream");
                     }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     // Failure most likely means that device has changed
-                    if playback.process().is_err() {
-                        let consumer = playback.playback_consumer.take().unwrap();
+                    if playback_stream.process().is_err() {
+                        let consumer = playback_stream.playback_consumer.take().unwrap();
 
-                        playback = PlaybackStream::new(consumer)
+                        playback_stream = PlaybackStream::new(consumer)
                             .expect("Failed to recreate the playback stream");
                     }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 2 {
                     if let Some(event) = command_state.take() {
                         match event {
-                            _ => todo!(),
+                            AudioLoopCommand::SetActiveInputDevice(device) => {
+                                let producer = capture_stream.capture_producer.take().unwrap();
+
+                                capture_stream =
+                                    CaptureStream::new(producer, capture_notifier.clone())
+                                        .expect("Failed to recreate the capture stream");
+                            }
+                            AudioLoopCommand::SetActiveOutputDevice(device) => {
+                                let consumer = playback_stream.playback_consumer.take().unwrap();
+
+                                playback_stream = PlaybackStream::new(consumer)
+                                    .expect("Failed to recreate the playback stream");
+                            }
+                            AudioLoopCommand::SetEnabledCapture(value) => {
+                                _ = capture_stream.set_enabled(value);
+                            }
+                            AudioLoopCommand::SetEnabledPlayback(value) => {
+                                _ = playback_stream.set_enabled(value);
+                            }
                         }
                     }
                 } else {
@@ -224,6 +288,7 @@ pub fn init() {
                 }
             }
         })
-        .unwrap()
-        .join();
+        .unwrap();
+
+    (capture, playback, _device_registry)
 }

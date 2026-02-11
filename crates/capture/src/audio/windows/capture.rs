@@ -15,11 +15,13 @@ use windows::Win32::{
     },
 };
 
-use crate::audio::DEFAULT_RATE;
+use crate::audio::{DEFAULT_RATE, Notifier};
 
 pub(crate) struct CaptureStream {
     pub(crate) event_handle: HANDLE,
     pub(crate) capture_producer: Option<HeapProd<f32>>,
+
+    capture_notifier: Notifier,
 
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
@@ -38,7 +40,10 @@ impl Drop for CaptureStream {
 }
 
 impl CaptureStream {
-    pub(crate) fn new(capture_producer: HeapProd<f32>) -> windows::core::Result<Self> {
+    pub(crate) fn new(
+        capture_producer: HeapProd<f32>,
+        capture_notifier: Notifier,
+    ) -> windows::core::Result<Self> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -82,9 +87,24 @@ impl CaptureStream {
                 capture_producer: Some(capture_producer),
                 audio_client,
                 capture_client,
+                capture_notifier,
                 format_ptr,
             })
         }
+    }
+
+    pub(crate) fn set_enabled(&mut self, value: bool) -> windows::core::Result<()> {
+        if value {
+            unsafe {
+                self.audio_client.Start()?;
+            }
+        } else {
+            unsafe {
+                self.audio_client.Stop()?;
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) fn process(&mut self) -> windows::core::Result<()> {
@@ -114,6 +134,8 @@ impl CaptureStream {
 
                     if let Some(producer) = self.capture_producer.as_mut() {
                         producer.push_slice(samples);
+
+                        self.capture_notifier.notify();
                     }
                 }
 
