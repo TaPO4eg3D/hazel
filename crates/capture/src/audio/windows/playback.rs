@@ -81,6 +81,20 @@ impl PlaybackStream {
         }
     }
 
+    pub(crate) fn set_enabled(&mut self, value: bool) -> windows::core::Result<()> {
+        if value {
+            unsafe {
+                self.audio_client.Start()?;
+            }
+        } else {
+            unsafe {
+                self.audio_client.Stop()?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn process(&mut self) -> windows::core::Result<()> {
         unsafe {
             let format = *self.format_ptr;
@@ -97,19 +111,13 @@ impl PlaybackStream {
                     num_frames_available * format.nChannels as usize,
                 );
 
-                // Testing loopback
                 if let Some(consumer) = self.playback_consumer.as_mut() {
-                    let mut i = 0;
-
-                    while let Some(sample) = consumer.try_pop() {
-                        if i + 1 >= buffer.len() {
-                            break;
+                    for slot in buffer.iter_mut() {
+                        if let Some(sample) = consumer.try_pop() {
+                            *slot = sample;
+                        } else {
+                            *slot = 0.;
                         }
-
-                        buffer[i] = sample;
-                        buffer[i + 1] = sample;
-
-                        i += 2;
                     }
                 }
 

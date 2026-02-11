@@ -2,11 +2,11 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, VecDeque},
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
     task::{Poll, Waker},
-    thread,
+    thread::{self, Thread},
 };
 
 use ffmpeg_next::{Packet, codec};
@@ -64,6 +64,38 @@ impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
         });
 
         length
+    }
+}
+
+/// Wakes up a sleeping thread when data
+/// is available for consumption
+#[derive(Clone, Default)]
+pub(crate) struct Notifier {
+    thread: Arc<Mutex<Option<Thread>>>,
+}
+
+impl Notifier {
+    pub fn new() -> Self {
+        Self {
+            thread: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn notify(&self) {
+        let handle = {
+            let guard = self.thread.lock().unwrap();
+
+            guard.clone()
+        };
+
+        if let Some(thread) = handle {
+            thread.unpark();
+        }
+    }
+
+    pub fn listen_updates(&self) {
+        let mut guard = self.thread.lock().unwrap();
+        *guard = Some(std::thread::current());
     }
 }
 
@@ -513,7 +545,7 @@ impl Playback {
                                 continue;
                             }
 
-                            // platform_playback.push(&packet);
+                            platform_playback.push(&packet);
                         }
                     }
                 }
@@ -598,12 +630,12 @@ pub fn init() -> (Capture, Playback, DeviceRegistry) {
     (capture, playback, device_registry)
 }
 
-// #[cfg(target_os = "windows")]
-// pub fn init() -> (Capture, Playback, DeviceRegistry) {
-// let (capture, playback, device_registry) = windows::init();
+#[cfg(target_os = "windows")]
+pub fn init() -> (Capture, Playback, DeviceRegistry) {
+    let (capture, playback, device_registry) = windows::init();
 
-// let capture = Capture::new(capture);
-// let playback = Playback::new(playback);
+    let capture = Capture::new(capture);
+    let playback = Playback::new(playback);
 
-// (capture, playback, device_registry)
-// }
+    (capture, playback, device_registry)
+}

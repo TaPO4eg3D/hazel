@@ -11,44 +11,12 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry,
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
     linux::{capture::CaptureStream, playback::PlaybackStream},
 };
 
 pub mod capture;
 pub mod playback;
-
-/// Wakes up a sleeping thread when data
-/// is available for consumption
-#[derive(Clone, Default)]
-pub(crate) struct Notifier {
-    thread: Arc<Mutex<Option<Thread>>>,
-}
-
-impl Notifier {
-    pub fn new() -> Self {
-        Self {
-            thread: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub fn notify(&self) {
-        let handle = {
-            let guard = self.thread.lock().unwrap();
-
-            guard.clone()
-        };
-
-        if let Some(thread) = handle {
-            thread.unpark();
-        }
-    }
-
-    pub fn listen_updates(&self) {
-        let mut guard = self.thread.lock().unwrap();
-        *guard = Some(std::thread::current());
-    }
-}
 
 pub(crate) struct LinuxCapture {
     capture_notifier: Notifier,
@@ -85,46 +53,6 @@ impl LinuxPlayback {
         self.playback_producer.push_slice(data);
     }
 }
-
-// fn device_set_route_properties(
-//     device: &AudioDevice,
-//     route_index: i32,
-//     route_device: i32,
-// ) {
-//     let mut route_properties = Vec::new();
-//     route_properties.push(Property {
-//         key: libspa_sys::SPA_PARAM_ROUTE_index,
-//         flags: PropertyFlags::empty(),
-//         value: Value::Int(route_index),
-//     });
-//     route_properties.push(Property {
-//         key: libspa_sys::SPA_PARAM_ROUTE_device,
-//         flags: PropertyFlags::empty(),
-//         value: Value::Int(route_device),
-//     });
-//
-//     route_properties.push(Property {
-//         key: libspa_sys::SPA_PARAM_ROUTE_save,
-//         flags: PropertyFlags::empty(),
-//         value: Value::Bool(true),
-//     });
-//     let route_properties = route_properties;
-//
-//     let values = PodSerializer::serialize(
-//         std::io::Cursor::new(Vec::new()),
-//         &Value::Object(Object {
-//             type_: libspa_sys::SPA_TYPE_OBJECT_ParamRoute,
-//             id: libspa_sys::SPA_PARAM_Route,
-//             properties: route_properties,
-//         }),
-//     );
-//
-//     if let Ok((values, _)) = values {
-//         if let Some(pod) = Pod::from_bytes(&values.into_inner()) {
-//             device.set_param(ParamType::Route, 0, pod);
-//         }
-//     }
-// }
 
 pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
     // We capture in mono and there's no point to store
