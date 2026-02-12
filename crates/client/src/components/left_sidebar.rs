@@ -208,13 +208,16 @@ impl RenderOnce for VoiceChannelsComponent {
                                                     .with_size(Size::XSmall),
                                             )
                                         })
-                                        .when(member.is_sound_off || is_me && is_sound_off, |this| {
-                                            this.child(
-                                                Icon::new(IconName::HeadphoneOff)
-                                                    .text_color(cx.theme().danger)
-                                                    .with_size(Size::XSmall),
-                                            )
-                                        })
+                                        .when(
+                                            member.is_sound_off || is_me && is_sound_off,
+                                            |this| {
+                                                this.child(
+                                                    Icon::new(IconName::HeadphoneOff)
+                                                        .text_color(cx.theme().danger)
+                                                        .with_size(Size::XSmall),
+                                                )
+                                            },
+                                        )
                                         // `is_talking` is special since it's managed internally
                                         .when(member.is_talking, |this| {
                                             this.child(
@@ -434,7 +437,7 @@ impl RenderOnce for AudioDeviceControl {
 
         let available_devices = devices.into_iter().map(|device| {
             div()
-                .id(ElementId::Integer(device.id as u64))
+                .id(device.id.clone())
                 .w_full()
                 .rounded_md()
                 .hover(|this| this.bg(cx.theme().secondary))

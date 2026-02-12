@@ -241,7 +241,7 @@ impl DeviceRegistry {
         registry.notify();
     }
 
-    pub(crate) fn mark_active_input(&self, id: u32) {
+    pub(crate) fn mark_active_input(&self, id: &str) {
         let mut registry = self.inner.write().unwrap();
 
         registry
@@ -252,7 +252,7 @@ impl DeviceRegistry {
         registry.notify();
     }
 
-    pub(crate) fn mark_active_output(&self, id: u32) {
+    pub(crate) fn mark_active_output(&self, id: &str) {
         let mut registry = self.inner.write().unwrap();
 
         registry
@@ -263,14 +263,14 @@ impl DeviceRegistry {
         registry.notify();
     }
 
-    pub(crate) fn device_exists(&self, id: u32) -> bool {
+    pub(crate) fn device_exists(&self, id: &str) -> bool {
         let registry = self.inner.read().unwrap();
 
         registry.input.iter().any(|item| item.id == id)
             || registry.output.iter().any(|item| item.id == id)
     }
 
-    pub(crate) fn remove_device(&self, id: u32) {
+    pub(crate) fn remove_device(&self, id: &str) {
         let mut registry = self.inner.write().unwrap();
 
         if registry.input.iter().any(|item| item.id == id)
@@ -314,11 +314,10 @@ impl DeviceRegistryInner {
     }
 }
 
+// TODO: Change `String` to `SharedString`
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
-    pub id: u32,
-
-    pub name: String,
+    pub id: String,
     pub display_name: String,
 
     pub is_active: bool,
