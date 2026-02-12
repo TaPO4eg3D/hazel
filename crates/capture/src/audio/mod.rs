@@ -279,6 +279,8 @@ impl DeviceRegistry {
             registry.input.retain(|item| item.id != id);
             registry.output.retain(|item| item.id != id);
         }
+
+        registry.notify();
     }
 }
 
