@@ -96,33 +96,12 @@ impl DeviceNotifier {
     }
 }
 
-fn get_device_name(device_id: PCWSTR) -> windows::core::Result<String> {
-    unsafe {
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let device = enumerator.GetDevice(device_id)?;
-
-        let store = device.OpenPropertyStore(STGM_READ)?;
-        let prop_variant = store.GetValue(&PKEY_Device_FriendlyName)?;
-
-        let pswz_name = PropVariantToStringAlloc(&prop_variant)?;
-
-        Ok(pswz_name.to_string()?)
-    }
-}
-
 impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
     fn OnDeviceAdded(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
-        let name = get_device_name(*pwstrdeviceid);
-        println!("ADDED: {name:?}");
-
         Ok(())
     }
 
     fn OnDeviceRemoved(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
-        let name = get_device_name(*pwstrdeviceid);
-        println!("REMOVED: {name:?}");
-
         Ok(())
     }
 
@@ -132,9 +111,6 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         role: windows::Win32::Media::Audio::ERole,
         pwstrdefaultdeviceid: &windows_core::PCWSTR,
     ) -> windows_core::Result<()> {
-        let name = get_device_name(*pwstrdefaultdeviceid);
-        println!("NEW_DEFAULT: {name:?}");
-
         Ok(())
     }
 
@@ -143,7 +119,56 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         pwstrdeviceid: &windows_core::PCWSTR,
         dwnewstate: windows::Win32::Media::Audio::DEVICE_STATE,
     ) -> windows_core::Result<()> {
-        println!("STATE_CHANGED");
+        // New device plugged
+        if dwnewstate.0 == 1 {
+            unsafe {
+                let enumerator: IMMDeviceEnumerator =
+                    CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
+                let device = enumerator.GetDevice(*pwstrdeviceid)?;
+
+                let id = device.GetId()?;
+                let id = id.to_string()?;
+
+                let store = device.OpenPropertyStore(STGM_READ)?;
+                let prop_variant = store.GetValue(&PKEY_Device_FriendlyName)?;
+
+                let display_name = PropVariantToStringAlloc(&prop_variant)?;
+                let display_name = display_name.to_string()?;
+
+                let endpoint: IMMEndpoint = device.cast()?;
+
+                let dataflow = endpoint.GetDataFlow()?;
+                if dataflow == eCapture {
+                    self.device_registry.add_input(AudioDevice {
+                        id,
+                        display_name,
+                        is_active: false,
+                    });
+                } else if dataflow == eRender {
+                    self.device_registry.add_output(AudioDevice {
+                        id,
+                        display_name,
+                        is_active: false,
+                    });
+                }
+            }
+        }
+
+        // Device is unplugged
+        if dwnewstate.0 == 4 || dwnewstate.0 == 8 {
+            unsafe {
+                let enumerator: IMMDeviceEnumerator =
+                    CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+
+                let device = enumerator.GetDevice(*pwstrdeviceid)?;
+
+                let id = device.GetId()?;
+                let id = id.to_string()?;
+
+                self.device_registry.remove_device(&id);
+            }
+        }
 
         Ok(())
     }
@@ -153,7 +178,9 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         pwstrdeviceid: &windows_core::PCWSTR,
         key: &windows::Win32::Foundation::PROPERTYKEY,
     ) -> windows_core::Result<()> {
-        println!("VALUE_CHANGED");
+        // User might rename the device or change sampling rate
+        // Fuck it for now, that's a late game stuff
+        // TODO: Handle renaming and recreate streams if sampling rate is changed
 
         Ok(())
     }
