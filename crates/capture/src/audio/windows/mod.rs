@@ -11,18 +11,24 @@ use ringbuf::{
 };
 use windows::{
     Win32::{
+        Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
         Foundation::{HANDLE, WAIT_OBJECT_0},
         Media::Audio::{
-            IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl,
-            MMDeviceEnumerator,
+            DEVICE_STATE_ACTIVE, IMMDevice, IMMDeviceEnumerator, IMMEndpoint,
+            IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator, eAll, eCapture,
+            eConsole, eRender,
         },
         System::{
-            Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
+            Com::{
+                CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ,
+                StructuredStorage::{PropVariantToString, PropVariantToStringAlloc},
+            },
             Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
         },
     },
     core::implement,
 };
+use windows_core::{Interface as _, PCWSTR};
 
 use crate::audio::{
     AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
@@ -33,14 +39,90 @@ pub mod capture;
 pub mod playback;
 
 #[implement(IMMNotificationClient)]
-struct DeviceNotifier {}
+struct DeviceNotifier {
+    device_registry: DeviceRegistry,
+}
+
+impl DeviceNotifier {
+    fn new(
+        enumerator: &IMMDeviceEnumerator,
+        registry: DeviceRegistry,
+    ) -> windows::core::Result<Self> {
+        unsafe {
+            let default_capture = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
+            let default_capture = default_capture.GetId()?.to_string()?;
+
+            let default_render = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+            let default_render = default_render.GetId()?.to_string()?;
+
+            let collection = enumerator.EnumAudioEndpoints(eAll, DEVICE_STATE_ACTIVE)?;
+
+            let count = collection.GetCount().unwrap();
+
+            for i in 0..count {
+                let device: IMMDevice = collection.Item(i)?;
+
+                let endpoint: IMMEndpoint = device.cast()?;
+                let data_flow = endpoint.GetDataFlow()?;
+
+                let store = device.OpenPropertyStore(STGM_READ)?;
+                let prop = store.GetValue(&PKEY_Device_FriendlyName)?;
+
+                let id = device.GetId()?;
+                let id = id.to_string()?;
+
+                let display_name = PropVariantToStringAlloc(&prop)?;
+                let display_name = display_name.to_string()?;
+
+                if data_flow == eRender {
+                    registry.add_output(AudioDevice {
+                        is_active: id == default_render,
+                        id,
+                        display_name,
+                    });
+                } else if data_flow == eCapture {
+                    registry.add_input(AudioDevice {
+                        is_active: id == default_capture,
+                        id,
+                        display_name,
+                    });
+                }
+            }
+        }
+
+        Ok(DeviceNotifier {
+            device_registry: registry,
+        })
+    }
+}
+
+fn get_device_name(device_id: PCWSTR) -> windows::core::Result<String> {
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let device = enumerator.GetDevice(device_id)?;
+
+        let store = device.OpenPropertyStore(STGM_READ)?;
+        let prop_variant = store.GetValue(&PKEY_Device_FriendlyName)?;
+
+        let pswz_name = PropVariantToStringAlloc(&prop_variant)?;
+
+        Ok(pswz_name.to_string()?)
+    }
+}
 
 impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
     fn OnDeviceAdded(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+        let name = get_device_name(*pwstrdeviceid);
+        println!("ADDED: {name:?}");
+
         Ok(())
     }
 
     fn OnDeviceRemoved(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+        let name = get_device_name(*pwstrdeviceid);
+        println!("REMOVED: {name:?}");
+
         Ok(())
     }
 
@@ -50,6 +132,9 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         role: windows::Win32::Media::Audio::ERole,
         pwstrdefaultdeviceid: &windows_core::PCWSTR,
     ) -> windows_core::Result<()> {
+        let name = get_device_name(*pwstrdefaultdeviceid);
+        println!("NEW_DEFAULT: {name:?}");
+
         Ok(())
     }
 
@@ -58,6 +143,8 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         pwstrdeviceid: &windows_core::PCWSTR,
         dwnewstate: windows::Win32::Media::Audio::DEVICE_STATE,
     ) -> windows_core::Result<()> {
+        println!("STATE_CHANGED");
+
         Ok(())
     }
 
@@ -66,6 +153,8 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
         pwstrdeviceid: &windows_core::PCWSTR,
         key: &windows::Win32::Foundation::PROPERTYKEY,
     ) -> windows_core::Result<()> {
+        println!("VALUE_CHANGED");
+
         Ok(())
     }
 }
@@ -205,6 +294,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     };
 
     let _device_registry = DeviceRegistry::new(sender);
+    let device_registry = _device_registry.clone();
 
     _ = thread::Builder::new()
         .name("wasapi-loop".into())
@@ -217,7 +307,8 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
                     .expect("Failed to create device enumerator");
 
-            let notifier = DeviceNotifier {};
+            let notifier = DeviceNotifier::new(&enumerator, device_registry)
+                .expect("Failed to setup DeviceNotifier");
             let notification_client: IMMNotificationClient = notifier.into();
 
             enumerator
@@ -230,7 +321,9 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 PlaybackStream::new(playback_consumer).expect("Failed to init playback");
 
             let command_event = command_event;
-            let mut preffered_device: Option<AudioDevice> = None;
+
+            let mut preffered_capture_device: Option<AudioDevice> = None;
+            let mut preffered_playback_device: Option<AudioDevice> = None;
 
             loop {
                 let wait_result = WaitForMultipleObjects(
