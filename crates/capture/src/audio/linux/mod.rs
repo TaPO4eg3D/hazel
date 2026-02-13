@@ -12,6 +12,9 @@ use crate::audio::{
     linux::{capture::CaptureStream, playback::PlaybackStream},
 };
 
+use thread_priority::*;
+use thread_priority::ThreadBuilderExt;
+
 pub mod capture;
 pub mod playback;
 
@@ -76,7 +79,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
     thread::Builder::new()
         .name("pipewire-loop".into())
-        .spawn(move || {
+        .spawn_with_priority(ThreadPriority::Max, move |_| {
             pw::init();
             ffmpeg::init().unwrap();
 

@@ -51,3 +51,7 @@ features = [
 [workspace.dependencies.serde]
 version = "1.0.228"
 features = ["derive"]
+
+[profile.profiling]
+inherits = "release"
+debug = true

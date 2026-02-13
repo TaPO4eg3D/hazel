@@ -492,6 +492,9 @@ impl Capture {
                         }
 
                         let len = platform_capture.pop(&mut buf);
+                        if len == 0 {
+                            continue;
+                        }
 
                         let consumers = consumers.read().unwrap();
 
@@ -553,11 +556,11 @@ impl Playback {
 
                 move || {
                     loop {
-                        if !is_enabled.load(Ordering::Relaxed) {
-                            continue;
-                        }
-
                         while let Ok(packet) = rx.recv() {
+                            if !is_enabled.load(Ordering::Relaxed) {
+                                continue;
+                            }
+
                             let mut queue = platform_playback.queue.lock()
                                 .unwrap();
 
@@ -626,22 +629,6 @@ impl Playback {
     pub fn play_file(&self) {
         todo!()
     }
-
-    // pub fn process_streaming<'a>(
-    //     &self,
-    //     clients: impl Iterator<Item = &'a mut StreamingClientState>,
-    //     post_process: impl Fn(Vec<f32>) -> Vec<f32>,
-    // ) {
-    //     let mut buf: Vec<f32> = vec![];
-    //
-    //     for client in clients {
-    //         Self::process_client(&mut buf, client);
-    //     }
-    //
-    //     if !buf.is_empty() {
-    //         self.send_samples(post_process(buf));
-    //     }
-    // }
 }
 
 #[cfg(target_os = "linux")]
