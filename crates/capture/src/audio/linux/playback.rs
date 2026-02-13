@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::{collections::VecDeque, sync::{Arc, Mutex}, time::{Duration, Instant}};
 
 use anyhow::Result as AResult;
 use pipewire::{
@@ -13,11 +13,12 @@ use ringbuf::{
     traits::{Consumer},
 };
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _};
 
 struct PlaybackStreamData {
     last: Instant,
-    samples_consumer: HeapCons<f32>,
+
+    playback_queue: Arc<Mutex<VecDeque<f32>>>,
 }
 
 pub(crate) struct PlaybackStream {
@@ -48,9 +49,11 @@ impl PlaybackStream {
             };
             let chunk = data.chunk_mut();
 
+            let mut playback_queue = this.playback_queue.lock().unwrap();
+
             // TODO: It should not be here (and not like that), move
             if this.last.elapsed() > Duration::from_millis(210) {
-                while this.samples_consumer.pop_slice(output_samples) > 0 {}
+                while playback_queue.pop_slice(output_samples, true) > 0 {}
 
                 *chunk.offset_mut() = 0;
                 *chunk.stride_mut() = stride as i32;
@@ -62,7 +65,7 @@ impl PlaybackStream {
             }
             this.last = Instant::now();
 
-            let written_frames = this.samples_consumer.pop_slice(output_samples);
+            let written_frames = playback_queue.pop_slice(output_samples, true);
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
@@ -78,7 +81,7 @@ impl PlaybackStream {
         }
     }
 
-    pub(crate) fn new(core: CoreRc, samples_consumer: HeapCons<f32>) -> AResult<Self> {
+    pub(crate) fn new(core: CoreRc, playback_queue: Arc<Mutex<VecDeque<f32>>>) -> AResult<Self> {
         let playback_stream = StreamRc::new(
             core,
             Self::STREAM_NAME,
@@ -104,7 +107,7 @@ impl PlaybackStream {
 
         let user_data = PlaybackStreamData {
             last: Instant::now(),
-            samples_consumer,
+            playback_queue,
         };
 
         let listener = playback_stream

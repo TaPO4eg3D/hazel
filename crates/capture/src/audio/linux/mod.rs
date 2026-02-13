@@ -1,8 +1,5 @@
 use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    thread::{self, Thread},
+    cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, Mutex}, thread::{self, Thread}
 };
 
 use pipewire::{self as pw, types::ObjectType};
@@ -44,14 +41,10 @@ impl LinuxCapture {
 }
 
 pub struct LinuxPlayback {
-    pw_sender: pw::channel::Sender<AudioLoopCommand>,
-    playback_producer: HeapProd<f32>,
-}
+    pub(crate) queue: Arc<Mutex<VecDeque<f32>>>,
 
-impl LinuxPlayback {
-    pub fn push(&mut self, data: &[f32]) {
-        self.playback_producer.push_slice(data);
-    }
+    #[allow(dead_code)]
+    pw_sender: pw::channel::Sender<AudioLoopCommand>,
 }
 
 pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
@@ -60,8 +53,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
     let ring = HeapRb::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
-    let ring = HeapRb::new((DEFAULT_RATE * DEFAULT_CHANNELS) as usize);
-    let (playback_producer, playback_consumer) = ring.split();
+    let playback_queue = Arc::new(Mutex::new(VecDeque::new()));
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
@@ -76,7 +68,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
     let playback = LinuxPlayback {
         pw_sender: pw_sender.clone(),
-        playback_producer,
+        queue: playback_queue.clone(),
     };
 
     let _device_registry = DeviceRegistry::new(pw_sender);
@@ -96,7 +88,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
             let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
             let capture_stream = capture.stream.clone();
 
-            let playback = PlaybackStream::new(core.clone(), playback_consumer)?;
+            let playback = PlaybackStream::new(core.clone(), playback_queue)?;
             let playback_stream = playback.stream.clone();
 
             let routing_meta: Rc<RefCell<Option<pw::metadata::Metadata>>> = Default::default();
