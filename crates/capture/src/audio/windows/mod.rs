@@ -1,6 +1,7 @@
 //! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
 
 use std::{
+    collections::VecDeque,
     sync::{Arc, Mutex},
     thread,
 };
@@ -238,14 +239,9 @@ impl WindowsCapture {
 }
 
 pub struct WindowsPlayback {
-    playback_producer: HeapProd<f32>,
-    loop_controller: CommandSender<AudioLoopCommand>,
-}
+    pub(crate) queue: Arc<Mutex<VecDeque<f32>>>,
 
-impl WindowsPlayback {
-    pub fn push(&mut self, data: &[f32]) {
-        self.playback_producer.push_slice(data);
-    }
+    loop_controller: CommandSender<AudioLoopCommand>,
 }
 
 struct ChannelState<T> {
@@ -330,8 +326,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
-    let ring = HeapRb::<f32>::new((DEFAULT_RATE * DEFAULT_CHANNELS) as usize);
-    let (playback_producer, playback_consumer) = ring.split();
+    let playback_queue = Arc::new(Mutex::new(VecDeque::new()));
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
 
@@ -343,7 +338,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     };
 
     let playback = WindowsPlayback {
-        playback_producer,
+        queue: playback_queue.clone(),
         loop_controller: sender.clone(),
     };
 
@@ -382,7 +377,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
             )
             .expect("Failed to init capture");
             let mut playback_stream =
-                PlaybackStream::new(playback_consumer, preffered_playback_device.clone())
+                PlaybackStream::new(playback_queue, preffered_playback_device.clone())
                     .expect("Failed to init playback");
 
             let command_event = command_event;
@@ -416,10 +411,10 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     // Failure most likely means that device has changed
                     if playback_stream.process().is_err() {
-                        let consumer = playback_stream.playback_consumer.take().unwrap();
+                        let queue = playback_stream.queue.take().unwrap();
 
                         playback_stream =
-                            PlaybackStream::new(consumer, preffered_playback_device.clone())
+                            PlaybackStream::new(queue, preffered_playback_device.clone())
                                 .expect("Failed to recreate the playback stream");
 
                         _ = playback_stream.set_enabled(playback_enabled);
@@ -443,14 +438,12 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                                 device_registry.mark_active_input(&capture_stream.active_device);
                             }
                             AudioLoopCommand::SetActiveOutputDevice(device) => {
-                                let consumer = playback_stream.playback_consumer.take().unwrap();
+                                let queue = playback_stream.queue.take().unwrap();
                                 preffered_playback_device = Some(device.id.clone());
 
-                                playback_stream = PlaybackStream::new(
-                                    consumer,
-                                    preffered_playback_device.clone(),
-                                )
-                                .expect("Failed to recreate the playback stream");
+                                playback_stream =
+                                    PlaybackStream::new(queue, preffered_playback_device.clone())
+                                        .expect("Failed to recreate the playback stream");
 
                                 _ = playback_stream.set_enabled(playback_enabled);
                                 device_registry.mark_active_output(&playback_stream.active_device);
