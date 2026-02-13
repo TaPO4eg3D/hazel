@@ -5,21 +5,23 @@ use windows::Win32::{
     Foundation::HANDLE,
     Media::Audio::{
         AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-        IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
-        eCapture, eConsole,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, EDataFlow,
+        IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, IMMEndpoint,
+        MMDeviceEnumerator, WAVEFORMATEX, eCapture, eConsole,
     },
     System::{
         Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree},
         Threading::CreateEventW,
     },
 };
+use windows_core::{HSTRING, Interface, PWSTR};
 
-use crate::audio::{DEFAULT_RATE, Notifier};
+use crate::audio::{DEFAULT_RATE, Notifier, windows::try_get_device};
 
 pub(crate) struct CaptureStream {
     pub(crate) event_handle: HANDLE,
     pub(crate) capture_producer: Option<HeapProd<f32>>,
+    pub(crate) active_device: String,
 
     capture_notifier: Notifier,
 
@@ -39,17 +41,43 @@ impl Drop for CaptureStream {
     }
 }
 
+fn try_activate_device(
+    enumerator: &IMMDeviceEnumerator,
+    preffered_device: &Option<HSTRING>,
+) -> Option<(IMMDevice, IAudioClient)> {
+    let Some(device) = try_get_device(enumerator, preffered_device, eCapture) else {
+        return None;
+    };
+
+    unsafe {
+        let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
+
+        Some((device, audio_client))
+    }
+}
+
 impl CaptureStream {
     pub(crate) fn new(
         capture_producer: HeapProd<f32>,
         capture_notifier: Notifier,
+        preffered_device: Option<String>,
     ) -> windows::core::Result<Self> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 
-            let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
-            let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+            let preffered_device = preffered_device.map(|value| HSTRING::from(value));
+            let (device, audio_client) = match try_activate_device(&enumerator, &preffered_device) {
+                Some(value) => value,
+                None => {
+                    let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
+                    let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+
+                    (device, audio_client)
+                }
+            };
+
+            let device_id = device.GetId()?.to_string()?;
 
             let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
             let format = &mut *format_ptr;
@@ -78,12 +106,10 @@ impl CaptureStream {
             audio_client.SetEventHandle(event_handle)?;
 
             let capture_client: IAudioCaptureClient = audio_client.GetService()?;
-            audio_client
-                .Start()
-                .expect("Failed to start audio capturing");
 
             windows::core::Result::Ok(Self {
                 event_handle,
+                active_device: device_id,
                 capture_producer: Some(capture_producer),
                 audio_client,
                 capture_client,

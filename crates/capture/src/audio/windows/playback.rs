@@ -4,20 +4,23 @@ use windows::Win32::{
     Media::Audio::{
         AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient,
-        IAudioRenderClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX, eConsole,
-        eRender,
+        IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
+        eConsole, eRender,
     },
     System::{
         Com::{CLSCTX_ALL, CoCreateInstance},
         Threading::CreateEventW,
     },
 };
+use windows_core::HSTRING;
 
-use crate::audio::DEFAULT_RATE;
+use crate::audio::{DEFAULT_RATE, windows::try_get_device};
 
+// TODO: Implement Drop
 pub(crate) struct PlaybackStream {
     pub(crate) event_handle: HANDLE,
     pub(crate) playback_consumer: Option<HeapCons<f32>>,
+    pub(crate) active_device: String,
 
     audio_client: IAudioClient,
     render_client: IAudioRenderClient,
@@ -26,16 +29,42 @@ pub(crate) struct PlaybackStream {
     buffer_frame_count: u32,
 }
 
-// TODO: Implement Drop
+fn try_activate_device(
+    enumerator: &IMMDeviceEnumerator,
+    preffered_device: &Option<HSTRING>,
+) -> Option<(IMMDevice, IAudioClient)> {
+    let Some(device) = try_get_device(enumerator, preffered_device, eRender) else {
+        return None;
+    };
+
+    unsafe {
+        let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
+
+        Some((device, audio_client))
+    }
+}
 
 impl PlaybackStream {
-    pub(crate) fn new(playback_consumer: HeapCons<f32>) -> windows::core::Result<Self> {
+    pub(crate) fn new(
+        playback_consumer: HeapCons<f32>,
+        preffered_device: Option<String>,
+    ) -> windows::core::Result<Self> {
         unsafe {
             let enumerator: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 
-            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
-            let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+            let preffered_device = preffered_device.map(|value| HSTRING::from(value));
+            let (device, audio_client) = match try_activate_device(&enumerator, &preffered_device) {
+                Some(value) => value,
+                None => {
+                    let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+                    let audio_client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+
+                    (device, audio_client)
+                }
+            };
+
+            let device_id = device.GetId()?.to_string()?;
 
             let format_ptr: *mut WAVEFORMATEX = audio_client.GetMixFormat()?;
             let format = &mut *format_ptr;
@@ -72,6 +101,7 @@ impl PlaybackStream {
 
             Ok(Self {
                 event_handle,
+                active_device: device_id,
                 playback_consumer: Some(playback_consumer),
                 audio_client,
                 render_client,

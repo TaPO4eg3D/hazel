@@ -14,21 +14,21 @@ use windows::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
         Foundation::{HANDLE, WAIT_OBJECT_0},
         Media::Audio::{
-            DEVICE_STATE_ACTIVE, IMMDevice, IMMDeviceEnumerator, IMMEndpoint,
+            DEVICE_STATE_ACTIVE, EDataFlow, IMMDevice, IMMDeviceEnumerator, IMMEndpoint,
             IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator, eAll, eCapture,
             eConsole, eRender,
         },
         System::{
             Com::{
                 CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, STGM_READ,
-                StructuredStorage::{PropVariantToString, PropVariantToStringAlloc},
+                StructuredStorage::PropVariantToStringAlloc,
             },
             Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
         },
     },
     core::implement,
 };
-use windows_core::{Interface as _, PCWSTR};
+use windows_core::{HSTRING, Interface as _, PWSTR};
 
 use crate::audio::{
     AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
@@ -37,6 +37,31 @@ use crate::audio::{
 
 pub mod capture;
 pub mod playback;
+
+pub(crate) fn try_get_device(
+    enumerator: &IMMDeviceEnumerator,
+    preffered_device: &Option<HSTRING>,
+    expected_flow: EDataFlow,
+) -> Option<IMMDevice> {
+    let Some(preffered_device) = preffered_device else {
+        return None;
+    };
+
+    unsafe {
+        let device = enumerator
+            .GetDevice(PWSTR(preffered_device.as_ptr() as *mut _))
+            .ok()?;
+
+        let endpoint: IMMEndpoint = device.cast().ok()?;
+        let data_flow = endpoint.GetDataFlow().ok()?;
+
+        if data_flow != expected_flow {
+            return None;
+        }
+
+        Some(device)
+    }
+}
 
 #[implement(IMMNotificationClient)]
 struct DeviceNotifier {
@@ -97,20 +122,22 @@ impl DeviceNotifier {
 }
 
 impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
-    fn OnDeviceAdded(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+    fn OnDeviceAdded(&self, _pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
         Ok(())
     }
 
-    fn OnDeviceRemoved(&self, pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
+    fn OnDeviceRemoved(&self, _pwstrdeviceid: &windows_core::PCWSTR) -> windows_core::Result<()> {
         Ok(())
     }
 
     fn OnDefaultDeviceChanged(
         &self,
-        flow: windows::Win32::Media::Audio::EDataFlow,
-        role: windows::Win32::Media::Audio::ERole,
-        pwstrdefaultdeviceid: &windows_core::PCWSTR,
+        _flow: windows::Win32::Media::Audio::EDataFlow,
+        _role: windows::Win32::Media::Audio::ERole,
+        _pwstrdefaultdeviceid: &windows_core::PCWSTR,
     ) -> windows_core::Result<()> {
+        // NOTE: Should we change the device?
+
         Ok(())
     }
 
@@ -175,8 +202,8 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
 
     fn OnPropertyValueChanged(
         &self,
-        pwstrdeviceid: &windows_core::PCWSTR,
-        key: &windows::Win32::Foundation::PROPERTYKEY,
+        _pwstrdeviceid: &windows_core::PCWSTR,
+        _key: &windows::Win32::Foundation::PROPERTYKEY,
     ) -> windows_core::Result<()> {
         // User might rename the device or change sampling rate
         // Fuck it for now, that's a late game stuff
@@ -334,7 +361,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
                     .expect("Failed to create device enumerator");
 
-            let notifier = DeviceNotifier::new(&enumerator, device_registry)
+            let notifier = DeviceNotifier::new(&enumerator, device_registry.clone())
                 .expect("Failed to setup DeviceNotifier");
             let notification_client: IMMNotificationClient = notifier.into();
 
@@ -342,15 +369,23 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 .RegisterEndpointNotificationCallback(&notification_client)
                 .unwrap();
 
-            let mut capture_stream = CaptureStream::new(capture_producer, capture_notifier.clone())
-                .expect("Failed to init capture");
+            let mut preffered_capture_device: Option<String> = None;
+            let mut preffered_playback_device: Option<String> = None;
+
+            let mut capture_enabled = false;
+            let mut playback_enabled = true;
+
+            let mut capture_stream = CaptureStream::new(
+                capture_producer,
+                capture_notifier.clone(),
+                preffered_capture_device.clone(),
+            )
+            .expect("Failed to init capture");
             let mut playback_stream =
-                PlaybackStream::new(playback_consumer).expect("Failed to init playback");
+                PlaybackStream::new(playback_consumer, preffered_playback_device.clone())
+                    .expect("Failed to init playback");
 
             let command_event = command_event;
-
-            let mut preffered_capture_device: Option<AudioDevice> = None;
-            let mut preffered_playback_device: Option<AudioDevice> = None;
 
             loop {
                 let wait_result = WaitForMultipleObjects(
@@ -368,38 +403,65 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                     if capture_stream.process().is_err() {
                         let producer = capture_stream.capture_producer.take().unwrap();
 
-                        capture_stream = CaptureStream::new(producer, capture_notifier.clone())
-                            .expect("Failed to recreate the capture stream");
+                        capture_stream = CaptureStream::new(
+                            producer,
+                            capture_notifier.clone(),
+                            preffered_capture_device.clone(),
+                        )
+                        .expect("Failed to recreate the capture stream");
+
+                        _ = capture_stream.set_enabled(capture_enabled);
+                        device_registry.mark_active_input(&capture_stream.active_device);
                     }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     // Failure most likely means that device has changed
                     if playback_stream.process().is_err() {
                         let consumer = playback_stream.playback_consumer.take().unwrap();
 
-                        playback_stream = PlaybackStream::new(consumer)
-                            .expect("Failed to recreate the playback stream");
+                        playback_stream =
+                            PlaybackStream::new(consumer, preffered_playback_device.clone())
+                                .expect("Failed to recreate the playback stream");
+
+                        _ = playback_stream.set_enabled(playback_enabled);
+                        device_registry.mark_active_output(&playback_stream.active_device);
                     }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 2 {
                     if let Some(event) = command_state.take() {
                         match event {
                             AudioLoopCommand::SetActiveInputDevice(device) => {
                                 let producer = capture_stream.capture_producer.take().unwrap();
+                                preffered_capture_device = Some(device.id.clone());
 
-                                capture_stream =
-                                    CaptureStream::new(producer, capture_notifier.clone())
-                                        .expect("Failed to recreate the capture stream");
+                                capture_stream = CaptureStream::new(
+                                    producer,
+                                    capture_notifier.clone(),
+                                    preffered_capture_device.clone(),
+                                )
+                                .expect("Failed to recreate the capture stream");
+
+                                _ = capture_stream.set_enabled(capture_enabled);
+                                device_registry.mark_active_input(&capture_stream.active_device);
                             }
                             AudioLoopCommand::SetActiveOutputDevice(device) => {
                                 let consumer = playback_stream.playback_consumer.take().unwrap();
+                                preffered_playback_device = Some(device.id.clone());
 
-                                playback_stream = PlaybackStream::new(consumer)
-                                    .expect("Failed to recreate the playback stream");
+                                playback_stream = PlaybackStream::new(
+                                    consumer,
+                                    preffered_playback_device.clone(),
+                                )
+                                .expect("Failed to recreate the playback stream");
+
+                                _ = playback_stream.set_enabled(playback_enabled);
+                                device_registry.mark_active_output(&playback_stream.active_device);
                             }
                             AudioLoopCommand::SetEnabledCapture(value) => {
-                                _ = capture_stream.set_enabled(value);
+                                capture_enabled = value;
+                                _ = capture_stream.set_enabled(capture_enabled);
                             }
                             AudioLoopCommand::SetEnabledPlayback(value) => {
-                                _ = playback_stream.set_enabled(value);
+                                playback_enabled = value;
+                                _ = playback_stream.set_enabled(playback_enabled);
                             }
                         }
                     }
