@@ -32,7 +32,7 @@ pub const DEFAULT_CHANNELS: u32 = 2;
 pub const DEFAULT_BIT_RATE: usize = 128000;
 
 /// Small utilities that make working with VecDeque buffers more enjoyable
-trait VecDequeExt<T> {
+pub(crate) trait VecDequeExt<T> {
     /// Fill the passed buffer with content from the VecDeque.
     /// If `partial` is set to:
     ///     - true: the function tries to fill as much as possible
@@ -540,7 +540,7 @@ pub struct Playback {
 }
 
 impl Playback {
-    fn new(mut platform_playback: PlatformPlayback) -> Self {
+    fn new(platform_playback: PlatformPlayback) -> Self {
         let (tx, rx) = channel::bounded::<Vec<f32>>(24);
 
         let volume = Arc::new(AtomicU8::new(140));
@@ -552,27 +552,23 @@ impl Playback {
                 let is_enabled = is_enabled.clone();
 
                 move || {
-                    let mut buf = vec![];
-
                     loop {
                         if !is_enabled.load(Ordering::Relaxed) {
                             continue;
                         }
 
-                        while let Ok(packet) = rx.try_recv() {
-                            for (i, value) in packet.into_iter().enumerate() {
-                                if i < buf.len() {
-                                    buf[i] += value;
+                        while let Ok(packet) = rx.recv() {
+                            let mut queue = platform_playback.queue.lock()
+                                .unwrap();
+
+                            for (i, sample) in packet.into_iter().enumerate() {
+                                if i < queue.len() {
+                                    queue[i] = sample;
                                 } else {
-                                    buf.push(value);
+                                    queue.push_back(sample);
                                 }
                             }
                         }
-
-                        platform_playback.push(&buf);
-                        buf.clear();
-
-                        thread::sleep(Duration::from_millis(20));
                     }
                 }
             })
