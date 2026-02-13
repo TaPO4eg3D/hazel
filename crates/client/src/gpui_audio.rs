@@ -191,6 +191,7 @@ fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<R
             let mut state = state.lock().unwrap();
             state.cleanup();
 
+            let volume_modifier = state.volume_modifier;
             let Some(member) = state.get_voiced_member_mut(packet.user_id) else {
                 continue;
             };
@@ -202,12 +203,8 @@ fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<R
                     }
                     member.streaming_state.push(packet);
 
-                    let volume_modifier = state.volume_modifier;
-                    playback.process_streaming(
-                        state
-                            .voice_members
-                            .iter_mut()
-                            .map(|member| &mut member.streaming_state),
+                    playback.process_client(
+                        &mut member.streaming_state,
                         |mut samples| {
                             samples
                                 .iter_mut()
