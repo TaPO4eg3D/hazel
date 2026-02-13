@@ -52,7 +52,7 @@ impl PlaybackStream {
             let mut playback_queue = this.playback_queue.lock().unwrap();
 
             // TODO: It should not be here (and not like that), move
-            if this.last.elapsed() > Duration::from_millis(210) {
+            if this.last.elapsed() > Duration::from_millis(200) {
                 while playback_queue.pop_slice(output_samples, true) > 0 {}
 
                 *chunk.offset_mut() = 0;
@@ -90,7 +90,7 @@ impl PlaybackStream {
                 *pw::keys::MEDIA_ROLE => "Communication",
                 *pw::keys::MEDIA_CATEGORY => "Playback",
                 *pw::keys::AUDIO_CHANNELS => "2",
-                *pw::keys::NODE_LATENCY => "16/48000",
+                *pw::keys::NODE_LATENCY => "256/48000",
             },
         )?;
 

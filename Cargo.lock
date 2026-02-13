@@ -1024,6 +1024,7 @@ dependencies = [
  "pipewire",
  "ringbuf",
  "streaming_common",
+ "thread-priority",
  "windows 0.62.2",
  "windows-core 0.62.2",
 ]
@@ -7223,6 +7224,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "thread-priority"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2210811179577da3d54eb69ab0b50490ee40491a25d95b8c6011ba40771cb721"
+dependencies = [
+ "bitflags 2.10.0",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows 0.61.3",
 ]
 
 [[package]]
