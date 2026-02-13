@@ -1,3 +1,6 @@
+// Disable command line from opening on release mode
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::rc::Rc;
 
 use clap::Parser;
@@ -7,20 +10,26 @@ use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
 use anyhow::Result as AResult;
 use rpc::{
     client::Connection,
-    models::{auth::{Login, LoginPayload, SessionKey}, common::RPCMethod, markers::{Id, UserId}},
+    models::{
+        auth::{Login, LoginPayload, SessionKey},
+        common::RPCMethod,
+        markers::{Id, UserId},
+    },
 };
 
 pub mod assets;
+pub mod components;
 pub mod db;
 pub mod screens;
-pub mod components;
 
-pub mod gpui_tokio;
 pub mod gpui_audio;
+pub mod gpui_tokio;
 
 use screens::login::LoginScreen;
 
-use crate::{assets::Assets, db::DBConnectionManager, gpui_tokio::Tokio, screens::workspace::WorkspaceScreen};
+use crate::{
+    assets::Assets, db::DBConnectionManager, gpui_tokio::Tokio, screens::workspace::WorkspaceScreen,
+};
 
 enum Screen {
     Login,
@@ -54,19 +63,19 @@ pub struct ConnectionManger {
 
 impl ConnectionManger {
     fn new() -> Self {
-        Self { conn: None, user_id: None, server_ip: None }
+        Self {
+            conn: None,
+            user_id: None,
+            server_ip: None,
+        }
     }
 
     pub fn get_user_id<C: AppContext>(cx: &C) -> Option<UserId> {
-        cx.read_global(|g: &Self, _| {
-            g.user_id
-        })
+        cx.read_global(|g: &Self, _| g.user_id)
     }
 
     pub fn get_server_ip(cx: &mut AsyncApp) -> Option<String> {
-        cx.read_global(|g: &Self, _| {
-            g.server_ip.clone()
-        })
+        cx.read_global(|g: &Self, _| g.server_ip.clone())
     }
 
     pub fn set_user_id(cx: &mut AsyncApp, id: UserId) {
@@ -95,9 +104,8 @@ impl ConnectionManger {
             return Ok(());
         }
 
-        let connection = Tokio::spawn(cx, {
-            Connection::new(format!("{server_ip}:9898"))
-        }).await??;
+        let connection =
+            Tokio::spawn(cx, { Connection::new(format!("{server_ip}:9898")) }).await??;
 
         cx.update_global(move |g: &mut Self, _| {
             g.server_ip = Some(server_ip);
@@ -126,8 +134,7 @@ impl Render for MainWindow {
 }
 
 pub fn init_theme(cx: &mut App) {
-    Assets::load_fonts(cx)
-        .expect("Font load should not fail");
+    Assets::load_fonts(cx).expect("Font load should not fail");
 
     let config = ThemeRegistry::global(cx)
         .themes()
@@ -169,11 +176,11 @@ fn main() {
             db::init(cx, profile).await.unwrap();
 
             let db = DBConnectionManager::get(cx);
-            let registry =
-                Tokio::spawn(
-                    cx,
-                    async move { DBConnectionManager::get_registry(&db).await },
-                ).await?;
+            let registry = Tokio::spawn(
+                cx,
+                async move { DBConnectionManager::get_registry(&db).await },
+            )
+            .await?;
 
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let login_screen = cx.new(|cx| {
@@ -185,11 +192,7 @@ fn main() {
                     )
                 });
 
-                let workspace_screen = cx.new(|cx| WorkspaceScreen::new(
-                    window,
-                    cx
-                ));
-
+                let workspace_screen = cx.new(|cx| WorkspaceScreen::new(window, cx));
 
                 let view = cx.new(|cx| {
                     cx.subscribe(&login_screen, |this: &mut MainWindow, _, _: &(), cx| {
@@ -207,27 +210,38 @@ fn main() {
 
                 let (tx, rx) = smol::channel::bounded::<String>(1);
 
-                window.spawn(cx, async move |window| {
-                    let message = rx.recv().await?;
+                window
+                    .spawn(cx, async move |window| {
+                        let message = rx.recv().await?;
 
-                    window.update(|window, cx| {
-                        window.push_notification(message, cx);
-                    }).ok();
+                        window
+                            .update(|window, cx| {
+                                window.push_notification(message, cx);
+                            })
+                            .ok();
 
-                    Ok::<_, anyhow::Error>(())
-                }).detach();
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .detach();
 
                 cx.spawn({
                     let view = view.clone();
 
                     async move |cx| {
-                        if let (Some(session_key), Some(server_ip)) = (registry.session_key, registry.connected_server) {
-                            if ConnectionManger::connect(cx, server_ip.clone()).await.is_err() {
+                        if let (Some(session_key), Some(server_ip)) =
+                            (registry.session_key, registry.connected_server)
+                        {
+                            if ConnectionManger::connect(cx, server_ip.clone())
+                                .await
+                                .is_err()
+                            {
                                 // TODO: That's not how it works unfortunately, change it.
                                 // ConnectionManger would try to connect infinitely and will never
                                 // time out
-                                tx.send(format!("failed to connect to: {server_ip}")).await.ok();
-                                
+                                tx.send(format!("failed to connect to: {server_ip}"))
+                                    .await
+                                    .ok();
+
                                 return;
                             }
 
@@ -235,11 +249,18 @@ fn main() {
 
                             match rmp_serde::from_slice::<SessionKey>(&session_key) {
                                 Ok(session_key) => {
-                                    let result = Login::execute(&connection, &LoginPayload {
-                                        session_key: session_key.clone(),
-                                    }).await;
+                                    let result = Login::execute(
+                                        &connection,
+                                        &LoginPayload {
+                                            session_key: session_key.clone(),
+                                        },
+                                    )
+                                    .await;
 
-                                    ConnectionManger::set_user_id(cx, Id::new(session_key.body.user_id));
+                                    ConnectionManger::set_user_id(
+                                        cx,
+                                        Id::new(session_key.body.user_id),
+                                    );
 
                                     if result.is_ok() {
                                         view.update(cx, |this, cx| {
@@ -250,8 +271,7 @@ fn main() {
                                             this.is_connecting = false;
                                         });
 
-                                        tx.send("Stale session, please log in".into())
-                                            .await.ok();
+                                        tx.send("Stale session, please log in".into()).await.ok();
                                     }
                                 }
                                 Err(_) => {
@@ -260,12 +280,14 @@ fn main() {
                                     });
 
                                     tx.send("Corrupted data, please log in again".into())
-                                        .await.ok();
+                                        .await
+                                        .ok();
                                 }
                             };
                         }
                     }
-                }).detach();
+                })
+                .detach();
 
                 // For notifications and stuff, this should be the first
                 // element of the window (aka root)
