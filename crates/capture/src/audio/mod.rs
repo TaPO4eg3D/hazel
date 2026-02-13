@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
     task::{Poll, Waker},
-    thread::{self, Thread},
+    thread::{self, Thread}, time::{Duration, Instant},
 };
 
 use ffmpeg_next::{Packet, codec};
@@ -552,14 +552,27 @@ impl Playback {
                 let is_enabled = is_enabled.clone();
 
                 move || {
-                    loop {
-                        if let Ok(packet) = rx.recv() {
-                            if !is_enabled.load(Ordering::Relaxed) {
-                                continue;
-                            }
+                    let mut buf = vec![];
 
-                            platform_playback.push(&packet);
+                    loop {
+                        if !is_enabled.load(Ordering::Relaxed) {
+                            continue;
                         }
+
+                        while let Ok(packet) = rx.try_recv() {
+                            for (i, value) in packet.into_iter().enumerate() {
+                                if i < buf.len() {
+                                    buf[i] += value;
+                                } else {
+                                    buf.push(value);
+                                }
+                            }
+                        }
+
+                        platform_playback.push(&buf);
+                        buf.clear();
+
+                        thread::sleep(Duration::from_millis(20));
                     }
                 }
             })
@@ -589,7 +602,13 @@ impl Playback {
         _ = self.tx.send(samples);
     }
 
-    fn process_client(buf: &mut Vec<f32>, client: &mut StreamingClientState) {
+    pub fn process_client(
+        &self,
+        client: &mut StreamingClientState,
+        post_process: impl Fn(Vec<f32>) -> Vec<f32>,
+    ) {
+        let mut buf: Vec<f32> = vec![];
+
         // 3 packets is about 60 ms
         if client.packets.len() < 3 {
             return;
@@ -599,16 +618,12 @@ impl Playback {
         let packet = client.packets.pop().unwrap().0;
         client.decoder.decode(packet.to_packet());
 
-        // Mixing if we already have data
-        let len = buf.len().min(client.decoder.decoded_samples.len());
-        (0..len).for_each(|idx| {
-            // Safe due how we derived len
-            buf[idx] = client.decoder.decoded_samples.pop_front().unwrap();
-        });
-
-        // Pushing the rest
         while let Some(value) = client.decoder.decoded_samples.pop_front() {
             buf.push(value);
+        }
+
+        if !buf.is_empty() {
+            self.send_samples(post_process(buf));
         }
     }
 
@@ -616,21 +631,21 @@ impl Playback {
         todo!()
     }
 
-    pub fn process_streaming<'a>(
-        &self,
-        clients: impl Iterator<Item = &'a mut StreamingClientState>,
-        post_process: impl Fn(Vec<f32>) -> Vec<f32>,
-    ) {
-        let mut buf: Vec<f32> = vec![];
-
-        for client in clients {
-            Self::process_client(&mut buf, client);
-        }
-
-        if !buf.is_empty() {
-            self.send_samples(post_process(buf));
-        }
-    }
+    // pub fn process_streaming<'a>(
+    //     &self,
+    //     clients: impl Iterator<Item = &'a mut StreamingClientState>,
+    //     post_process: impl Fn(Vec<f32>) -> Vec<f32>,
+    // ) {
+    //     let mut buf: Vec<f32> = vec![];
+    //
+    //     for client in clients {
+    //         Self::process_client(&mut buf, client);
+    //     }
+    //
+    //     if !buf.is_empty() {
+    //         self.send_samples(post_process(buf));
+    //     }
+    // }
 }
 
 #[cfg(target_os = "linux")]
