@@ -137,13 +137,13 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
                                 match class {
                                     "Audio/Sink" => {
-                                        if device_registry.device_exists(obj.id) {
+                                        if device_registry.device_exists(name) {
                                             return;
                                         }
 
                                         device_registry.add_output(AudioDevice {
-                                            id: obj.id,
-                                            name: name.into(),
+                                            id: name.into(),
+                                            node_id: obj.id,
                                             display_name: display_name.into(),
                                             // On this stage we don't know if a device is
                                             // linked to our app
@@ -151,13 +151,13 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                         });
                                     }
                                     "Audio/Source" => {
-                                        if device_registry.device_exists(obj.id) {
+                                        if device_registry.device_exists(name) {
                                             return;
                                         }
 
                                         device_registry.add_input(AudioDevice {
-                                            id: obj.id,
-                                            name: name.into(),
+                                            id: name.into(),
+                                            node_id: obj.id,
                                             display_name: display_name.to_string(),
                                             // On this stage we don't know if a device is
                                             // linked to our app
@@ -198,20 +198,24 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                                 let input_node: u32 = input_node.parse().unwrap();
                                 let output_node: u32 = output_node.parse().unwrap();
 
-                                if input_node == capture_stream.node_id() {
-                                    device_registry.mark_active_input(output_node);
-                                }
+                                if input_node == capture_stream.node_id()
+                                    && let Some(id) = device_registry.find_by_node_id(output_node) {
+                                        device_registry.mark_active_input(&id);
+                                    }
 
-                                if output_node == playback_stream.node_id() {
-                                    device_registry.mark_active_output(input_node);
-                                }
+                                if output_node == playback_stream.node_id()
+                                    && let Some(id) = device_registry.find_by_node_id(input_node) {
+                                        device_registry.mark_active_output(&id);
+                                    }
                             }
                             _ => {}
                         }
                     }
                 })
                 .global_remove(move |id| {
-                    device_registry.remove_device(id);
+                    if let Some(id) = device_registry.find_by_node_id(id) {
+                        device_registry.remove_device(&id);
+                    }
                 })
                 .register();
 
@@ -232,7 +236,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                             capture_stream.node_id(),
                             "target.object",
                             None,
-                            Some(&device.name),
+                            Some(&device.id),
                         );
                     }
                 }
@@ -244,7 +248,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
                             playback_stream.node_id(),
                             "target.object",
                             None,
-                            Some(&device.name),
+                            Some(&device.id),
                         );
                     }
                 }

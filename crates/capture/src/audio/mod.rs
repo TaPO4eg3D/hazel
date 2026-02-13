@@ -241,6 +241,15 @@ impl DeviceRegistry {
         registry.notify();
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn find_by_node_id(&self, id: u32) -> Option<String> {
+        let registry = self.inner.read().unwrap();
+
+        registry.input.iter().find(|item| item.node_id == id)
+            .or(registry.output.iter().find(|item| item.node_id == id))
+            .map(|item| item.id.clone())
+    }
+
     pub(crate) fn mark_active_input(&self, id: &str) {
         let mut registry = self.inner.write().unwrap();
 
@@ -320,6 +329,9 @@ impl DeviceRegistryInner {
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
     pub id: String,
+    #[cfg(target_os = "linux")]
+    pub node_id: u32,
+
     pub display_name: String,
 
     pub is_active: bool,
