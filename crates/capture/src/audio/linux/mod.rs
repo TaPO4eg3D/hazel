@@ -8,8 +8,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
-    linux::{capture::CaptureStream, playback::PlaybackStream},
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, PlaybackSchedulerSender, create_playback_scheduler, linux::{capture::CaptureStream, playback::PlaybackStream}
 };
 
 use thread_priority::*;
@@ -44,7 +43,7 @@ impl LinuxCapture {
 }
 
 pub struct LinuxPlayback {
-    pub(crate) queue: Arc<Mutex<VecDeque<f32>>>,
+    pub(crate) scheduler: PlaybackSchedulerSender,
 
     #[allow(dead_code)]
     pw_sender: pw::channel::Sender<AudioLoopCommand>,
@@ -54,7 +53,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
     let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
-    let playback_queue = Arc::new(Mutex::new(VecDeque::new()));
+    let (scheduler_send, scheduler_recv) = create_playback_scheduler();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
@@ -69,7 +68,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
     let playback = LinuxPlayback {
         pw_sender: pw_sender.clone(),
-        queue: playback_queue.clone(),
+        scheduler: scheduler_send,
     };
 
     let _device_registry = DeviceRegistry::new(pw_sender);
@@ -89,7 +88,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
             let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
             let capture_stream = capture.stream.clone();
 
-            let playback = PlaybackStream::new(core.clone(), playback_queue)?;
+            let playback = PlaybackStream::new(core.clone(), scheduler_recv)?;
             let playback_stream = playback.stream.clone();
 
             let routing_meta: Rc<RefCell<Option<pw::metadata::Metadata>>> = Default::default();

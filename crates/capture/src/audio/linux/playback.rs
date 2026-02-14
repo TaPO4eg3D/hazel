@@ -13,12 +13,12 @@ use ringbuf::{
     traits::{Consumer},
 };
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, PlaybackSchedulerRecv, VecDequeExt as _};
 
 struct PlaybackStreamData {
     last: Instant,
 
-    playback_queue: Arc<Mutex<VecDeque<f32>>>,
+    scheduler: PlaybackSchedulerRecv,
 }
 
 pub(crate) struct PlaybackStream {
@@ -56,17 +56,7 @@ impl PlaybackStream {
             };
 
             let chunk = data.chunk_mut();
-            let mut playback_queue = this.playback_queue.lock().unwrap();
-
-            // TODO: It should not be here (and not like that), move
-            if this.last.elapsed() > Duration::from_millis(200) {
-                while playback_queue.pop_slice(output_samples, true) > 0 {}
-            }
-            this.last = Instant::now();
-
-            let written_samples = playback_queue.pop_slice(output_samples, true);
-            (written_samples..output_samples.len())
-                .for_each(|i| output_samples[i] = 0.);
+            this.scheduler.pop_slice(output_samples);
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
@@ -74,7 +64,7 @@ impl PlaybackStream {
         }
     }
 
-    pub(crate) fn new(core: CoreRc, playback_queue: Arc<Mutex<VecDeque<f32>>>) -> AResult<Self> {
+    pub(crate) fn new(core: CoreRc, scheduler: PlaybackSchedulerRecv) -> AResult<Self> {
         let playback_stream = StreamRc::new(
             core,
             Self::STREAM_NAME,
@@ -100,7 +90,7 @@ impl PlaybackStream {
 
         let user_data = PlaybackStreamData {
             last: Instant::now(),
-            playback_queue,
+            scheduler,
         };
 
         let listener = playback_stream
