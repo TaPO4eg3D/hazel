@@ -1,16 +1,21 @@
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, VecDeque},
+    collections::{BinaryHeap, HashMap, VecDeque, hash_map::Entry},
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
     task::{Poll, Waker},
-    thread::{self, Thread}, time::{Duration, Instant},
+    thread::{self, Thread},
+    time::{Duration, Instant},
 };
 
-use ffmpeg_next::{Packet, codec};
-use streaming_common::FFMpegPacketPayload;
+use ffmpeg_next::{Packet, codec, device::output};
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Producer, Split as _},
+};
+use streaming_common::{DATA_BUFF_SIZE, FFMpegPacketPayload};
 
 use crossbeam::channel;
 
@@ -67,6 +72,134 @@ impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
     }
 }
 
+const CHUNK_SIZE: usize = ((DEFAULT_RATE as usize / 1000) * 20) * DEFAULT_CHANNELS as usize;
+
+pub struct PlaybackChunk {
+    pub buffer: heapless::Deque<f32, CHUNK_SIZE>,
+}
+
+impl PlaybackChunk {
+    pub(crate) fn new() -> Self {
+        Self {
+            buffer: heapless::Deque::new(),
+        }
+    }
+}
+
+struct StreamingQueueItem {
+    last_update: Instant,
+    queue: heapless::Deque<PlaybackChunk, 12>,
+}
+
+impl StreamingQueueItem {
+    fn new() -> Self {
+        Self {
+            last_update: Instant::now(),
+            queue: heapless::Deque::new(),
+        }
+    }
+
+    fn pop_slice_with(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
+        let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
+
+        if samples_len < output.len() {
+            return false;
+        }
+
+        for out in output.iter_mut() {
+            let sample = match self.queue.get_mut(0).unwrap().buffer.pop_front() {
+                Some(sample) => sample,
+                None => {
+                    _ = self.queue.pop_front();
+
+                    self.queue
+                        .get_mut(0)
+                        .unwrap()
+                        .buffer
+                        .pop_front()
+                        .expect("We checked total amount of samples")
+                }
+            };
+
+            *out = f(*out, sample)
+        }
+
+        true
+    }
+}
+
+/// Receiving end of a PlaybackScheduler
+pub(crate) struct PlaybackSchedulerRecv {
+    streaming_buffer: HeapCons<(i32, PlaybackChunk)>,
+    // TODO: Make this buffer heapless as well
+    streaming_queue: HashMap<i32, StreamingQueueItem>,
+}
+
+impl PlaybackSchedulerRecv {
+    fn new(buffer: HeapCons<(i32, PlaybackChunk)>) -> Self {
+        Self {
+            streaming_buffer: buffer,
+            streaming_queue: HashMap::new(),
+        }
+    }
+}
+
+impl PlaybackSchedulerRecv {
+    pub(crate) fn pop_slice(&mut self, output: &mut [f32]) {
+        // Process pending items
+        while let Some((user_id, chunk)) = self.streaming_buffer.try_pop() {
+            match self.streaming_queue.entry(user_id) {
+                Entry::Occupied(mut entry) => {
+                    let item = entry.get_mut();
+
+                    item.last_update = Instant::now();
+                    _ = item.queue.push_back(chunk);
+                }
+                Entry::Vacant(entry) => {
+                    let item = entry.insert(StreamingQueueItem::new());
+
+                    _ = item.queue.push_back(chunk);
+                }
+            };
+        }
+
+        output.iter_mut().for_each(|s| *s = 0.);
+
+        for queue in self.streaming_queue.values_mut() {
+            queue.pop_slice_with(output, |old, new| old + new);
+        }
+    }
+}
+
+/// Schedules audio for a playback
+pub(crate) struct PlaybackSchedulerSender {
+    streaming_buffer: HeapProd<(i32, PlaybackChunk)>,
+}
+
+impl PlaybackSchedulerSender {
+    fn new(buffer: HeapProd<(i32, PlaybackChunk)>) -> Self {
+        Self {
+            streaming_buffer: buffer,
+        }
+    }
+}
+
+impl PlaybackSchedulerSender {
+    pub(crate) fn push_streaming(&mut self, user_id: i32, chunk: PlaybackChunk) {
+        _ = self.streaming_buffer.try_push((user_id, chunk));
+    }
+}
+
+pub(crate) fn create_playback_scheduler() -> (PlaybackSchedulerSender, PlaybackSchedulerRecv) {
+    let ring = HeapRb::<(i32, PlaybackChunk)>::new(50);
+    let (streaming_prod, streaming_cons) = ring.split();
+
+    let sender = PlaybackSchedulerSender::new(streaming_prod);
+    let recv = PlaybackSchedulerRecv::new(streaming_cons);
+
+    (sender, recv)
+}
+
 /// Wakes up a sleeping thread when data
 /// is available for consumption
 #[derive(Clone, Default)]
@@ -109,16 +242,19 @@ trait StreamingCompatInto {
 
 impl StreamingCompatFrom for FFMpegPacketPayload {
     fn to_packet(&self) -> Packet {
-        let mut packet = Packet::new(self.data.len());
+        let data = &self.data[..self.items as usize];
+
+        // TODO: It results in allocation, improve?
+        let mut packet = Packet::new(data.len());
 
         packet.set_pts(Some(self.pts));
 
         packet.set_flags(codec::packet::Flags::from_bits_truncate(self.flags));
-        let data = packet
+        let packet_data = packet
             .data_mut()
             .expect("Should be present because Packet::new");
 
-        data.copy_from_slice(&self.data);
+        packet_data.copy_from_slice(data);
 
         packet
     }
@@ -126,11 +262,19 @@ impl StreamingCompatFrom for FFMpegPacketPayload {
 
 impl StreamingCompatInto for Packet {
     fn to_payload(&self) -> FFMpegPacketPayload {
+        let mut buffer = [0; DATA_BUFF_SIZE];
+        let packet_data = self.data().unwrap_or_default();
+
+        for (i, value) in packet_data.iter().enumerate() {
+            buffer[i] = *value;
+        }
+
         FFMpegPacketPayload {
             pts: self.pts().unwrap(),
 
             flags: self.flags().bits(),
-            data: self.data().unwrap_or_default().to_vec(),
+            items: packet_data.len() as u32,
+            data: buffer,
         }
     }
 }
@@ -245,7 +389,10 @@ impl DeviceRegistry {
     pub(crate) fn find_by_node_id(&self, id: u32) -> Option<String> {
         let registry = self.inner.read().unwrap();
 
-        registry.input.iter().find(|item| item.node_id == id)
+        registry
+            .input
+            .iter()
+            .find(|item| item.node_id == id)
             .or(registry.output.iter().find(|item| item.node_id == id))
             .map(|item| item.id.clone())
     }
@@ -351,6 +498,7 @@ pub struct StreamingClientState {
     pub user_id: i32,
     decoder: AudioDecoder,
 
+    /// We buffer packets to decode them in correct order
     packets: BinaryHeap<Reverse<FFMpegPacketPayload>>,
 }
 
@@ -536,17 +684,15 @@ impl Capture {
 /// Playback handle, can be safely shared between threads
 #[derive(Clone)]
 pub struct Playback {
-    volume: Arc<AtomicU8>,
     is_enabled: Arc<AtomicBool>,
 
-    tx: channel::Sender<Vec<f32>>,
+    tx: channel::Sender<(i32, PlaybackChunk)>,
 }
 
 impl Playback {
-    fn new(platform_playback: PlatformPlayback) -> Self {
-        let (tx, rx) = channel::bounded::<Vec<f32>>(24);
+    fn new(mut platform_playback: PlatformPlayback) -> Self {
+        let (tx, rx) = channel::bounded::<(i32, PlaybackChunk)>(24);
 
-        let volume = Arc::new(AtomicU8::new(140));
         let is_enabled = Arc::new(AtomicBool::new(true));
 
         thread::Builder::new()
@@ -556,57 +702,31 @@ impl Playback {
 
                 move || {
                     loop {
-                        while let Ok(packet) = rx.recv() {
+                        while let Ok((user_id, chunk)) = rx.recv() {
                             if !is_enabled.load(Ordering::Relaxed) {
                                 continue;
                             }
 
-                            let mut queue = platform_playback.queue.lock()
-                                .unwrap();
-
-                            for (i, sample) in packet.into_iter().enumerate() {
-                                if i < queue.len() {
-                                    queue[i] = sample;
-                                } else {
-                                    queue.push_back(sample);
-                                }
-                            }
+                            platform_playback.scheduler.push_streaming(user_id, chunk);
                         }
                     }
                 }
             })
             .unwrap();
 
-        Self {
-            tx,
-            is_enabled,
-            volume,
-        }
+        Self { tx, is_enabled }
     }
 
     pub fn set_enabled(&self, value: bool) {
         self.is_enabled.store(value, Ordering::Relaxed);
     }
 
-    pub fn set_volume(&self, value: u8) {
-        self.volume.store(value, Ordering::Relaxed);
-    }
-
-    pub fn send_samples(&self, mut samples: Vec<f32>) {
-        let volume = self.volume.load(Ordering::Relaxed);
-        let volume: f32 = volume as f32 / 100.;
-
-        samples.iter_mut().for_each(|value| *value *= volume);
-
-        _ = self.tx.send(samples);
-    }
-
     pub fn process_client(
         &self,
         client: &mut StreamingClientState,
-        post_process: impl Fn(Vec<f32>) -> Vec<f32>,
+        post_process: impl Fn(&mut PlaybackChunk),
     ) {
-        let mut buf: Vec<f32> = vec![];
+        let mut chunk = PlaybackChunk::new();
 
         // 3 packets is about 60 ms
         if client.packets.len() < 3 {
@@ -618,11 +738,16 @@ impl Playback {
         client.decoder.decode(packet.to_packet());
 
         while let Some(value) = client.decoder.decoded_samples.pop_front() {
-            buf.push(value);
+            chunk
+                .buffer
+                .push_back(value)
+                .expect("Decoder output is fixed, it should never fail")
         }
 
-        if !buf.is_empty() {
-            self.send_samples(post_process(buf));
+        if !chunk.buffer.is_empty() {
+            post_process(&mut chunk);
+
+            _ = self.tx.send((client.user_id, chunk));
         }
     }
 

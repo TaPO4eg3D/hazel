@@ -122,6 +122,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
                 *last_silence.borrow_mut() = None;
             }
 
+            // println!("INPUT: {:?}", samples);
             Some(samples)
         });
 
@@ -205,12 +206,10 @@ fn spawn_receiver(socket: Arc<UdpSocket>, playback: Playback, state: Arc<Mutex<R
 
                     playback.process_client(
                         &mut member.streaming_state,
-                        |mut samples| {
-                            samples
+                        |chunk| {
+                            chunk.buffer
                                 .iter_mut()
                                 .for_each(|v| *v *= volume_modifier);
-
-                            samples
                         },
                     );
                 }
