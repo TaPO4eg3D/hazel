@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, sync::{Arc, Mutex}, time::{Duration, Instant}};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use anyhow::Result as AResult;
 use pipewire::{
@@ -8,12 +12,9 @@ use pipewire::{
     spa::{self, pod::Pod},
     stream::{Stream, StreamListener, StreamRc},
 };
-use ringbuf::{
-    HeapCons,
-    traits::{Consumer},
-};
+use ringbuf::{traits::Consumer, HeapCons};
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, PlaybackSchedulerRecv, VecDequeExt as _};
+use crate::audio::{PlaybackSchedulerRecv, VecDequeExt as _, DEFAULT_CHANNELS, DEFAULT_RATE};
 
 struct PlaybackStreamData {
     last: Instant,
@@ -45,14 +46,13 @@ impl PlaybackStream {
 
         let stride = std::mem::size_of::<f32>() * DEFAULT_CHANNELS as usize;
         if let Some(slice) = data.data() {
-            let n_samples = slice.len() / stride;
-            let n_samples = n_samples.min(requested);
+            let n_frames = slice.len() / stride;
+            let n_frames = n_frames.min(requested);
+
+            let n_samples = n_frames * DEFAULT_CHANNELS as usize;
 
             let output_samples = unsafe {
-                std::slice::from_raw_parts_mut(
-                    slice.as_mut_ptr() as *mut f32,
-                    n_samples
-                )
+                std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, n_samples)
             };
 
             let chunk = data.chunk_mut();
@@ -60,7 +60,7 @@ impl PlaybackStream {
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
-            *chunk.size_mut() = (output_samples.len() * stride) as u32;
+            *chunk.size_mut() = (n_samples * std::mem::size_of::<f32>()) as u32;
         }
     }
 
