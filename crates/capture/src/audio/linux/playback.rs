@@ -35,49 +35,42 @@ impl PlaybackStream {
             return;
         };
 
+        let requested = buffer.requested() as usize;
         let datas = buffer.datas_mut();
+
         if datas.is_empty() {
             return;
         }
         let data = &mut datas[0];
 
         let stride = std::mem::size_of::<f32>() * DEFAULT_CHANNELS as usize;
-
         if let Some(slice) = data.data() {
-            let output_samples = unsafe {
-                std::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut f32, slice.len() / 4)
-            };
-            let chunk = data.chunk_mut();
+            let n_samples = slice.len() / stride;
+            let n_samples = n_samples.min(requested);
 
+            let output_samples = unsafe {
+                std::slice::from_raw_parts_mut(
+                    slice.as_mut_ptr() as *mut f32,
+                    n_samples
+                )
+            };
+
+            let chunk = data.chunk_mut();
             let mut playback_queue = this.playback_queue.lock().unwrap();
 
             // TODO: It should not be here (and not like that), move
             if this.last.elapsed() > Duration::from_millis(200) {
                 while playback_queue.pop_slice(output_samples, true) > 0 {}
-
-                *chunk.offset_mut() = 0;
-                *chunk.stride_mut() = stride as i32;
-                *chunk.size_mut() = 4;
-
-                this.last = Instant::now();
-
-                return;
             }
             this.last = Instant::now();
 
-            let written_frames = playback_queue.pop_slice(output_samples, true);
+            let written_samples = playback_queue.pop_slice(output_samples, true);
+            (written_samples..output_samples.len())
+                .for_each(|i| output_samples[i] = 0.);
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
-            *chunk.size_mut() = (output_samples.len() * 4) as u32;
-
-            if written_frames > 0 {
-                *chunk.size_mut() = (written_frames * 4) as u32;
-            } else {
-                output_samples[0] = 0.0;
-                *chunk.size_mut() = 4;
-            }
-
+            *chunk.size_mut() = (output_samples.len() * stride) as u32;
         }
     }
 
@@ -90,7 +83,7 @@ impl PlaybackStream {
                 *pw::keys::MEDIA_ROLE => "Communication",
                 *pw::keys::MEDIA_CATEGORY => "Playback",
                 *pw::keys::AUDIO_CHANNELS => "2",
-                *pw::keys::NODE_LATENCY => "256/48000",
+                *pw::keys::NODE_LATENCY => "1024/48000",
             },
         )?;
 

@@ -21,7 +21,7 @@ thread-priority = "3.0.0"
 
 [target.'cfg(unix)'.dependencies]
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
-pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
+pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", features = ["v0_3_49"]}
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62.2"
