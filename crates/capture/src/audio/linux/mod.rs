@@ -51,9 +51,7 @@ pub struct LinuxPlayback {
 }
 
 pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
-    // We capture in mono and there's no point to store
-    // more than 60ms
-    let ring = HeapRb::new(((DEFAULT_RATE / 1000) * 60) as usize);
+    let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
     let playback_queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -79,7 +77,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
 
     thread::Builder::new()
         .name("pipewire-loop".into())
-        .spawn_with_priority(ThreadPriority::Max, move |_| {
+        .spawn(move || {
             pw::init();
             ffmpeg::init().unwrap();
 
