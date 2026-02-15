@@ -19,12 +19,12 @@ use windows::Win32::{
 };
 use windows_core::HSTRING;
 
-use crate::audio::{DEFAULT_RATE, windows::try_get_device};
+use crate::audio::{DEFAULT_RATE, PlaybackSchedulerRecv, windows::try_get_device};
 
 // TODO: Implement Drop
 pub(crate) struct PlaybackStream {
     pub(crate) event_handle: HANDLE,
-    pub(crate) queue: Option<Arc<Mutex<VecDeque<f32>>>>,
+    pub(crate) scheduler: Option<PlaybackSchedulerRecv>,
     pub(crate) active_device: String,
 
     audio_client: IAudioClient,
@@ -51,7 +51,7 @@ fn try_activate_device(
 
 impl PlaybackStream {
     pub(crate) fn new(
-        queue: Arc<Mutex<VecDeque<f32>>>,
+        scheduler: PlaybackSchedulerRecv,
         preffered_device: Option<String>,
     ) -> windows::core::Result<Self> {
         unsafe {
@@ -107,7 +107,7 @@ impl PlaybackStream {
             Ok(Self {
                 event_handle,
                 active_device: device_id,
-                queue: Some(queue),
+                scheduler: Some(scheduler),
                 audio_client,
                 render_client,
                 buffer_frame_count,
@@ -146,16 +146,8 @@ impl PlaybackStream {
                     num_frames_available * format.nChannels as usize,
                 );
 
-                if let Some(queue) = self.queue.as_ref() {
-                    let mut queue = queue.lock().unwrap();
-
-                    for slot in buffer.iter_mut() {
-                        if let Some(sample) = queue.pop_front() {
-                            *slot = sample;
-                        } else {
-                            *slot = 0.;
-                        }
-                    }
+                if let Some(scheduler) = self.scheduler.as_mut() {
+                    scheduler.pop_slice(buffer);
                 }
 
                 self.render_client

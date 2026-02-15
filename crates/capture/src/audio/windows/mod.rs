@@ -33,6 +33,7 @@ use windows_core::{HSTRING, Interface as _, PWSTR};
 
 use crate::audio::{
     AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
+    PlaybackSchedulerSender, create_playback_scheduler,
     windows::{capture::CaptureStream, playback::PlaybackStream},
 };
 
@@ -239,7 +240,7 @@ impl WindowsCapture {
 }
 
 pub struct WindowsPlayback {
-    pub(crate) queue: Arc<Mutex<VecDeque<f32>>>,
+    pub(crate) scheduler: PlaybackSchedulerSender,
 
     loop_controller: CommandSender<AudioLoopCommand>,
 }
@@ -326,7 +327,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
-    let playback_queue = Arc::new(Mutex::new(VecDeque::new()));
+    let (scheduler_send, scheduler_recv) = create_playback_scheduler();
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
 
@@ -338,7 +339,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
     };
 
     let playback = WindowsPlayback {
-        queue: playback_queue.clone(),
+        scheduler: scheduler_send,
         loop_controller: sender.clone(),
     };
 
@@ -377,7 +378,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
             )
             .expect("Failed to init capture");
             let mut playback_stream =
-                PlaybackStream::new(playback_queue, preffered_playback_device.clone())
+                PlaybackStream::new(scheduler_recv, preffered_playback_device.clone())
                     .expect("Failed to init playback");
 
             let command_event = command_event;
@@ -411,10 +412,10 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     // Failure most likely means that device has changed
                     if playback_stream.process().is_err() {
-                        let queue = playback_stream.queue.take().unwrap();
+                        let scheduler = playback_stream.scheduler.take().unwrap();
 
                         playback_stream =
-                            PlaybackStream::new(queue, preffered_playback_device.clone())
+                            PlaybackStream::new(scheduler, preffered_playback_device.clone())
                                 .expect("Failed to recreate the playback stream");
 
                         _ = playback_stream.set_enabled(playback_enabled);
@@ -438,12 +439,14 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                                 device_registry.mark_active_input(&capture_stream.active_device);
                             }
                             AudioLoopCommand::SetActiveOutputDevice(device) => {
-                                let queue = playback_stream.queue.take().unwrap();
+                                let scheduler = playback_stream.scheduler.take().unwrap();
                                 preffered_playback_device = Some(device.id.clone());
 
-                                playback_stream =
-                                    PlaybackStream::new(queue, preffered_playback_device.clone())
-                                        .expect("Failed to recreate the playback stream");
+                                playback_stream = PlaybackStream::new(
+                                    scheduler,
+                                    preffered_playback_device.clone(),
+                                )
+                                .expect("Failed to recreate the playback stream");
 
                                 _ = playback_stream.set_enabled(playback_enabled);
                                 device_registry.mark_active_output(&playback_stream.active_device);
