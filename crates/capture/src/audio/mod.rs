@@ -102,7 +102,7 @@ impl StreamingQueueItem {
     }
 
     fn pop_slice_with(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
-        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 140) * DEFAULT_CHANNELS as usize;
+        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 100) * DEFAULT_CHANNELS as usize;
 
         let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
 
