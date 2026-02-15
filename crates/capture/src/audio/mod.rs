@@ -89,6 +89,7 @@ impl PlaybackChunk {
 struct StreamingQueueItem {
     last_update: Instant,
     queue: heapless::Deque<PlaybackChunk, 128>,
+    buffering: bool,
 }
 
 impl StreamingQueueItem {
@@ -96,18 +97,29 @@ impl StreamingQueueItem {
         Self {
             last_update: Instant::now(),
             queue: heapless::Deque::new(),
+            buffering: false,
         }
     }
 
     fn pop_slice_with(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
-        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 60) * DEFAULT_CHANNELS as usize;
+        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 140) * DEFAULT_CHANNELS as usize;
 
         let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
-        if samples_len < TARGET_BUFFER_SAMPLES {
-            return false;
+
+        if self.buffering {
+            if samples_len < TARGET_BUFFER_SAMPLES {
+                return false;
+            }
+
+            self.buffering = false;
         }
 
         let len = samples_len.min(output.len());
+        if len == 0 {
+            self.buffering = true;
+
+            return false;
+        }
 
         for out in output[0..len].iter_mut() {
             let sample = match self.queue.get_mut(0).unwrap().buffer.pop_front() {
