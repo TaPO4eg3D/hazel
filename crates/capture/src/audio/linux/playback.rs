@@ -73,7 +73,7 @@ impl PlaybackStream {
                 *pw::keys::MEDIA_ROLE => "Communication",
                 *pw::keys::MEDIA_CATEGORY => "Playback",
                 *pw::keys::AUDIO_CHANNELS => "2",
-                *pw::keys::NODE_LATENCY => "1024/48000",
+                *pw::keys::NODE_LATENCY => "512/48000",
             },
         )?;
 

@@ -88,7 +88,7 @@ impl PlaybackChunk {
 
 struct StreamingQueueItem {
     last_update: Instant,
-    queue: heapless::Deque<PlaybackChunk, 12>,
+    queue: heapless::Deque<PlaybackChunk, 128>,
 }
 
 impl StreamingQueueItem {
@@ -100,20 +100,22 @@ impl StreamingQueueItem {
     }
 
     fn pop_slice_with(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
-        let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
+        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 60) * DEFAULT_CHANNELS as usize;
 
-        if samples_len < output.len() {
+        let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
+        if samples_len < TARGET_BUFFER_SAMPLES {
             return false;
         }
 
-        for out in output.iter_mut() {
+        let len = samples_len.min(output.len());
+
+        for out in output[0..len].iter_mut() {
             let sample = match self.queue.get_mut(0).unwrap().buffer.pop_front() {
                 Some(sample) => sample,
                 None => {
                     _ = self.queue.pop_front();
 
-                    self.queue
-                        .get_mut(0)
+                    self.queue.get_mut(0)
                         .unwrap()
                         .buffer
                         .pop_front()
@@ -191,7 +193,7 @@ impl PlaybackSchedulerSender {
 }
 
 pub(crate) fn create_playback_scheduler() -> (PlaybackSchedulerSender, PlaybackSchedulerRecv) {
-    let ring = HeapRb::<(i32, PlaybackChunk)>::new(50);
+    let ring = HeapRb::<(i32, PlaybackChunk)>::new(150);
     let (streaming_prod, streaming_cons) = ring.split();
 
     let sender = PlaybackSchedulerSender::new(streaming_prod);
@@ -691,7 +693,7 @@ pub struct Playback {
 
 impl Playback {
     fn new(mut platform_playback: PlatformPlayback) -> Self {
-        let (tx, rx) = channel::bounded::<(i32, PlaybackChunk)>(24);
+        let (tx, rx) = channel::bounded::<(i32, PlaybackChunk)>(50);
 
         let is_enabled = Arc::new(AtomicBool::new(true));
 
