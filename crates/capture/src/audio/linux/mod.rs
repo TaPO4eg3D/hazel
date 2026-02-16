@@ -8,7 +8,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, PlaybackSchedulerSender, create_playback_scheduler, linux::{capture::CaptureStream, playback::PlaybackStream}
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, linux::{capture::CaptureStream, playback::PlaybackStream}, playback::{PlaybackSchedulerSender, create_playback_scheduler}
 };
 
 use thread_priority::*;

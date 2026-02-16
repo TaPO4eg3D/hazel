@@ -14,7 +14,7 @@ use pipewire::{
 };
 use ringbuf::{traits::Consumer, HeapCons};
 
-use crate::audio::{PlaybackSchedulerRecv, VecDequeExt as _, DEFAULT_CHANNELS, DEFAULT_RATE};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::PlaybackSchedulerRecv};
 
 struct PlaybackStreamData {
     last: Instant,

@@ -11,7 +11,7 @@ use std::{
 
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
-use capture::audio::{self, Capture, DeviceRegistry, Playback, StreamingClientState};
+use capture::audio::{self, Capture, DeviceRegistry, StreamingClientState, playback::Playback};
 use gpui::{App, AppContext, Global};
 
 use rpc::models::markers::UserId;
