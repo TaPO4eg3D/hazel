@@ -1,11 +1,28 @@
-use std::{collections::{HashMap, hash_map::Entry}, sync::{Arc, atomic::{AtomicBool, Ordering}}, thread, time::Instant};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, BinaryHeap, HashMap, hash_map::Entry},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Instant,
+};
 
 use crossbeam::channel;
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::{Consumer as _, Producer as _, Split as _}};
+use ffmpeg_next::Packet;
+use heapless::Deque;
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer as _, Producer as _, Split as _},
+};
+use streaming_common::FFMpegPacketPayload;
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, StreamingClientState, StreamingCompatFrom as _};
 #[cfg(target_os = "linux")]
 use crate::audio::linux;
+use crate::audio::{
+    DEFAULT_CHANNELS, DEFAULT_RATE, StreamingCompatFrom as _, VecDequeExt, decode::AudioDecoder
+};
 
 #[cfg(target_os = "linux")]
 type PlatformPlayback = linux::LinuxPlayback;
@@ -13,219 +30,235 @@ type PlatformPlayback = linux::LinuxPlayback;
 type PlatformPlayback = windows::WindowsPlayback;
 
 
-/// Playback handle, can be safely shared between threads
-#[derive(Clone)]
-pub struct Playback {
-    is_enabled: Arc<AtomicBool>,
+const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
 
-    tx: channel::Sender<(i32, PlaybackChunk)>,
+struct JitterBuffer {
+    decoder: AudioDecoder,
+
+    packets_buffer: BTreeMap<u64, (Instant, FFMpegPacketPayload)>,
+    samples_buffer: heapless::Deque<f32, SAMPLES_BUFFER>,
+
+    // PTS of the next expected packet
+    next_playout_pts: Option<u64>,
+    target_delay_ms: f64,
+
+    min_delay_ms: f64,
+    max_delay_ms: f64,
+
+    jitter_estimate_ms: f64,
+
+    /// Smoothing factor for jitter estimation (0.0 - 1.0)
+    alpha: f64,
+
+    // PTS of a packet that marks the end of the
+    // speech chunk. If there's no packets after this
+    // PTS, we don't need to treat it as jittering
+    ending_chunk: Option<u64>,
+
+    last_arrival: Option<Instant>,
+    last_pts: Option<u64>,
+
+    // How many times had to generate PLC in a row
+    misses: u32,
 }
 
-impl Playback {
-    pub(crate) fn new(mut platform_playback: PlatformPlayback) -> Self {
-        let (tx, rx) = channel::bounded::<(i32, PlaybackChunk)>(50);
 
-        let is_enabled = Arc::new(AtomicBool::new(true));
-
-        thread::Builder::new()
-            .name("playback-controller".into())
-            .spawn({
-                let is_enabled = is_enabled.clone();
-
-                move || {
-                    loop {
-                        while let Ok((user_id, chunk)) = rx.recv() {
-                            if !is_enabled.load(Ordering::Relaxed) {
-                                continue;
-                            }
-
-                            platform_playback.scheduler.push_streaming(user_id, chunk);
-                        }
-                    }
-                }
-            })
-            .unwrap();
-
-        Self { tx, is_enabled }
-    }
-
-    pub fn set_enabled(&self, value: bool) {
-        self.is_enabled.store(value, Ordering::Relaxed);
-    }
-
-    pub fn process_client(
-        &self,
-        client: &mut StreamingClientState,
-        post_process: impl Fn(&mut PlaybackChunk),
-    ) {
-        let mut chunk = PlaybackChunk::new();
-
-        // 3 packets is about 60 ms
-        if client.packets.len() < 3 {
-            return;
-        };
-
-        // Safe due the check above
-        let packet = client.packets.pop().unwrap().0;
-        client.decoder.decode(packet.to_packet());
-
-        while let Some(value) = client.decoder.decoded_samples.pop_front() {
-            chunk
-                .buffer
-                .push_back(value)
-                .expect("Decoder output is fixed, it should never fail")
-        }
-
-        if !chunk.buffer.is_empty() {
-            post_process(&mut chunk);
-
-            _ = self.tx.send((client.user_id, chunk));
-        }
-    }
-
-    pub fn play_file(&self) {
-        todo!()
-    }
-}
-
-const CHUNK_SIZE: usize = ((DEFAULT_RATE as usize / 1000) * 20) * DEFAULT_CHANNELS as usize;
-
-pub struct PlaybackChunk {
-    pub buffer: heapless::Deque<f32, CHUNK_SIZE>,
-}
-
-impl PlaybackChunk {
-    pub(crate) fn new() -> Self {
-        Self {
-            buffer: heapless::Deque::new(),
-        }
-    }
-}
-
-struct StreamingQueueItem {
-    last_update: Instant,
-    queue: heapless::Deque<PlaybackChunk, 128>,
-    buffering: bool,
-}
-
-impl StreamingQueueItem {
+impl JitterBuffer {
     fn new() -> Self {
         Self {
-            last_update: Instant::now(),
-            queue: heapless::Deque::new(),
-            buffering: false,
+            decoder: AudioDecoder::new(),
+            packets_buffer: BTreeMap::new(),
+            samples_buffer: heapless::Deque::new(),
+            next_playout_pts: None,
+            target_delay_ms: 20.,
+            min_delay_ms: 20.,
+            max_delay_ms: 200.,
+            jitter_estimate_ms: 0.0,
+            alpha: 0.05,
+            last_arrival: None,
+            last_pts: None,
+            misses: 0,
+            ending_chunk: None,
         }
     }
 
-    fn pop_slice_with(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
-        const TARGET_BUFFER_SAMPLES: usize = ((DEFAULT_RATE as usize / 1000) * 100) * DEFAULT_CHANNELS as usize;
-
-        let samples_len = self.queue.iter().fold(0, |acc, b| acc + b.buffer.len());
-
-        if self.buffering {
-            if samples_len < TARGET_BUFFER_SAMPLES {
-                return false;
-            }
-
-            self.buffering = false;
+    fn push_packet(&mut self, arrival_ts: Instant, packet: FFMpegPacketPayload) {
+        // Packet arrived out of order, we already finished with
+        // this speech chunk
+        if let Some(pts) = self.ending_chunk
+            && self.next_playout_pts.is_none()
+            && packet.pts < pts {
+            return;
         }
 
-        let len = samples_len.min(output.len());
-        if len == 0 {
-            self.buffering = true;
+        self.update_jitter(arrival_ts, &packet);
+        self.adapt_target_delay();
+
+        // Special packet, means the end of the speech chunk
+        if packet.items == -1 {
+            self.ending_chunk = Some(packet.pts);
+
+            return;
+        }
+
+        // Packet arrived out of order, we already played PLC
+        if let Some(next) = self.next_playout_pts
+            && packet.pts < next {
+                return;
+            }
+
+        const MAX_BUFFER_SIZE: usize = 20;
+        if self.packets_buffer.len() >= MAX_BUFFER_SIZE
+            && let Some(&oldest_seq) = self.packets_buffer.keys().next() {
+                self.packets_buffer.remove(&oldest_seq);
+            }
+
+        self.packets_buffer.insert(packet.pts, (arrival_ts, packet));
+    }
+
+    fn close_speech_chunk(&mut self) {
+        self.last_pts = None;
+        self.last_arrival = None;
+
+        self.next_playout_pts = None;
+    }
+
+    fn update_jitter(&mut self, arrival_ts: Instant, packet: &FFMpegPacketPayload) {
+        if let (Some(last_arrival), Some(last_pts)) = (self.last_arrival, self.last_pts) {
+            let arrival_diff_ms = arrival_ts
+                .duration_since(last_arrival)
+                .as_secs_f64() * 1000.;
+
+            let ts_diff_samples = packet.pts.wrapping_sub(last_pts) as f64;
+            let ts_diff_ms = (ts_diff_samples / DEFAULT_RATE as f64) * 1000.;
+
+            let deviation = (arrival_diff_ms - ts_diff_ms).abs();
+
+            // Exponential moving average
+            self.jitter_estimate_ms =
+                self.jitter_estimate_ms * (1.0 - self.alpha) + deviation * self.alpha;
+        }
+
+        self.last_arrival = Some(arrival_ts);
+        self.last_pts = Some(packet.pts);
+    }
+
+    fn adapt_target_delay(&mut self) {
+        let desired = self.jitter_estimate_ms * 2.0;
+        let adjustment_rate = 0.1;
+
+        self.target_delay_ms += (desired - self.target_delay_ms) * adjustment_rate;
+        self.target_delay_ms = self.target_delay_ms.clamp(self.min_delay_ms, self.max_delay_ms);
+    }
+
+    fn decode(&mut self) -> bool {
+        if self.next_playout_pts.is_none() {
+            if let Some((&pts, (arrival_ts, _))) = self.packets_buffer.iter().next() {
+                let buffered_ms = arrival_ts.elapsed().as_secs_f64() * 1000.0;
+
+                if buffered_ms < self.target_delay_ms {
+                    return false;
+                }
+
+                self.next_playout_pts = Some(pts);
+            } else {
+                return false;
+            }
+        }
+
+        let pts = self.next_playout_pts.unwrap();
+        if self.ending_chunk.is_some_and(|end_pts| end_pts == pts) {
+            self.close_speech_chunk();
 
             return false;
         }
 
-        for out in output[0..len].iter_mut() {
-            let sample = match self.queue.get_mut(0).unwrap().buffer.pop_front() {
-                Some(sample) => sample,
-                None => {
-                    _ = self.queue.pop_front();
+        if let Some((_, packet)) = self.packets_buffer.remove(&pts) {
+            self.misses = 0;
+            self.next_playout_pts = Some(pts.wrapping_add(1));
 
-                    self.queue.get_mut(0)
-                        .unwrap()
-                        .buffer
-                        .pop_front()
-                        .expect("We checked total amount of samples")
-                }
-            };
+            self.decoder.decode(packet.to_packet());
+        } else {
+            println!("Missing packet!");
 
-            *out = f(*out, sample)
+            self.misses += 1;
+            // If have have too much misses, we probably missed the marker
+            // and we need to close the speech chunk
+            if self.misses > 4 {
+                self.close_speech_chunk();
+
+                return false;
+            }
+
+            // Packet is missing, ask decoder for PLC
+            self.decoder.decode(Packet::new(0));
+        }
+
+        while let Some(decoded_sample) = self.decoder.decoded_samples.pop_front() {
+            self.samples_buffer.push_back(decoded_sample);
         }
 
         true
     }
-}
 
-/// Receiving end of a PlaybackScheduler
-pub(crate) struct PlaybackSchedulerRecv {
-    streaming_buffer: HeapCons<(i32, PlaybackChunk)>,
-    // TODO: Make this buffer heapless as well
-    streaming_queue: HashMap<i32, StreamingQueueItem>,
-}
+    fn pop_slice(&mut self, output: &mut [f32]) {
+        let mut i = 0;
 
-impl PlaybackSchedulerRecv {
-    fn new(buffer: HeapCons<(i32, PlaybackChunk)>) -> Self {
-        Self {
-            streaming_buffer: buffer,
-            streaming_queue: HashMap::new(),
-        }
-    }
-}
+        while i < output.len() {
+            if let Some(sample) = self.samples_buffer.pop_front() {
+                output[i] = sample;
+                i += 1;
 
-impl PlaybackSchedulerRecv {
-    pub(crate) fn pop_slice(&mut self, output: &mut [f32]) {
-        // Process pending items
-        while let Some((user_id, chunk)) = self.streaming_buffer.try_pop() {
-            match self.streaming_queue.entry(user_id) {
-                Entry::Occupied(mut entry) => {
-                    let item = entry.get_mut();
-
-                    item.last_update = Instant::now();
-                    _ = item.queue.push_back(chunk);
-                }
-                Entry::Vacant(entry) => {
-                    let item = entry.insert(StreamingQueueItem::new());
-
-                    _ = item.queue.push_back(chunk);
-                }
+                continue;
             };
-        }
 
-        output.iter_mut().for_each(|s| *s = 0.);
+            // If we failed to decode anything, fill with zeroes
+            if !self.decode() {
+                output[i..]
+                    .iter_mut()
+                    .for_each(|s| *s = 0.);
 
-        for queue in self.streaming_queue.values_mut() {
-            queue.pop_slice_with(output, |old, new| old + new);
+                break;
+            }
         }
     }
 }
 
-/// Schedules audio for a playback
-pub(crate) struct PlaybackSchedulerSender {
-    streaming_buffer: HeapProd<(i32, PlaybackChunk)>,
+
+pub struct StreamingClientState {
+    pub user_id: i32,
+    jitter_buffer: JitterBuffer,
 }
 
-impl PlaybackSchedulerSender {
-    fn new(buffer: HeapProd<(i32, PlaybackChunk)>) -> Self {
+
+impl StreamingClientState {
+    pub fn new(user_id: i32) -> Self {
         Self {
-            streaming_buffer: buffer,
+            user_id,
+            jitter_buffer: JitterBuffer::new(),
         }
     }
 }
 
-impl PlaybackSchedulerSender {
-    pub(crate) fn push_streaming(&mut self, user_id: i32, chunk: PlaybackChunk) {
-        _ = self.streaming_buffer.try_push((user_id, chunk));
-    }
+/// Used to enqueue streaming audio packets
+/// for a playback
+pub struct AudioPacketSender {
 }
 
-pub(crate) fn create_playback_scheduler() -> (PlaybackSchedulerSender, PlaybackSchedulerRecv) {
-    let ring = HeapRb::<(i32, PlaybackChunk)>::new(150);
-    let (streaming_prod, streaming_cons) = ring.split();
+impl AudioPacketSender {
+}
 
-    let sender = PlaybackSchedulerSender::new(streaming_prod);
-    let recv = PlaybackSchedulerRecv::new(streaming_cons);
+/// Used to enqueue raw audio samples
+/// for a playback
+pub struct AudioSamplesSender {
+}
 
-    (sender, recv)
+#[derive(Clone)]
+pub struct AudioStreamingState {
+    is_muted: Arc<AtomicBool>,
+    volume: Arc<AtomicBool>,
+}
+
+
+pub fn init_playback() {
 }
