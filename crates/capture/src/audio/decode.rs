@@ -22,14 +22,9 @@ impl AudioDecoder {
         let codec = codec::decoder::find(codec::Id::OPUS).expect("Opus codec is not found");
         let context = codec::context::Context::new();
 
-        // Enable Opus DTX feature to save bandwidth
-        // (almost no bandwidth on silence)
-        let mut opts = dictionary::Owned::new();
-        opts.set("dtx", "1");
-
         let mut decoder = context
             .decoder()
-            .open_as_with(codec, opts)
+            .open_as(codec)
             .and_then(|o| o.audio())
             .unwrap();
 
