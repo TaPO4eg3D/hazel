@@ -365,28 +365,6 @@ type PlatformCapture = linux::LinuxCapture;
 #[cfg(target_os = "windows")]
 type PlatformCapture = windows::WindowsCapture;
 
-pub struct StreamingClientState {
-    pub user_id: i32,
-    decoder: AudioDecoder,
-
-    /// We buffer packets to decode them in correct order
-    packets: BinaryHeap<Reverse<FFMpegPacketPayload>>,
-}
-
-impl StreamingClientState {
-    pub fn new(user_id: i32) -> Self {
-        Self {
-            user_id,
-            decoder: AudioDecoder::new(),
-            packets: BinaryHeap::new(),
-        }
-    }
-
-    pub fn push(&mut self, packet: FFMpegPacketPayload) {
-        self.packets.push(Reverse(packet));
-    }
-}
-
 pub enum AudioLoopCommand {
     SetEnabledCapture(bool),
     SetEnabledPlayback(bool),
