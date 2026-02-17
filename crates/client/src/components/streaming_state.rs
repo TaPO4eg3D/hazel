@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use capture::audio::AudioDevice;
+use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
 use gpui_component::slider::{SliderState, SliderValue};
 use rpc::{
@@ -8,7 +8,6 @@ use rpc::{
     models::{
         auth::{GetUserInfo, GetUserPayload},
         common::RPCMethod as _,
-        general::UserConnectionUpdate,
         markers::{UserId, VoiceChannelId},
         voice::{
             GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, UpdateVoiceUserState,
@@ -20,7 +19,7 @@ use smol::stream::StreamExt as _;
 
 use crate::{
     ConnectionManger,
-    gpui_audio::{Streaming, VoiceMemberSharedData},
+    gpui_audio::Streaming,
 };
 
 #[derive(Clone)]
@@ -43,7 +42,7 @@ pub struct VoiceChannelMember {
     pub is_streaming: bool,
     pub is_talking: bool,
 
-    shared: Option<Arc<VoiceMemberSharedData>>,
+    shared: Option<Arc<AudioStreamingClientSharedState>>,
 }
 
 impl VoiceChannelMember {
@@ -69,7 +68,9 @@ impl VoiceChannelMember {
         {
             Streaming::is_talking(cx)
         } else if let Some(shared) = self.shared.as_ref() {
-            shared.is_talking()
+            // TODO: IMPLEMENT
+            // shared.is_talking()
+            false
         } else {
             false
         };
@@ -78,7 +79,7 @@ impl VoiceChannelMember {
     }
 
     pub fn register<C: AppContext>(&mut self, cx: &C) {
-        let shared = Arc::new(VoiceMemberSharedData::new(self.id));
+        let shared = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
         self.shared = Some(shared.clone());
 
         Streaming::add_voice_member(cx, Arc::downgrade(&shared));
