@@ -4,7 +4,7 @@ use rpc::models::markers::{Id, User};
 use tokio::net::UdpSocket;
 
 use crate::AppState;
-use streaming_common::UDPPacket;
+use streaming_common::{UDPPacket, UDPPacketType};
 
 pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
     let sock = UdpSocket::bind(udp_addr).await.unwrap();
@@ -29,11 +29,19 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         let packet = {
             let mut buf = buf.clone();
 
+            // TODO: We don't need to parse the whole packet
+            // only user_id and type would be enough
             UDPPacket::parse(&mut buf)
         };
-        let currend_user_id = Id::<User>::new(packet.user_id);
 
-        let (voice_channel, addr_differs) = match state.connected_clients.get(&currend_user_id) {
+        // No need to process, the client wants to maintain UDP connection
+        if matches!(packet.payload, UDPPacketType::Ping) {
+            continue;
+        }
+
+        let current_user_id = Id::<User>::new(packet.user_id);
+
+        let (voice_channel, addr_differs) = match state.connected_clients.get(&current_user_id) {
             Some(state) => {
                 let state = state.read().unwrap();
 
@@ -53,7 +61,7 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         };
 
         if addr_differs {
-            let Some(state) = state.connected_clients.get(&currend_user_id) else {
+            let Some(state) = state.connected_clients.get(&current_user_id) else {
                 continue;
             };
 
@@ -67,7 +75,7 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         };
 
         for user in voice_users.iter() {
-            if user.id == currend_user_id {
+            if user.id == current_user_id {
                 continue;
             }
 

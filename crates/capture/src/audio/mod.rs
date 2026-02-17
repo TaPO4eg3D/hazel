@@ -147,8 +147,8 @@ impl StreamingCompatInto for Packet {
         }
 
         FFMpegPacketPayload {
-            // TODO: Deal with the cast
-            pts: self.pts().unwrap() as u64,
+            seq: 0,
+            pts: self.pts().unwrap(),
 
             flags: self.flags().bits(),
             items: packet_data.len() as i32,
@@ -437,16 +437,18 @@ impl<'a> CaptureReciever<'a> {
     pub fn recv_encoded_with<'b>(
         &'b mut self,
         f: impl Fn(Vec<f32>) -> Option<Vec<f32>>,
-    ) -> EncodedRecv<'b> {
-        if let Ok(samples) = self.rx.recv()
-            && let Some(samples) = f(samples)
-        {
-            self.encoder.encode(&samples);
-        }
+    ) -> Option<EncodedRecv<'b>> {
+        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(40)) {
+            let samples = f(samples)?;
 
-        EncodedRecv {
-            encoder: &mut self.encoder,
+            self.encoder.encode(&samples);
+
+            return Some(EncodedRecv {
+                encoder: &mut self.encoder,
+            });
         }
+        
+        None
     }
 }
 

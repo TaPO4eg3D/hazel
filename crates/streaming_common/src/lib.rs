@@ -8,7 +8,9 @@ pub const DATA_BUFF_SIZE: usize = ((DEFAULT_RATE / 1000) * 80) * STRIDE;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct FFMpegPacketPayload {
-    pub pts: u64,
+    pub seq: u64,
+
+    pub pts: i64,
     pub flags: i32,
 
     pub items: i32,
@@ -29,7 +31,8 @@ impl Ord for FFMpegPacketPayload {
 
 impl FFMpegPacketPayload {
     pub fn to_bytes(&self, buf: &mut BytesMut) {
-        buf.put_u64_le(self.pts);
+        buf.put_u64_le(self.seq);
+        buf.put_i64_le(self.pts);
         buf.put_i32_le(self.flags);
         buf.put_i32_le(self.items);
 
@@ -37,14 +40,15 @@ impl FFMpegPacketPayload {
     }
 
     pub fn parse(mut bytes: Bytes) -> Self {
-        let pts = bytes.get_u64_le();
+        let seq = bytes.get_u64_le();
+        let pts = bytes.get_i64_le();
         let flags = bytes.get_i32_le();
         let items = bytes.get_i32_le();
 
         let mut data = [0_u8; DATA_BUFF_SIZE];
         bytes.copy_to_slice(&mut data[..items as usize]);
 
-        Self { pts, flags, data, items }
+        Self { seq, pts, flags, data, items }
     }
 }
 
@@ -94,6 +98,7 @@ impl UDPPacket {
             UDPPacketType::Voice(data) => {
                 data.to_bytes(buf);
             }
+            UDPPacketType::Ping => {},
             _ => todo!(),
         }
     }
