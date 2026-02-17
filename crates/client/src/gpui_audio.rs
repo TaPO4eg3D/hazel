@@ -22,7 +22,7 @@ use crossbeam::channel;
 use gpui::{App, AppContext, Global};
 
 use rpc::models::markers::UserId;
-use streaming_common::{UDPPacket, UDPPacketType};
+use streaming_common::{DATA_BUFF_SIZE, FFMpegPacketPayload, UDPPacket, UDPPacketType};
 
 type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
@@ -44,8 +44,13 @@ impl SenderState {
 }
 
 fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, capture: Capture) {
+    let mut seq = 0;
+
     let mut buf = BytesMut::new();
     let mut recv = capture.get_recv();
+
+    let mut last_send = Instant::now();
+    let mut transmitting = false;
 
     let last_silence = RefCell::new(Some(Instant::now()));
 
@@ -53,7 +58,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
         let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
 
-        let mut encoded_recv = recv.recv_encoded_with(|mut samples| {
+        let encoded_recv = recv.recv_encoded_with(|mut samples| {
             if samples.is_empty() {
                 state.is_talking.store(false, Ordering::Relaxed);
 
@@ -86,22 +91,76 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
                 *last_silence.borrow_mut() = None;
             }
 
-            // println!("INPUT: {:?}", samples);
             Some(samples)
         });
 
-        while let Some(audio_packet) = encoded_recv.pop() {
-            if let Some((user_id, addr)) = *addr.lock().unwrap() {
+        if encoded_recv.is_none() {
+            // Let the receivers know that we finished with our speech chunk
+            if transmitting && let Some((user_id, addr)) = *addr.lock().unwrap() {
                 buf.clear();
 
                 let udp_packet = UDPPacket {
                     user_id: user_id.value,
-                    payload: UDPPacketType::Voice(audio_packet),
+                    payload: UDPPacketType::Voice(FFMpegPacketPayload {
+                        seq,
+                        pts: -1,
+                        flags: -99,
+                        items: 0,
+                        data: [0; DATA_BUFF_SIZE],
+                    }),
                 };
 
                 udp_packet.to_bytes(&mut buf);
 
+                seq += 1;
+                last_send = Instant::now();
+
                 _ = socket.send_to(&buf, addr);
+            }
+
+            // Yes, recv packets also prolong UDP NAT mapping but
+            // it's kinda pain in the butt to account for them.
+            // I think this solution is more than enough
+            if last_send.elapsed() > Duration::from_secs(10)
+                && let Some((user_id, addr)) = *addr.lock().unwrap() {
+                    buf.clear();
+
+                    let udp_packet = UDPPacket {
+                        user_id: user_id.value,
+                        payload: UDPPacketType::Ping,
+                    };
+
+                    udp_packet.to_bytes(&mut buf);
+
+                    last_send = Instant::now();
+                    _ = socket.send_to(&buf, addr);
+                }
+
+            transmitting = false;
+
+            continue;
+        }
+
+        if let Some(mut encoded_recv) = encoded_recv {
+            transmitting = true;
+
+            while let Some(mut audio_packet) = encoded_recv.pop() {
+                if let Some((user_id, addr)) = *addr.lock().unwrap() {
+                    buf.clear();
+
+                    audio_packet.seq = seq;
+                    let udp_packet = UDPPacket {
+                        user_id: user_id.value,
+                        payload: UDPPacketType::Voice(audio_packet),
+                    };
+
+                    udp_packet.to_bytes(&mut buf);
+
+                    seq += 1;
+                    last_send = Instant::now();
+
+                    _ = socket.send_to(&buf, addr);
+                }
             }
         }
     }

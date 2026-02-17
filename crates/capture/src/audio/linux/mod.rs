@@ -1,5 +1,9 @@
 use std::{
-    cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, Mutex}, thread::{self, Thread}
+    cell::RefCell,
+    collections::VecDeque,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    thread::{self, Thread},
 };
 
 use pipewire::{self as pw, types::ObjectType};
@@ -8,11 +12,10 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, linux::{capture::CaptureStream, playback::PlaybackStream}, playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackSchedulerSender, create_playback_scheduler}
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
+    linux::{capture::CaptureStream, playback::PlaybackStream},
+    playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackController},
 };
-
-use thread_priority::*;
-use thread_priority::ThreadBuilderExt;
 
 pub mod capture;
 pub mod playback;
@@ -61,7 +64,7 @@ pub(crate) fn init(
     };
 
     let playback = Playback {
-        controller: pw_sender.clone(),
+        controller: PlaybackController::new(pw_sender.clone()),
         packet_input: Some(packet_input),
     };
 
@@ -185,14 +188,16 @@ pub(crate) fn init(
                                 let output_node: u32 = output_node.parse().unwrap();
 
                                 if input_node == capture_stream.node_id()
-                                    && let Some(id) = device_registry.find_by_node_id(output_node) {
-                                        device_registry.mark_active_input(&id);
-                                    }
+                                    && let Some(id) = device_registry.find_by_node_id(output_node)
+                                {
+                                    device_registry.mark_active_input(&id);
+                                }
 
                                 if output_node == playback_stream.node_id()
-                                    && let Some(id) = device_registry.find_by_node_id(input_node) {
-                                        device_registry.mark_active_output(&id);
-                                    }
+                                    && let Some(id) = device_registry.find_by_node_id(input_node)
+                                {
+                                    device_registry.mark_active_output(&id);
+                                }
                             }
                             _ => {}
                         }

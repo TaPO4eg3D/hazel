@@ -99,7 +99,7 @@ impl AudioEncoder {
             self.raw_frame.set_pts(Some(self.pts_counter));
             self.encoder.send_frame(&self.raw_frame).unwrap();
 
-            self.pts_counter = self.pts_counter.wrapping_add(1);
+            self.pts_counter += self.encoder.frame_size() as i64;
 
             while self
                 .encoder

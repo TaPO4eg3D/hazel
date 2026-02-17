@@ -12,13 +12,11 @@ use pipewire::{
     spa::{self, pod::Pod},
     stream::{Stream, StreamListener, StreamRc},
 };
-use ringbuf::{traits::Consumer, HeapCons};
+use ringbuf::{HeapCons, traits::Consumer};
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::{AudioPacketOutput, PlaybackSchedulerRecv}};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::AudioPacketOutput};
 
 struct PlaybackStreamData {
-    last: Instant,
-
     packet_output: AudioPacketOutput,
 }
 
@@ -89,7 +87,6 @@ impl PlaybackStream {
         audio_info.set_position(position);
 
         let user_data = PlaybackStreamData {
-            last: Instant::now(),
             packet_output,
         };
 
