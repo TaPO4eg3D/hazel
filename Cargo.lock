@@ -1015,6 +1015,7 @@ name = "capture"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atomic_float",
  "bytes",
  "crossbeam",
  "ffmpeg-next",
@@ -3166,6 +3167,7 @@ dependencies = [
  "capture",
  "clap 4.5.57",
  "client_macros",
+ "crossbeam",
  "gpui",
  "gpui-component",
  "rmp-serde",
