@@ -13,6 +13,8 @@ sea-orm = { workspace = true }
 capture = { workspace = true }
 streaming_common = { workspace = true }
 bytes = { workspace = true }
+atomic_float = { workspace = true }
+crossbeam = { workspace = true }
 
 # UI
 gpui = { git = "https://github.com/zed-industries/zed" }
@@ -24,4 +26,3 @@ unicode-segmentation = "1.12.0"
 smol = "2.0.2"
 tracing = "0.1.43"
 clap = { version = "4.5.54", features = ["derive"] }
-atomic_float = "1.1.0"

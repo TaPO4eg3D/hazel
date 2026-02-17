@@ -9,6 +9,7 @@ log = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
 crossbeam = { workspace = true }
+atomic_float = { workspace = true }
 
 streaming_common = { workspace = true }
 

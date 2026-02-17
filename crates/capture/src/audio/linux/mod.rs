@@ -8,7 +8,7 @@ use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 use ffmpeg_next::{self as ffmpeg};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, linux::{capture::CaptureStream, playback::PlaybackStream}, playback::{PlaybackSchedulerSender, create_playback_scheduler}
+    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier, linux::{capture::CaptureStream, playback::PlaybackStream}, playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackSchedulerSender, create_playback_scheduler}
 };
 
 use thread_priority::*;
@@ -42,18 +42,12 @@ impl LinuxCapture {
     }
 }
 
-pub struct LinuxPlayback {
-    pub(crate) scheduler: PlaybackSchedulerSender,
-
-    #[allow(dead_code)]
-    pw_sender: pw::channel::Sender<AudioLoopCommand>,
-}
-
-pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
+pub(crate) fn init(
+    packet_input: AudioPacketInput,
+    packet_output: AudioPacketOutput,
+) -> (LinuxCapture, Playback, DeviceRegistry) {
     let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
-
-    let (scheduler_send, scheduler_recv) = create_playback_scheduler();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
@@ -66,9 +60,9 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
         capture_notifier: capture_notifier.clone(),
     };
 
-    let playback = LinuxPlayback {
-        pw_sender: pw_sender.clone(),
-        scheduler: scheduler_send,
+    let playback = Playback {
+        controller: pw_sender.clone(),
+        packet_input: Some(packet_input),
     };
 
     let _device_registry = DeviceRegistry::new(pw_sender);
@@ -88,7 +82,7 @@ pub(crate) fn init() -> (LinuxCapture, LinuxPlayback, DeviceRegistry) {
             let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
             let capture_stream = capture.stream.clone();
 
-            let playback = PlaybackStream::new(core.clone(), scheduler_recv)?;
+            let playback = PlaybackStream::new(core.clone(), packet_output)?;
             let playback_stream = playback.stream.clone();
 
             let routing_meta: Rc<RefCell<Option<pw::metadata::Metadata>>> = Default::default();

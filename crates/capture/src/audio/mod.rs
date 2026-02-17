@@ -20,7 +20,7 @@ use streaming_common::{DATA_BUFF_SIZE, FFMpegPacketPayload};
 use crossbeam::channel;
 
 #[cfg(target_os = "linux")]
-use crate::audio::playback::Playback;
+use crate::audio::playback::{Playback, init_packet_processing};
 use crate::audio::{decode::AudioDecoder, encode::AudioEncoder};
 
 #[cfg(target_os = "linux")]
@@ -123,7 +123,8 @@ impl StreamingCompatFrom for FFMpegPacketPayload {
         // TODO: It results in allocation, improve?
         let mut packet = Packet::new(data.len());
 
-        packet.set_pts(Some(self.pts));
+        // TODO: Deal with the cast
+        packet.set_pts(Some(self.pts as i64));
 
         packet.set_flags(codec::packet::Flags::from_bits_truncate(self.flags));
         let packet_data = packet
@@ -146,10 +147,11 @@ impl StreamingCompatInto for Packet {
         }
 
         FFMpegPacketPayload {
-            pts: self.pts().unwrap(),
+            // TODO: Deal with the cast
+            pts: self.pts().unwrap() as u64,
 
             flags: self.flags().bits(),
-            items: packet_data.len() as u32,
+            items: packet_data.len() as i32,
             data: buffer,
         }
     }
@@ -532,10 +534,14 @@ impl Capture {
 
 #[cfg(target_os = "linux")]
 pub fn init() -> (Capture, Playback, DeviceRegistry) {
-    let (capture, playback, device_registry) = linux::init();
+    let (packet_input, packet_output) = init_packet_processing();
+
+    let (capture, playback, device_registry) = linux::init(
+        packet_input,
+        packet_output,
+    );
 
     let capture = Capture::new(capture);
-    let playback = Playback::new(playback);
 
     (capture, playback, device_registry)
 }

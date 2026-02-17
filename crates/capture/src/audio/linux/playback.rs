@@ -14,12 +14,12 @@ use pipewire::{
 };
 use ringbuf::{traits::Consumer, HeapCons};
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::PlaybackSchedulerRecv};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::{AudioPacketOutput, PlaybackSchedulerRecv}};
 
 struct PlaybackStreamData {
     last: Instant,
 
-    scheduler: PlaybackSchedulerRecv,
+    packet_output: AudioPacketOutput,
 }
 
 pub(crate) struct PlaybackStream {
@@ -56,7 +56,7 @@ impl PlaybackStream {
             };
 
             let chunk = data.chunk_mut();
-            this.scheduler.pop_slice(output_samples);
+            this.packet_output.process(output_samples);
 
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = stride as i32;
@@ -64,7 +64,7 @@ impl PlaybackStream {
         }
     }
 
-    pub(crate) fn new(core: CoreRc, scheduler: PlaybackSchedulerRecv) -> AResult<Self> {
+    pub(crate) fn new(core: CoreRc, packet_output: AudioPacketOutput) -> AResult<Self> {
         let playback_stream = StreamRc::new(
             core,
             Self::STREAM_NAME,
@@ -90,7 +90,7 @@ impl PlaybackStream {
 
         let user_data = PlaybackStreamData {
             last: Instant::now(),
-            scheduler,
+            packet_output,
         };
 
         let listener = playback_stream

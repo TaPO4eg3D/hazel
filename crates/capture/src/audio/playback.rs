@@ -2,13 +2,13 @@ use std::{
     cmp::Reverse,
     collections::{BTreeMap, BinaryHeap, HashMap, hash_map::Entry},
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Weak, atomic::{AtomicBool, AtomicUsize, Ordering}
     },
     thread,
     time::Instant,
 };
 
+use atomic_float::AtomicF32;
 use crossbeam::channel;
 use ffmpeg_next::Packet;
 use heapless::Deque;
@@ -21,14 +21,8 @@ use streaming_common::FFMpegPacketPayload;
 #[cfg(target_os = "linux")]
 use crate::audio::linux;
 use crate::audio::{
-    DEFAULT_CHANNELS, DEFAULT_RATE, StreamingCompatFrom as _, VecDequeExt, decode::AudioDecoder
+    AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, PlatformLoopController, StreamingCompatFrom as _, VecDequeExt, decode::AudioDecoder
 };
-
-#[cfg(target_os = "linux")]
-type PlatformPlayback = linux::LinuxPlayback;
-#[cfg(target_os = "windows")]
-type PlatformPlayback = windows::WindowsPlayback;
-
 
 const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
 
@@ -201,23 +195,24 @@ impl JitterBuffer {
         true
     }
 
-    fn pop_slice(&mut self, output: &mut [f32]) {
+    fn pop_slice(
+        &mut self,
+        output: &mut [f32],
+        f: impl Fn(f32, f32) -> f32,
+    ) {
         let mut i = 0;
 
         while i < output.len() {
             if let Some(sample) = self.samples_buffer.pop_front() {
-                output[i] = sample;
+                output[i] = f(output[i], sample);
                 i += 1;
 
                 continue;
             };
 
-            // If we failed to decode anything, fill with zeroes
+            // Return if we failed to decode anything, mixer
+            // will take care of filling missing bits with zeroes
             if !self.decode() {
-                output[i..]
-                    .iter_mut()
-                    .for_each(|s| *s = 0.);
-
                 break;
             }
         }
@@ -225,40 +220,150 @@ impl JitterBuffer {
 }
 
 
-pub struct StreamingClientState {
+pub struct AudioStreamingClientState {
     pub user_id: i32,
+
+    // Used for a garbage collection
+    last_update: Instant,
     jitter_buffer: JitterBuffer,
+
+    shared: Weak<AudioStreamingClientSharedState>,
+}
+
+// Shared state with UI to control volume, mute, etc.
+pub struct AudioStreamingClientSharedState {
+    pub user_id: i32,
 }
 
 
-impl StreamingClientState {
-    pub fn new(user_id: i32) -> Self {
+impl AudioStreamingClientState {
+    pub fn new(user_id: i32, shared: Weak<AudioStreamingClientSharedState>) -> Self {
         Self {
             user_id,
+            shared,
+            last_update: Instant::now(),
             jitter_buffer: JitterBuffer::new(),
         }
     }
 }
 
-/// Used to enqueue streaming audio packets
-/// for a playback
-pub struct AudioPacketSender {
+pub enum AudioPacketCommand {
+    AddClient((i32, Weak<AudioStreamingClientSharedState>)),
+    RemoveClient(i32),
 }
 
-impl AudioPacketSender {
+pub struct AudioPacketInput {
+    pub tx: channel::Sender<AudioPacketCommand>,
+    pub output_state: AudioOutputState,
+
+    packet_buffer: HeapProd<(i32, Instant, FFMpegPacketPayload)>,
 }
+
+pub(crate) struct AudioPacketOutput {
+    active_clients: HashMap<i32, AudioStreamingClientState>,
+
+    rx: channel::Receiver<AudioPacketCommand>,
+    packet_buffer: HeapCons<(i32, Instant, FFMpegPacketPayload)>,
+
+    output_state: AudioOutputState,
+}
+
+impl AudioPacketInput {
+    pub fn send(&mut self, user_id: i32, arrival_ts: Instant, packet: FFMpegPacketPayload) {
+        _ = self.packet_buffer.try_push((user_id, arrival_ts, packet));
+    }
+}
+
+impl AudioPacketOutput {
+    fn process_commands(&mut self) {
+        while let Ok(command) = self.rx.try_recv() {
+            match command {
+                AudioPacketCommand::AddClient((user_id, state)) => {
+                    self.active_clients
+                        .insert(user_id, AudioStreamingClientState::new(user_id, state));
+                },
+                AudioPacketCommand::RemoveClient(user_id) => {
+                    self.active_clients
+                        .remove(&user_id);
+                },
+            }
+        }
+    }
+
+    fn process_packets(&mut self) {
+        while let Some((user_id, arrival_ts, packet)) = self.packet_buffer.try_pop() {
+            let Some(client_state) = self.active_clients.get_mut(&user_id) else {
+                // Probably a late packet. We don't have such user anymore, skipping
+                continue;
+            };
+            
+            client_state.jitter_buffer.push_packet(arrival_ts, packet);
+        }
+    }
+
+    pub(crate) fn process(&mut self, output: &mut [f32]) {
+        self.process_commands();
+        self.process_packets();
+
+        output
+            .iter_mut()
+            .for_each(|s| *s = 0.);
+
+        for client_state in self.active_clients.values_mut() {
+            client_state.jitter_buffer.pop_slice(output, |old, new| old + new);
+        }
+    }
+}
+
 
 /// Used to enqueue raw audio samples
 /// for a playback
-pub struct AudioSamplesSender {
+pub struct AudioSamplesSender {}
+pub struct AudioSamplesRecv {}
+
+#[derive(Clone, Default)]
+pub struct AudioOutputState {
+    pub is_sound_off: Arc<AtomicBool>,
+    pub volume: Arc<AtomicF32>,
 }
 
 #[derive(Clone)]
-pub struct AudioStreamingState {
-    is_muted: Arc<AtomicBool>,
-    volume: Arc<AtomicBool>,
+pub struct PlaybackController {
+    loop_controller: PlatformLoopController,
 }
 
+impl PlaybackController {
+    fn set_enabled(&self, value: bool) {
+        _ = self.loop_controller.send(AudioLoopCommand::SetEnabledPlayback(value));
+    }
+}
 
-pub fn init_playback() {
+pub struct Playback {
+    pub packet_input: Option<AudioPacketInput>,
+    pub controller: PlaybackController,
+}
+
+pub(crate) fn init_packet_processing() -> (AudioPacketInput, AudioPacketOutput) {
+    let ring = HeapRb::new(24);
+    let (packet_prod, packet_cons) = ring.split();
+
+    let (tx, rx) = channel::bounded(14);
+
+    let output_state = AudioOutputState::default();
+
+    let packet_input = AudioPacketInput {
+        tx,
+        output_state: output_state.clone(),
+        packet_buffer: packet_prod,
+    };
+
+    let packet_output = AudioPacketOutput {
+        rx,
+
+        active_clients: HashMap::new(),
+        packet_buffer: packet_cons,
+        output_state,
+    };
+
+    (packet_input, packet_output)
 }
