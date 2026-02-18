@@ -124,8 +124,7 @@ impl JitterBuffer {
         if let (Some(last_arrival), Some(last_ts)) = (self.last_arrival, self.last_ts) {
             let arrival_diff_ms = arrival_ts.duration_since(last_arrival).as_secs_f64() * 1000.;
 
-            let ts_diff_samples = timestamp.abs_diff(last_ts) as f64;
-            let ts_diff_ms = (ts_diff_samples / DEFAULT_RATE as f64) * 1000.;
+            let ts_diff_ms = timestamp.abs_diff(last_ts) as f64;
 
             let deviation = (arrival_diff_ms - ts_diff_ms).abs();
 
@@ -322,11 +321,7 @@ impl AudioPacketOutput {
         for client_state in self.active_clients.values_mut() {
             let played = client_state
                 .jitter_buffer
-                .pop_slice(output, |old, new| {
-                    let sample = old + new;
-
-                    sample * volume
-                });
+                .pop_slice(output, |old, new| old + new * volume);
 
             if let Some(shared) = client_state.shared.upgrade() {
                 shared.is_talking.store(played, Ordering::Relaxed);
