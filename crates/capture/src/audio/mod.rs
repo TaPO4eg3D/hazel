@@ -10,7 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ffmpeg_next::{Packet, codec, device::output};
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},

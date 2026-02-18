@@ -13,8 +13,6 @@ atomic_float = { workspace = true }
 
 streaming_common = { workspace = true }
 
-ffmpeg-next = "8.0.0"
-
 nnnoiseless = "0.5.2"
 
 ringbuf = "0.4.8"

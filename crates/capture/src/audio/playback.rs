@@ -176,8 +176,6 @@ impl JitterBuffer {
 
             self.decoder.decode(Some(packet));
         } else {
-            println!("Missing packet!");
-
             self.misses += 1;
 
             // If have have too much misses, we probably missed the marker

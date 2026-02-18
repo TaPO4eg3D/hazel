@@ -9,8 +9,6 @@ use std::{
 use pipewire::{self as pw, types::ObjectType};
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
 
-use ffmpeg_next::{self as ffmpeg};
-
 use crate::audio::{
     AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
     linux::{capture::CaptureStream, playback::PlaybackStream},
@@ -75,7 +73,6 @@ pub(crate) fn init(
         .name("pipewire-loop".into())
         .spawn(move || {
             pw::init();
-            ffmpeg::init().unwrap();
 
             let mainloop = pw::main_loop::MainLoopRc::new(None)?;
             let context = pw::context::ContextRc::new(&mainloop, None)?;
