@@ -154,6 +154,9 @@ pub fn init_theme(cx: &mut App) {
 struct Args {
     #[arg(short, long)]
     profile: Option<String>,
+
+    #[arg(long, default_value = "false")]
+    audio_debug: bool,
 }
 
 fn main() {
@@ -164,7 +167,7 @@ fn main() {
         gpui_component::init(cx);
 
         gpui_tokio::init(cx);
-        gpui_audio::init(cx);
+        gpui_audio::init(cx, args.audio_debug);
 
         init_theme(cx);
         cx.set_global(ConnectionManger::new());

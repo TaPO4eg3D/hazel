@@ -1,10 +1,7 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Instant,
+    collections::{BTreeMap, HashMap}, sync::{
+        Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}
+    }, time::Instant
 };
 
 use atomic_float::AtomicF32;
@@ -21,6 +18,14 @@ use crate::audio::{
 };
 
 const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
+
+#[derive(Default, Clone, Debug)]
+pub struct JitterBufferStats {
+    pub missed_packets: u32,
+
+    pub target_delay: f64,
+    pub estimated_delay: f64,
+}
 
 struct JitterBuffer {
     decoder: AudioDecoder,
@@ -50,10 +55,13 @@ struct JitterBuffer {
 
     // How many times had to generate PLC in a row
     misses: u32,
+
+    debug: bool,
+    stats: Arc<Mutex<JitterBufferStats>>,
 }
 
 impl JitterBuffer {
-    fn new() -> Self {
+    fn new(debug: bool) -> Self {
         Self {
             decoder: AudioDecoder::new(),
             packets_buffer: BTreeMap::new(),
@@ -68,7 +76,17 @@ impl JitterBuffer {
             last_ts: None,
             misses: 0,
             ending_chunk: None,
+            stats: Arc::new(Mutex::new(JitterBufferStats::default())),
+            debug,
         }
+    }
+
+    fn update_stats(&self) {
+        let mut stats = self.stats.lock().unwrap();
+
+        stats.target_delay = self.target_delay_ms;
+        stats.estimated_delay = self.jitter_estimate_ms;
+        stats.missed_packets += self.misses;
     }
 
     fn push_packet(&mut self, arrival_ts: Instant, packet: EncodedAudioPacket) {
@@ -216,6 +234,10 @@ impl JitterBuffer {
             }
         }
 
+        if self.debug {
+            self.update_stats();
+        }
+
         i != 0
     }
 }
@@ -247,12 +269,12 @@ impl AudioStreamingClientSharedState {
 }
 
 impl AudioStreamingClientState {
-    pub fn new(user_id: i32, shared: Weak<AudioStreamingClientSharedState>) -> Self {
+    pub fn new(user_id: i32, shared: Weak<AudioStreamingClientSharedState>, debug: bool) -> Self {
         Self {
             user_id,
             shared,
             last_update: Instant::now(),
-            jitter_buffer: JitterBuffer::new(),
+            jitter_buffer: JitterBuffer::new(debug),
             active: true,
         }
     }
@@ -277,6 +299,8 @@ pub(crate) struct AudioPacketOutput {
     packet_buffer: HeapCons<(i32, Instant, EncodedAudioPacket)>,
 
     output_state: AudioOutputState,
+
+    pub(crate) debug_stats: Option<Arc<Mutex<Vec<(i32, Weak<Mutex<JitterBufferStats>>)>>>>,
 }
 
 impl AudioPacketInput {
@@ -290,8 +314,16 @@ impl AudioPacketOutput {
         while let Ok(command) = self.rx.try_recv() {
             match command {
                 AudioPacketCommand::AddClient((user_id, state)) => {
+                    let state = AudioStreamingClientState::new(user_id, state, self.debug_stats.is_some());
+
+                    if let Some(debug_stats) = self.debug_stats.as_ref() {
+                        let mut debug_stats = debug_stats.lock().unwrap();
+
+                        debug_stats.push((user_id, Arc::downgrade(&state.jitter_buffer.stats)));
+                    }
+
                     self.active_clients
-                        .insert(user_id, AudioStreamingClientState::new(user_id, state));
+                        .insert(user_id, state);
                 }
                 AudioPacketCommand::RemoveClient(user_id) => {
                     self.active_clients.remove(&user_id);
@@ -317,11 +349,10 @@ impl AudioPacketOutput {
 
         output.iter_mut().for_each(|s| *s = 0.);
 
-        let volume = self.output_state.volume.load(Ordering::Relaxed);
         for client_state in self.active_clients.values_mut() {
             let played = client_state
                 .jitter_buffer
-                .pop_slice(output, |old, new| old + new * volume);
+                .pop_slice(output, |old, new| old + new);
 
             if let Some(shared) = client_state.shared.upgrade() {
                 shared.is_talking.store(played, Ordering::Relaxed);
@@ -329,6 +360,9 @@ impl AudioPacketOutput {
                 client_state.active = false;
             }
         }
+
+        let volume = self.output_state.volume.load(Ordering::Relaxed);
+        output.iter_mut().for_each(|s| *s *= volume);
 
         self.active_clients.retain(|_, state| state.active);
     }
@@ -378,7 +412,7 @@ pub struct Playback {
     pub controller: PlaybackController,
 }
 
-pub(crate) fn init_packet_processing() -> (AudioPacketInput, AudioPacketOutput) {
+pub(crate) fn init_packet_processing(debug: bool) -> (AudioPacketInput, AudioPacketOutput) {
     let ring = HeapRb::new(24);
     let (packet_prod, packet_cons) = ring.split();
 
@@ -398,6 +432,8 @@ pub(crate) fn init_packet_processing() -> (AudioPacketInput, AudioPacketOutput) 
         active_clients: HashMap::new(),
         packet_buffer: packet_cons,
         output_state,
+
+        debug_stats: debug.then(|| Arc::new(Mutex::new(Vec::new()))),
     };
 
     (packet_input, packet_output)
