@@ -56,7 +56,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
 
     loop {
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
-        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
+        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed) + 0.5;
 
         let encoded_recv = recv.recv_encoded_with(|mut samples| {
             if samples.is_empty() {
