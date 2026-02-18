@@ -13,7 +13,7 @@ pub struct TextChannel {
 }
 
 pub struct ChatState {
-    input_state: Entity<InputState>,
+    _input_state: Entity<InputState>,
 
     pub text_channels: Vec<TextChannel>,
 }
@@ -28,7 +28,7 @@ impl ChatState {
         });
 
         Self {
-            input_state,
+            _input_state: input_state,
             text_channels: (0..4).map(|i| {
                 TextChannel {
                     id: i,

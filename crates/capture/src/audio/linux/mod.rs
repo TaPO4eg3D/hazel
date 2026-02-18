@@ -1,16 +1,10 @@
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    thread::{self, Thread},
-};
+use std::{cell::RefCell, rc::Rc, thread};
 
 use pipewire::{self as pw, types::ObjectType};
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::*};
+use ringbuf::{HeapCons, HeapRb, traits::*};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
+    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry, Notifier,
     linux::{capture::CaptureStream, playback::PlaybackStream},
     playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackController},
 };

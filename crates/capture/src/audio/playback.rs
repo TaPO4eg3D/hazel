@@ -247,8 +247,6 @@ impl JitterBuffer {
 pub struct AudioStreamingClientState {
     pub user_id: i32,
 
-    // Used for a garbage collection
-    last_update: Instant,
     jitter_buffer: JitterBuffer,
 
     shared: Weak<AudioStreamingClientSharedState>,
@@ -275,7 +273,6 @@ impl AudioStreamingClientState {
         Self {
             user_id,
             shared,
-            last_update: Instant::now(),
             jitter_buffer: JitterBuffer::new(debug),
             active: true,
         }

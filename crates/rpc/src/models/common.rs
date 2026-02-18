@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     client::Connection,
-    server::{Response, RpcWriter},
+    server::RpcWriter,
 };
 
 #[derive(Error, Debug, Serialize, Deserialize)]

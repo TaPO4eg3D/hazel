@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     net::{SocketAddr, UdpSocket},
     sync::{
-        Arc, Mutex, RwLock, Weak,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -14,15 +14,14 @@ use bytes::{Bytes, BytesMut};
 use capture::audio::{
     self, Capture, DeviceRegistry,
     playback::{
-        AudioOutputState, AudioPacketCommand, AudioPacketInput, AudioStreamingClientSharedState,
-        AudioStreamingClientState, Playback, PlaybackController,
+        AudioOutputState, AudioPacketCommand, AudioPacketInput, AudioStreamingClientSharedState, PlaybackController,
     },
 };
 use crossbeam::channel;
 use gpui::{App, AppContext, Global};
 
 use rpc::models::markers::UserId;
-use streaming_common::{DATA_BUFF_SIZE, EncodedAudioPacket, UDPPacket, UDPPacketType};
+use streaming_common::{EncodedAudioPacket, UDPPacket, UDPPacketType};
 
 type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 

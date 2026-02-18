@@ -1,9 +1,3 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
-
 use anyhow::Result as AResult;
 use pipewire::{
     self as pw,
@@ -12,9 +6,8 @@ use pipewire::{
     spa::{self, pod::Pod},
     stream::{Stream, StreamListener, StreamRc},
 };
-use ringbuf::{HeapCons, traits::Consumer};
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, VecDequeExt as _, playback::AudioPacketOutput};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, playback::AudioPacketOutput};
 
 struct PlaybackStreamData {
     packet_output: AudioPacketOutput,
