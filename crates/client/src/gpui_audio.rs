@@ -254,10 +254,10 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let shared = shared.upgrade().unwrap();
 
-            stream.packet_tx.send(AudioPacketCommand::AddClient((
+            _ = stream.packet_tx.send(AudioPacketCommand::AddClient((
                 shared.user_id,
                 Arc::downgrade(&shared),
-            )))
+            )));
         });
     }
 }

@@ -231,6 +231,7 @@ pub struct AudioStreamingClientState {
     jitter_buffer: JitterBuffer,
 
     shared: Weak<AudioStreamingClientSharedState>,
+    active: bool,
 }
 
 // Shared state with UI to control volume, mute, etc.
@@ -255,6 +256,7 @@ impl AudioStreamingClientState {
             shared,
             last_update: Instant::now(),
             jitter_buffer: JitterBuffer::new(),
+            active: true,
         }
     }
 }
@@ -318,15 +320,24 @@ impl AudioPacketOutput {
 
         output.iter_mut().for_each(|s| *s = 0.);
 
+        let volume = self.output_state.volume.load(Ordering::Relaxed);
         for client_state in self.active_clients.values_mut() {
             let played = client_state
                 .jitter_buffer
-                .pop_slice(output, |old, new| old + new);
+                .pop_slice(output, |old, new| {
+                    let sample = old + new;
+
+                    sample * volume
+                });
 
             if let Some(shared) = client_state.shared.upgrade() {
                 shared.is_talking.store(played, Ordering::Relaxed);
+            } else {
+                client_state.active = false;
             }
         }
+
+        self.active_clients.retain(|_, state| state.active);
     }
 }
 
@@ -335,10 +346,19 @@ impl AudioPacketOutput {
 pub struct AudioSamplesSender {}
 pub struct AudioSamplesRecv {}
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AudioOutputState {
     pub is_sound_off: Arc<AtomicBool>,
     pub volume: Arc<AtomicF32>,
+}
+
+impl Default for AudioOutputState {
+    fn default() -> Self {
+        Self {
+            is_sound_off: Arc::new(AtomicBool::new(false)),
+            volume: Arc::new(AtomicF32::new(1.)),
+        }
+    }
 }
 
 #[derive(Clone)]
