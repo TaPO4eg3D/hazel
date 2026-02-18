@@ -348,6 +348,16 @@ pub struct CaptureReciever<'a> {
     capture: &'a Capture,
 }
 
+pub struct EncodedRecv<'a> {
+    encoder: &'a mut AudioEncoder,
+}
+
+impl<'a> EncodedRecv<'a> {
+    pub fn pop(&mut self) -> Option<EncodedAudioPacket> {
+        self.encoder.pop_packet()
+    }
+}
+
 impl<'a> CaptureReciever<'a> {
     fn new(capture: &'a Capture) -> CaptureReciever<'a> {
         let mut recievers = capture.consumers.write().unwrap();
@@ -365,14 +375,18 @@ impl<'a> CaptureReciever<'a> {
         }
     }
 
-    pub fn recv_encoded_with(
-        &mut self,
+    pub fn recv_encoded_with<'b>(
+        &'b mut self,
         f: impl Fn(Vec<f32>) -> Option<Vec<f32>>,
-    ) -> Option<EncodedAudioPacket> {
-        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(80)) {
-            return self.encoder.encode(&f(samples)?);
+    ) -> Option<EncodedRecv<'b>> {
+        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(40)) {
+            self.encoder.encode(&f(samples)?);
+
+            return Some(EncodedRecv {
+                encoder: &mut self.encoder,
+            });
         }
-        
+
         None
     }
 }

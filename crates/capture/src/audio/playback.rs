@@ -117,6 +117,8 @@ impl JitterBuffer {
         self.last_arrival = None;
 
         self.next_playout_seq = None;
+
+        self.decoder.reset();
     }
 
     fn update_jitter(&mut self, arrival_ts: Instant, packet: &EncodedAudioPacket) {
@@ -165,20 +167,23 @@ impl JitterBuffer {
             }
         }
 
-        let pts = self.next_playout_seq.unwrap();
-        if self.ending_chunk.is_some_and(|end_pts| end_pts == pts) {
+        let seq = self.next_playout_seq.unwrap();
+        if self.ending_chunk.is_some_and(|end_pts| end_pts == seq) {
             self.close_speech_chunk();
 
             return false;
         }
 
-        if let Some((_, packet)) = self.packets_buffer.remove(&pts) {
+        if let Some((_, packet)) = self.packets_buffer.remove(&seq) {
             self.misses = 0;
-            self.next_playout_seq = Some(pts.wrapping_add(1));
+            self.next_playout_seq = Some(seq.wrapping_add(1));
 
             self.decoder.decode(Some(packet));
         } else {
+            println!("Missing packet!");
+
             self.misses += 1;
+
             // If have have too much misses, we probably missed the marker
             // and we need to close the speech chunk
             if self.misses > 4 {

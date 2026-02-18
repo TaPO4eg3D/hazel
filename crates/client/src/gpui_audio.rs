@@ -58,7 +58,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
         let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
 
-        let encoded_packet = recv.recv_encoded_with(|mut samples| {
+        let encoded_recv = recv.recv_encoded_with(|mut samples| {
             if samples.is_empty() {
                 state.is_talking.store(false, Ordering::Relaxed);
 
@@ -94,12 +94,12 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
             Some(samples)
         });
 
-        if encoded_packet.is_none() {
+        if encoded_recv.is_none() {
             // Let the receivers know that we finished with our speech chunk
             if transmitting && let Some((user_id, addr)) = *addr.lock().unwrap() {
                 buf.clear();
 
-                let mut packet = EncodedAudioPacket::new(&[]);
+                let mut packet = EncodedAudioPacket::marker();
                 packet.seq = seq;
 
                 let udp_packet = UDPPacket {
@@ -138,24 +138,26 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
             continue;
         }
 
-        if let Some(mut encoded_packet) = encoded_packet {
+        if let Some(mut encoded_recv) = encoded_recv {
             transmitting = true;
 
-            if let Some((user_id, addr)) = *addr.lock().unwrap() {
-                buf.clear();
+            while let Some(mut encoded_packet) = encoded_recv.pop() {
+                if let Some((user_id, addr)) = *addr.lock().unwrap() {
+                    buf.clear();
 
-                encoded_packet.seq = seq;
-                let udp_packet = UDPPacket {
-                    user_id: user_id.value,
-                    payload: UDPPacketType::Voice(encoded_packet),
-                };
+                    encoded_packet.seq = seq;
+                    let udp_packet = UDPPacket {
+                        user_id: user_id.value,
+                        payload: UDPPacketType::Voice(encoded_packet),
+                    };
 
-                udp_packet.to_bytes(&mut buf);
+                    udp_packet.to_bytes(&mut buf);
 
-                seq += 1;
-                last_send = Instant::now();
+                    seq += 1;
+                    last_send = Instant::now();
 
-                _ = socket.send_to(&buf, addr);
+                    _ = socket.send_to(&buf, addr);
+                }
             }
         }
     }
