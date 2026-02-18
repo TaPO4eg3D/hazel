@@ -99,15 +99,15 @@ impl JitterBuffer {
             return;
         }
 
-        self.update_jitter(arrival_ts, &packet);
-        self.adapt_target_delay();
-
         // Special packet, means the end of the speech chunk
         if packet.marker {
             self.ending_chunk = Some(packet.seq);
 
             return;
         }
+
+        self.update_jitter(arrival_ts, &packet);
+        self.adapt_target_delay();
 
         // Packet arrived out of order, we already played PLC
         if let Some(next) = self.next_playout_seq
@@ -129,6 +129,7 @@ impl JitterBuffer {
     fn close_speech_chunk(&mut self) {
         self.last_ts = None;
         self.last_arrival = None;
+        self.misses = 0;
 
         self.next_playout_seq = None;
 
@@ -194,6 +195,7 @@ impl JitterBuffer {
             self.decoder.decode(Some(packet));
         } else {
             self.misses += 1;
+            self.next_playout_seq = Some(seq.wrapping_add(1));
 
             // If have have too much misses, we probably missed the marker
             // and we need to close the speech chunk
@@ -292,6 +294,7 @@ pub struct AudioPacketInput {
     packet_buffer: HeapProd<(i32, Instant, EncodedAudioPacket)>,
 }
 
+type DebugStats = Vec<(i32, Weak<Mutex<JitterBufferStats>>)>;
 pub(crate) struct AudioPacketOutput {
     active_clients: HashMap<i32, AudioStreamingClientState>,
 
@@ -300,7 +303,7 @@ pub(crate) struct AudioPacketOutput {
 
     output_state: AudioOutputState,
 
-    pub(crate) debug_stats: Option<Arc<Mutex<Vec<(i32, Weak<Mutex<JitterBufferStats>>)>>>>,
+    pub(crate) debug_stats: Option<Arc<Mutex<DebugStats>>>,
 }
 
 impl AudioPacketInput {
