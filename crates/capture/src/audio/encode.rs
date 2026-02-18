@@ -1,118 +1,67 @@
 use std::collections::VecDeque;
 
-use ffmpeg_next::{ChannelLayout, Packet, codec, encoder, format, frame};
-use streaming_common::FFMpegPacketPayload;
+use streaming_common::{DATA_BUFF_SIZE, EncodedAudioPacket};
 
-use crate::audio::{DEFAULT_BIT_RATE, DEFAULT_RATE, StreamingCompatInto as _, VecDequeExt as _};
+use crate::audio::{DEFAULT_BIT_RATE, DEFAULT_RATE, VecDequeExt as _};
 
-/// Instance of the Opus encoder. Please note that Opus is 
+const INPUT_BUFFER_SIZE: usize = (DEFAULT_RATE as usize / 1000) * 20;
+
+/// Instance of the Opus encoder. Please note that Opus is
 /// a stateful codec, hence each client MUST have its own instance
 /// of this encoder. Otherwise, encoding artifacts are guaranteed
 pub struct AudioEncoder {
     /// Instance of the Opus FFmpeg encoder
-    encoder: encoder::audio::Encoder,
+    encoder: opus::Encoder,
 
-    /// Buffer of raw samples. Reused for every encoder pass
-    raw_frame: frame::audio::Audio,
-
-    /// Buffer for encoded data. Reused for every encoder pass
-    encoded_packet: Packet,
+    /// Buffer where encoder outputs the result. Reused for every
+    /// encoder pass
+    output_buffer: [u8; DATA_BUFF_SIZE],
+    input_buffer: [f32; INPUT_BUFFER_SIZE],
 
     /// Opus requires a specific number of samples to
     /// be supplied into it. This buffer is used to accumulate
     /// enough amount of them
-    frame_queue: VecDeque<f32>,
-
-    /// Number of frames successfully encoded.
-    /// Used to properly position frames on decoding step
-    pts_counter: i64,
-
-    /// One audio frame could result in multiple encoded packets,
-    /// we store all of them in this buffer. This is the "output" of
-    /// [`Self::encode`] function
-    encoded_packets: VecDeque<FFMpegPacketPayload>,
-
+    samples_queue: VecDeque<f32>,
 }
 
 impl AudioEncoder {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let codec = encoder::find(codec::Id::OPUS).expect("Opus codec not found");
-        let context = codec::context::Context::new_with_codec(codec);
+        let mut encoder = opus::Encoder::new(
+            DEFAULT_RATE,
+            opus::Channels::Mono,
+            opus::Application::Voip,
+        )
+        .expect("Failed to init encoder");
 
-        let codec = codec.audio().unwrap();
-
-        let mut encoder = context.encoder().audio().unwrap();
-
-        encoder.set_rate(DEFAULT_RATE as i32);
-        encoder.set_channel_layout(ChannelLayout::MONO);
-        encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
-
-        encoder.set_bit_rate(DEFAULT_BIT_RATE);
-        encoder.set_time_base((1, DEFAULT_RATE as i32));
-
-        let encoder = encoder.open_as(codec).unwrap();
-
-        // Just a note for myself, in case I forget that shit again:
-        // `frame_size` means number of samples **PER** channel
-        let frame_size = encoder.frame_size() as usize;
+        encoder.set_bitrate(opus::Bitrate::Bits(DEFAULT_BIT_RATE as i32))
+            .unwrap();
 
         Self {
             encoder,
-            raw_frame: frame::audio::Audio::new(
-                format::Sample::F32(format::sample::Type::Packed),
-                frame_size,
-                ChannelLayout::MONO,
-            ),
-            pts_counter: 0,
+            samples_queue: VecDeque::new(),
 
-            encoded_packet: Packet::empty(),
-            encoded_packets: VecDeque::new(),
-
-            frame_queue: VecDeque::new(),
+            input_buffer: [0.; INPUT_BUFFER_SIZE],
+            output_buffer: [0; DATA_BUFF_SIZE],
         }
     }
 
-    pub fn pop_packet(&mut self) -> Option<FFMpegPacketPayload> {
-        self.encoded_packets.pop_front()
-    }
-
-    /// Encoded provided `samples`. This could result in multiple encoded packets.
-    /// Packets can be extracted by using [`Self::pop_packet`] function.
-    pub fn encode(&mut self, samples: &[f32]) {
-        self.frame_queue.extend(samples);
+    pub fn encode(&mut self, samples: &[f32]) -> Option<EncodedAudioPacket> {
+        self.samples_queue.extend(samples);
 
         loop {
-            // We have to use unsafe because of the bug in `ffpeg-next`. 
-            // It does not account for channels when we have packed samples
-            let plane = unsafe {
-                std::slice::from_raw_parts_mut(
-                    (*self.raw_frame.as_mut_ptr()).data[0] as *mut f32,
-                    self.raw_frame.samples() * self.raw_frame.channels() as usize,
-                )
-            };
-
-            if self.frame_queue.pop_slice(plane, false) == 0 {
-                break;
+            if self
+                .samples_queue
+                .pop_slice(&mut self.input_buffer[..], false) == 0
+            {
+                return None;
             }
 
-            self.raw_frame.set_pts(Some(self.pts_counter));
-            self.encoder.send_frame(&self.raw_frame).unwrap();
-
-            self.pts_counter += self.encoder.frame_size() as i64;
-
-            while self
+            if let Ok(n) = self
                 .encoder
-                .receive_packet(&mut self.encoded_packet)
-                .is_ok()
+                .encode_float(&self.input_buffer[..], &mut self.output_buffer[..])
             {
-                let encoded_data = self.encoded_packet.data().unwrap_or_default();
-
-                if encoded_data.is_empty() {
-                    continue;
-                }
-
-                self.encoded_packets.push_back(self.encoded_packet.to_payload())
+                return Some(EncodedAudioPacket::new(&self.output_buffer[..n]));
             }
         }
     }

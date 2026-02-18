@@ -1,61 +1,73 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-const STRIDE: usize = std::mem::size_of::<f32>();
-const DEFAULT_RATE: usize = 48000;
-
-// 80ms of mono / 40ms of stereo
-pub const DATA_BUFF_SIZE: usize = ((DEFAULT_RATE / 1000) * 80) * STRIDE;
+pub const DATA_BUFF_SIZE: usize = 1024;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct FFMpegPacketPayload {
+pub struct EncodedAudioPacket {
+    pub marker: bool,
     pub seq: u64,
 
-    pub pts: i64,
-    pub flags: i32,
-
-    pub items: i32,
+    pub items: u16,
     pub data: [u8; DATA_BUFF_SIZE],
 }
 
-impl PartialOrd for FFMpegPacketPayload {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+impl EncodedAudioPacket {
+    pub fn new(in_data: &[u8]) -> Self {
+        if in_data.len() > DATA_BUFF_SIZE {
+            panic!("Input is too large");
+        }
+
+        let mut out_data = [0_u8; DATA_BUFF_SIZE];
+        in_data
+            .iter()
+            .zip(out_data.iter_mut())
+            .for_each(|(sample, out)| *out = *sample);
+
+        EncodedAudioPacket { 
+            marker: false,
+            seq: 0,
+            items: in_data.len() as u16,
+            data: out_data,
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data[..self.items as usize]
+    }
+    
+    pub fn as_slice_mut(&mut self) -> &[u8] {
+        &mut self.data[..self.items as usize]
     }
 }
 
-impl Ord for FFMpegPacketPayload {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.pts.cmp(&other.pts)
-    }
-}
 
-impl FFMpegPacketPayload {
+impl EncodedAudioPacket {
     pub fn to_bytes(&self, buf: &mut BytesMut) {
+        buf.put_u8(self.marker as u8);
         buf.put_u64_le(self.seq);
-        buf.put_i64_le(self.pts);
-        buf.put_i32_le(self.flags);
-        buf.put_i32_le(self.items);
+        buf.put_u16_le(self.items);
 
         buf.put(&self.data[..self.items as usize]);
     }
 
     pub fn parse(mut bytes: Bytes) -> Self {
+        let marker = bytes.get_u8() == 1;
         let seq = bytes.get_u64_le();
-        let pts = bytes.get_i64_le();
-        let flags = bytes.get_i32_le();
-        let items = bytes.get_i32_le();
+        let items = bytes.get_u16_le();
 
         let mut data = [0_u8; DATA_BUFF_SIZE];
-        bytes.copy_to_slice(&mut data[..items as usize]);
+        if items > 0 {
+            bytes.copy_to_slice(&mut data[..items as usize]);
+        }
 
-        Self { seq, pts, flags, data, items }
+        Self { marker, seq, data, items }
     }
 }
 
 #[derive(Debug)]
 pub enum UDPPacketType {
-    Voice(FFMpegPacketPayload),
-    Stream(FFMpegPacketPayload),
+    Voice(EncodedAudioPacket),
+    Stream(EncodedAudioPacket),
     Ping,
     Pong,
 }
@@ -63,8 +75,8 @@ pub enum UDPPacketType {
 impl UDPPacketType {
     pub fn from_byte(ty: u8, bytes: Bytes) -> Self {
         match ty {
-            0 => UDPPacketType::Voice(FFMpegPacketPayload::parse(bytes)),
-            1 => UDPPacketType::Stream(FFMpegPacketPayload::parse(bytes)),
+            0 => UDPPacketType::Voice(EncodedAudioPacket::parse(bytes)),
+            1 => UDPPacketType::Stream(EncodedAudioPacket::parse(bytes)),
             2 => UDPPacketType::Ping,
             3 => UDPPacketType::Pong,
             _ => todo!(),

@@ -11,17 +11,17 @@ use std::{
 
 use atomic_float::AtomicF32;
 use crossbeam::channel;
-use ffmpeg_next::Packet;
+use ffmpeg_next::{Packet, packet::Mut};
 use heapless::Deque;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer as _, Producer as _, Split as _},
 };
-use streaming_common::FFMpegPacketPayload;
+use streaming_common::EncodedAudioPacket;
 
 use crate::audio::{
     AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, PlatformLoopController,
-    StreamingCompatFrom as _, VecDequeExt, decode::AudioDecoder,
+    decode::AudioDecoder,
 };
 
 const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
@@ -29,7 +29,7 @@ const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
 struct JitterBuffer {
     decoder: AudioDecoder,
 
-    packets_buffer: BTreeMap<u64, (Instant, FFMpegPacketPayload)>,
+    packets_buffer: BTreeMap<u64, (Instant, EncodedAudioPacket)>,
     samples_buffer: heapless::Deque<f32, SAMPLES_BUFFER>,
 
     // SEQ of the next expected packet
@@ -75,7 +75,7 @@ impl JitterBuffer {
         }
     }
 
-    fn push_packet(&mut self, arrival_ts: Instant, packet: FFMpegPacketPayload) {
+    fn push_packet(&mut self, arrival_ts: Instant, packet: EncodedAudioPacket) {
         // Packet arrived out of order, we already finished with
         // this speech chunk
         if let Some(seq) = self.ending_chunk
@@ -89,7 +89,7 @@ impl JitterBuffer {
         self.adapt_target_delay();
 
         // Special packet, means the end of the speech chunk
-        if packet.flags == -99 {
+        if packet.marker {
             self.ending_chunk = Some(packet.seq);
 
             return;
@@ -119,7 +119,7 @@ impl JitterBuffer {
         self.next_playout_seq = None;
     }
 
-    fn update_jitter(&mut self, arrival_ts: Instant, packet: &FFMpegPacketPayload) {
+    fn update_jitter(&mut self, arrival_ts: Instant, packet: &EncodedAudioPacket) {
         // Opus encodes in chunks of 20ms
         let timestamp = packet.seq * 20;
 
@@ -176,10 +176,8 @@ impl JitterBuffer {
             self.misses = 0;
             self.next_playout_seq = Some(pts.wrapping_add(1));
 
-            self.decoder.decode(packet.to_packet());
+            self.decoder.decode(Some(packet));
         } else {
-            println!("Missing packet!");
-
             self.misses += 1;
             // If have have too much misses, we probably missed the marker
             // and we need to close the speech chunk
@@ -190,7 +188,7 @@ impl JitterBuffer {
             }
 
             // Packet is missing, ask decoder for PLC
-            self.decoder.decode(Packet::new(0));
+            self.decoder.decode(None);
         }
 
         while let Some(decoded_sample) = self.decoder.decoded_samples.pop_front() {
@@ -265,20 +263,20 @@ pub struct AudioPacketInput {
     pub tx: channel::Sender<AudioPacketCommand>,
     pub output_state: AudioOutputState,
 
-    packet_buffer: HeapProd<(i32, Instant, FFMpegPacketPayload)>,
+    packet_buffer: HeapProd<(i32, Instant, EncodedAudioPacket)>,
 }
 
 pub(crate) struct AudioPacketOutput {
     active_clients: HashMap<i32, AudioStreamingClientState>,
 
     rx: channel::Receiver<AudioPacketCommand>,
-    packet_buffer: HeapCons<(i32, Instant, FFMpegPacketPayload)>,
+    packet_buffer: HeapCons<(i32, Instant, EncodedAudioPacket)>,
 
     output_state: AudioOutputState,
 }
 
 impl AudioPacketInput {
-    pub fn send(&mut self, user_id: i32, arrival_ts: Instant, packet: FFMpegPacketPayload) {
+    pub fn send(&mut self, user_id: i32, arrival_ts: Instant, packet: EncodedAudioPacket) {
         _ = self.packet_buffer.try_push((user_id, arrival_ts, packet));
     }
 }
