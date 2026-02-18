@@ -19,12 +19,12 @@ use windows::Win32::{
 };
 use windows_core::HSTRING;
 
-use crate::audio::{DEFAULT_RATE, PlaybackSchedulerRecv, windows::try_get_device};
+use crate::audio::{DEFAULT_RATE, playback::AudioPacketOutput, windows::try_get_device};
 
 // TODO: Implement Drop
 pub(crate) struct PlaybackStream {
     pub(crate) event_handle: HANDLE,
-    pub(crate) scheduler: Option<PlaybackSchedulerRecv>,
+    pub(crate) packet_output: Option<AudioPacketOutput>,
     pub(crate) active_device: String,
 
     audio_client: IAudioClient,
@@ -51,7 +51,7 @@ fn try_activate_device(
 
 impl PlaybackStream {
     pub(crate) fn new(
-        scheduler: PlaybackSchedulerRecv,
+        packet_output: AudioPacketOutput,
         preffered_device: Option<String>,
     ) -> windows::core::Result<Self> {
         unsafe {
@@ -107,7 +107,7 @@ impl PlaybackStream {
             Ok(Self {
                 event_handle,
                 active_device: device_id,
-                scheduler: Some(scheduler),
+                packet_output: Some(packet_output),
                 audio_client,
                 render_client,
                 buffer_frame_count,
@@ -146,8 +146,8 @@ impl PlaybackStream {
                     num_frames_available * format.nChannels as usize,
                 );
 
-                if let Some(scheduler) = self.scheduler.as_mut() {
-                    scheduler.pop_slice(buffer);
+                if let Some(packet_output) = self.packet_output.as_mut() {
+                    packet_output.process(buffer);
                 }
 
                 self.render_client
