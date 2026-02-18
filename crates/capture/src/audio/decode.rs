@@ -1,16 +1,21 @@
 use std::collections::VecDeque;
 
-use ffmpeg_next::{ChannelLayout, Packet, codec, dictionary, format, frame};
+use streaming_common::EncodedAudioPacket;
+
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE};
+
+const OUTPUT_BUFFER_SIZE: usize = ((DEFAULT_RATE as usize / 1000) * 20) * DEFAULT_CHANNELS as usize;
 
 /// Instance of the Opus decoder. Please note that Opus is
 /// a stateful codec, hence each client MUST have its own instance
 /// of this decoder. Otherwise, encoding artifacts are guaranteed
 pub(crate) struct AudioDecoder {
-    /// Instance of the Opus FFmpeg decoder
-    decoder: codec::decoder::Audio,
+    /// Instance of the Opus decoder
+    decoder: opus::Decoder,
 
-    /// Buffer of decoded samples. Reused for every decoder pass
-    decoded_frame: frame::Audio,
+    /// Buffer where decoder outputs the result. Reused for every
+    /// decoder pass
+    output_buffer: [f32; OUTPUT_BUFFER_SIZE],
 
     /// That's the "output" of [`Self::decode`] function
     pub(crate) decoded_samples: VecDeque<f32>,
@@ -19,71 +24,39 @@ pub(crate) struct AudioDecoder {
 impl AudioDecoder {
     #[allow(clippy::new_without_default)]
     pub(crate) fn new() -> Self {
-        let codec = codec::decoder::find(codec::Id::OPUS).expect("Opus codec is not found");
-        let context = codec::context::Context::new();
-
-        let mut decoder = context
-            .decoder()
-            .open_as(codec)
-            .and_then(|o| o.audio())
-            .unwrap();
-
-        decoder.set_channel_layout(ChannelLayout::STEREO);
+        let decoder = opus::Decoder::new(
+            DEFAULT_RATE,
+            opus::Channels::Stereo,
+        ).expect("Failed to initialize decoder");
 
         Self {
             decoder,
 
-            decoded_frame: frame::Audio::empty(),
+            output_buffer: [0.; OUTPUT_BUFFER_SIZE],
             decoded_samples: VecDeque::new(),
         }
     }
 
-    pub(crate) fn decode(&mut self, packet: Packet) {
-        self.decoder.send_packet(&packet).unwrap();
-
-        while self.decoder.receive_frame(&mut self.decoded_frame).is_ok() {
-            let channels = self.decoded_frame.channels();
-            let format = self.decoded_frame.format();
-
-            let is_planar = match format {
-                format::Sample::F32(layout) => matches!(layout, format::sample::Type::Planar),
-                format => {
-                    panic!("Unexpected decoded samples format: {format:?}");
-                }
-            };
-
-            match (is_planar, channels) {
-                (true, 2) => { // Planar => F32::Packed
-                    let left = self.decoded_frame.plane::<f32>(0);
-                    let right = self.decoded_frame.plane::<f32>(1);
-
-                    for (l, r) in left.iter().zip(right.iter()) {
-                        self.decoded_samples.push_back(*l);
-                        self.decoded_samples.push_back(*r);
-                    }
-                }
-                (false, 2) => { // Already packed STEREO
-                    // We have to use unsafe because of the bug in `ffpeg-next`. 
-                    // It does not account for channels when we have packed samples
-                    let data = unsafe {
-                        std::slice::from_raw_parts(
-                            (*self.decoded_frame.as_ptr()).data[0] as *mut f32,
-                            self.decoded_frame.samples() * self.decoded_frame.channels() as usize,
-                        )
-                    };
-
-                    self.decoded_samples.extend(data);
-                }
-                (_, 1) => { // Mono (which should not happen by the way but just in case)
-                    let data = self.decoded_frame.plane::<f32>(0);
-
-                    for sample in data {
-                        self.decoded_samples.push_back(*sample);
-                        self.decoded_samples.push_back(*sample);
-                    }
-                }
-                _ => unimplemented!("Unexpected decoder output: {:?}", (is_planar, channels)),
-            }
+    pub fn decode_inner(&mut self, input: &[u8]) {
+        if let Ok(n) = self.decoder.decode_float(
+            input,
+            &mut self.output_buffer[..],
+            false,
+        ) {
+            self.output_buffer
+                .iter()
+                .take(n)
+                .for_each(|sample| self.decoded_samples.push_back(*sample));
         }
+    }
+
+    pub(crate) fn decode(&mut self, packet: Option<EncodedAudioPacket>) {
+        if let Some(packet) = packet {
+            self.decode_inner(packet.as_slice());
+        } else {
+            // Means we're asking for PLC
+            self.decode_inner(&[]);
+        }
+
     }
 }

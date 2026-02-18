@@ -15,7 +15,7 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},
 };
-use streaming_common::{DATA_BUFF_SIZE, FFMpegPacketPayload};
+use streaming_common::{DATA_BUFF_SIZE, EncodedAudioPacket};
 
 use crossbeam::channel;
 
@@ -105,55 +105,6 @@ impl Notifier {
     pub fn listen_updates(&self) {
         let mut guard = self.thread.lock().unwrap();
         *guard = Some(std::thread::current());
-    }
-}
-
-trait StreamingCompatFrom {
-    fn to_packet(&self) -> Packet;
-}
-
-trait StreamingCompatInto {
-    fn to_payload(&self) -> FFMpegPacketPayload;
-}
-
-impl StreamingCompatFrom for FFMpegPacketPayload {
-    fn to_packet(&self) -> Packet {
-        let data = &self.data[..self.items as usize];
-
-        // TODO: It results in allocation, improve?
-        let mut packet = Packet::new(data.len());
-
-        // TODO: Deal with the cast
-        packet.set_pts(Some(self.pts as i64));
-
-        packet.set_flags(codec::packet::Flags::from_bits_truncate(self.flags));
-        let packet_data = packet
-            .data_mut()
-            .expect("Should be present because Packet::new");
-
-        packet_data.copy_from_slice(data);
-
-        packet
-    }
-}
-
-impl StreamingCompatInto for Packet {
-    fn to_payload(&self) -> FFMpegPacketPayload {
-        let mut buffer = [0; DATA_BUFF_SIZE];
-        let packet_data = self.data().unwrap_or_default();
-
-        for (i, value) in packet_data.iter().enumerate() {
-            buffer[i] = *value;
-        }
-
-        FFMpegPacketPayload {
-            seq: 0,
-            pts: self.pts().unwrap(),
-
-            flags: self.flags().bits(),
-            items: packet_data.len() as i32,
-            data: buffer,
-        }
     }
 }
 
@@ -397,16 +348,6 @@ pub struct CaptureReciever<'a> {
     capture: &'a Capture,
 }
 
-pub struct EncodedRecv<'a> {
-    encoder: &'a mut AudioEncoder,
-}
-
-impl<'a> EncodedRecv<'a> {
-    pub fn pop(&mut self) -> Option<FFMpegPacketPayload> {
-        self.encoder.pop_packet()
-    }
-}
-
 impl<'a> CaptureReciever<'a> {
     fn new(capture: &'a Capture) -> CaptureReciever<'a> {
         let mut recievers = capture.consumers.write().unwrap();
@@ -424,28 +365,12 @@ impl<'a> CaptureReciever<'a> {
         }
     }
 
-    pub fn recv_encoded<'b>(&'b mut self) -> EncodedRecv<'b> {
-        if let Ok(samples) = self.rx.recv() {
-            self.encoder.encode(&samples);
-        }
-
-        EncodedRecv {
-            encoder: &mut self.encoder,
-        }
-    }
-
-    pub fn recv_encoded_with<'b>(
-        &'b mut self,
+    pub fn recv_encoded_with(
+        &mut self,
         f: impl Fn(Vec<f32>) -> Option<Vec<f32>>,
-    ) -> Option<EncodedRecv<'b>> {
-        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(40)) {
-            let samples = f(samples)?;
-
-            self.encoder.encode(&samples);
-
-            return Some(EncodedRecv {
-                encoder: &mut self.encoder,
-            });
+    ) -> Option<EncodedAudioPacket> {
+        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(80)) {
+            return self.encoder.encode(&f(samples)?);
         }
         
         None
