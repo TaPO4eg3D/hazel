@@ -262,11 +262,11 @@ impl Streaming {
     }
 }
 
-pub fn init(cx: &mut App) {
+pub fn init(cx: &mut App, debug: bool) {
     let stream_addr: Addr = Arc::new(Mutex::new(None));
 
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (capture, mut playback, device_registry) = audio::init();
+    let (capture, mut playback, device_registry) = audio::init(debug);
 
     let sender_state = Arc::new(SenderState::new());
 
