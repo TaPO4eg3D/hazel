@@ -22,6 +22,7 @@ pub struct AudioEncoder {
     /// be supplied into it. This buffer is used to accumulate
     /// enough amount of them
     samples_queue: VecDeque<f32>,
+    packet_queue: VecDeque<EncodedAudioPacket>,
 }
 
 impl AudioEncoder {
@@ -40,28 +41,26 @@ impl AudioEncoder {
         Self {
             encoder,
             samples_queue: VecDeque::new(),
+            packet_queue: VecDeque::new(),
 
             input_buffer: [0.; INPUT_BUFFER_SIZE],
             output_buffer: [0; DATA_BUFF_SIZE],
         }
     }
 
-    pub fn encode(&mut self, samples: &[f32]) -> Option<EncodedAudioPacket> {
+    pub fn pop_packet(&mut self) -> Option<EncodedAudioPacket> {
+        self.packet_queue.pop_front()
+    }
+
+    pub fn encode(&mut self, samples: &[f32]) {
         self.samples_queue.extend(samples);
 
-        loop {
-            if self
-                .samples_queue
-                .pop_slice(&mut self.input_buffer[..], false) == 0
-            {
-                return None;
-            }
-
+        while self.samples_queue.pop_slice(&mut self.input_buffer[..], false) > 0 {
             if let Ok(n) = self
                 .encoder
                 .encode_float(&self.input_buffer[..], &mut self.output_buffer[..])
             {
-                return Some(EncodedAudioPacket::new(&self.output_buffer[..n]));
+                self.packet_queue.push_back(EncodedAudioPacket::new(&self.output_buffer[..n]));
             }
         }
     }

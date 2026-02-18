@@ -37,15 +37,20 @@ impl AudioDecoder {
         }
     }
 
+    pub fn reset(&mut self) {
+        _ = self.decoder.reset_state();
+    }
+
     pub fn decode_inner(&mut self, input: &[u8]) {
         if let Ok(n) = self.decoder.decode_float(
             input,
             &mut self.output_buffer[..],
             false,
         ) {
+
             self.output_buffer
                 .iter()
-                .take(n)
+                .take(n * 2) // n is per frame, we're stereo
                 .for_each(|sample| self.decoded_samples.push_back(*sample));
         }
     }

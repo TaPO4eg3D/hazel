@@ -31,6 +31,13 @@ impl EncodedAudioPacket {
         }
     }
 
+    pub fn marker() -> Self {
+        let mut item = Self::new(&[]);
+        item.marker = true;
+
+        item
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         &self.data[..self.items as usize]
     }
