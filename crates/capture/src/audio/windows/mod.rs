@@ -32,8 +32,8 @@ use windows::{
 use windows_core::{HSTRING, Interface as _, PWSTR};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, DeviceRegistry, Notifier,
-    PlaybackSchedulerSender, create_playback_scheduler,
+    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry, Notifier,
+    playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackController},
     windows::{capture::CaptureStream, playback::PlaybackStream},
 };
 
@@ -239,12 +239,6 @@ impl WindowsCapture {
     }
 }
 
-pub struct WindowsPlayback {
-    pub(crate) scheduler: PlaybackSchedulerSender,
-
-    loop_controller: CommandSender<AudioLoopCommand>,
-}
-
 struct ChannelState<T> {
     inner: Arc<Mutex<Option<T>>>,
 }
@@ -321,13 +315,14 @@ fn chnannel<T>() -> (EventHandle, ChannelState<T>, CommandSender<T>) {
     }
 }
 
-pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
+pub fn init(
+    packet_input: AudioPacketInput,
+    packet_output: AudioPacketOutput,
+) -> (WindowsCapture, Playback, DeviceRegistry) {
     // We capture in mono and there's no point to store
     // more than 60ms
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
-
-    let (scheduler_send, scheduler_recv) = create_playback_scheduler();
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
 
@@ -338,9 +333,9 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
         notifier: capture_notifier.clone(),
     };
 
-    let playback = WindowsPlayback {
-        scheduler: scheduler_send,
-        loop_controller: sender.clone(),
+    let playback = Playback {
+        controller: PlaybackController::new(sender.clone()),
+        packet_input: Some(packet_input),
     };
 
     let _device_registry = DeviceRegistry::new(sender);
@@ -378,7 +373,7 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
             )
             .expect("Failed to init capture");
             let mut playback_stream =
-                PlaybackStream::new(scheduler_recv, preffered_playback_device.clone())
+                PlaybackStream::new(packet_output, preffered_playback_device.clone())
                     .expect("Failed to init playback");
 
             let command_event = command_event;
@@ -412,10 +407,10 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     // Failure most likely means that device has changed
                     if playback_stream.process().is_err() {
-                        let scheduler = playback_stream.scheduler.take().unwrap();
+                        let packet_output = playback_stream.packet_output.take().unwrap();
 
                         playback_stream =
-                            PlaybackStream::new(scheduler, preffered_playback_device.clone())
+                            PlaybackStream::new(packet_output, preffered_playback_device.clone())
                                 .expect("Failed to recreate the playback stream");
 
                         _ = playback_stream.set_enabled(playback_enabled);
@@ -439,11 +434,11 @@ pub fn init() -> (WindowsCapture, WindowsPlayback, DeviceRegistry) {
                                 device_registry.mark_active_input(&capture_stream.active_device);
                             }
                             AudioLoopCommand::SetActiveOutputDevice(device) => {
-                                let scheduler = playback_stream.scheduler.take().unwrap();
+                                let packet_output = playback_stream.packet_output.take().unwrap();
                                 preffered_playback_device = Some(device.id.clone());
 
                                 playback_stream = PlaybackStream::new(
-                                    scheduler,
+                                    packet_output,
                                     preffered_playback_device.clone(),
                                 )
                                 .expect("Failed to recreate the playback stream");

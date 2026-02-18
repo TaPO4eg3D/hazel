@@ -1,26 +1,19 @@
 use std::{
-    cmp::Reverse,
-    collections::{BinaryHeap, HashMap, VecDeque, hash_map::Entry},
+    collections::VecDeque,
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Poll, Waker},
     thread::{self, Thread},
-    time::{Duration, Instant},
+    time::Duration,
 };
-
-use ringbuf::{
-    HeapCons, HeapProd, HeapRb,
-    traits::{Consumer, Producer, Split as _},
-};
-use streaming_common::{DATA_BUFF_SIZE, EncodedAudioPacket};
 
 use crossbeam::channel;
+use streaming_common::EncodedAudioPacket;
 
-#[cfg(target_os = "linux")]
+use crate::audio::encode::AudioEncoder;
 use crate::audio::playback::{Playback, init_packet_processing};
-use crate::audio::{decode::AudioDecoder, encode::AudioEncoder};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -73,7 +66,6 @@ impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
         length
     }
 }
-
 
 /// Wakes up a sleeping thread when data
 /// is available for consumption
@@ -472,26 +464,15 @@ impl Capture {
     }
 }
 
-#[cfg(target_os = "linux")]
 pub fn init() -> (Capture, Playback, DeviceRegistry) {
     let (packet_input, packet_output) = init_packet_processing();
 
-    let (capture, playback, device_registry) = linux::init(
-        packet_input,
-        packet_output,
-    );
+    #[cfg(target_os = "linux")]
+    let (capture, playback, device_registry) = linux::init(packet_input, packet_output);
+    #[cfg(target_os = "windows")]
+    let (capture, playback, device_registry) = windows::init(packet_input, packet_output);
 
     let capture = Capture::new(capture);
-
-    (capture, playback, device_registry)
-}
-
-#[cfg(target_os = "windows")]
-pub fn init() -> (Capture, Playback, DeviceRegistry) {
-    let (capture, playback, device_registry) = windows::init();
-
-    let capture = Capture::new(capture);
-    let playback = Playback::new(playback);
 
     (capture, playback, device_registry)
 }
