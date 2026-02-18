@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::{Arc, atomic::Ordering}, time::Duration};
 
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
@@ -68,9 +68,7 @@ impl VoiceChannelMember {
         {
             Streaming::is_talking(cx)
         } else if let Some(shared) = self.shared.as_ref() {
-            // TODO: IMPLEMENT
-            // shared.is_talking()
-            false
+            shared.is_talking.load(Ordering::Relaxed)
         } else {
             false
         };

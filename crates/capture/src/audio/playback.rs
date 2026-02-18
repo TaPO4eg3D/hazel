@@ -1,18 +1,14 @@
 use std::{
-    cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc, Weak,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::Instant,
 };
 
 use atomic_float::AtomicF32;
 use crossbeam::channel;
-use ffmpeg_next::{Packet, packet::Mut};
-use heapless::Deque;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer as _, Producer as _, Split as _},
@@ -205,7 +201,7 @@ impl JitterBuffer {
         true
     }
 
-    fn pop_slice(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) {
+    fn pop_slice(&mut self, output: &mut [f32], f: impl Fn(f32, f32) -> f32) -> bool {
         let mut i = 0;
 
         while i < output.len() {
@@ -222,6 +218,8 @@ impl JitterBuffer {
                 break;
             }
         }
+
+        i != 0
     }
 }
 
@@ -238,12 +236,14 @@ pub struct AudioStreamingClientState {
 // Shared state with UI to control volume, mute, etc.
 pub struct AudioStreamingClientSharedState {
     pub user_id: i32,
+    pub is_talking: AtomicBool,
 }
 
 impl AudioStreamingClientSharedState {
     pub fn new(user_id: i32) -> Self {
         Self {
             user_id,
+            is_talking: AtomicBool::new(false),
         }
     }
 }
@@ -319,9 +319,13 @@ impl AudioPacketOutput {
         output.iter_mut().for_each(|s| *s = 0.);
 
         for client_state in self.active_clients.values_mut() {
-            client_state
+            let played = client_state
                 .jitter_buffer
                 .pop_slice(output, |old, new| old + new);
+
+            if let Some(shared) = client_state.shared.upgrade() {
+                shared.is_talking.store(played, Ordering::Relaxed);
+            }
         }
     }
 }
