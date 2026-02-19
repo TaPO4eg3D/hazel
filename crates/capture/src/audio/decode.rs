@@ -37,15 +37,11 @@ impl AudioDecoder {
         }
     }
 
-    pub fn reset(&mut self) {
-        _ = self.decoder.reset_state();
-    }
-
-    pub fn decode_inner(&mut self, input: &[u8]) {
+    fn decode_inner(&mut self, input: &[u8], fec: bool, out_limit: usize) {
         if let Ok(n) = self.decoder.decode_float(
             input,
-            &mut self.output_buffer[..],
-            false,
+            &mut self.output_buffer[..out_limit],
+            fec,
         ) {
 
             self.output_buffer
@@ -55,13 +51,31 @@ impl AudioDecoder {
         }
     }
 
-    pub(crate) fn decode(&mut self, packet: Option<EncodedAudioPacket>) {
-        if let Some(packet) = packet {
-            self.decode_inner(packet.as_slice());
-        } else {
-            // Means we're asking for PLC
-            self.decode_inner(&[]);
-        }
+    pub(crate) fn reset(&mut self) {
+        _ = self.decoder.reset_state();
+    }
 
+    pub(crate) fn ask_plc(&mut self, out_limit: usize) {
+        self.decode_inner(
+            &[],
+            false,
+            out_limit,
+        );
+    }
+
+    pub(crate) fn decode_fec(&mut self, packet: EncodedAudioPacket, out_limit: usize) {
+        self.decode_inner(
+            packet.as_slice(),
+            true,
+            out_limit,
+        );
+    }
+
+    pub(crate) fn decode(&mut self, packet: EncodedAudioPacket) {
+        self.decode_inner(
+            packet.as_slice(),
+            false,
+            OUTPUT_BUFFER_SIZE,
+        );
     }
 }

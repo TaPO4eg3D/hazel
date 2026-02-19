@@ -28,14 +28,21 @@ pub struct AudioEncoder {
 impl AudioEncoder {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let mut encoder = opus::Encoder::new(
-            DEFAULT_RATE,
-            opus::Channels::Mono,
-            opus::Application::Voip,
-        )
-        .expect("Failed to init encoder");
+        let mut encoder =
+            opus::Encoder::new(DEFAULT_RATE, opus::Channels::Mono, opus::Application::Voip)
+                .expect("Failed to init encoder");
 
-        encoder.set_bitrate(opus::Bitrate::Bits(DEFAULT_BIT_RATE as i32))
+        encoder
+            .set_bitrate(opus::Bitrate::Bits(DEFAULT_BIT_RATE as i32))
+            .unwrap();
+        encoder.set_inband_fec(true).unwrap();
+
+        // TODO: Ideally Packet Loss% should adjust dynamically.
+        // We need to implement some sort of a report of how much packets
+        // are lost between all the client in the connected channel.
+        // ...and what's next? We can spin up several encoders
+        // to serve different range of packet losses
+        encoder.set_packet_loss_perc(10)
             .unwrap();
 
         Self {
@@ -55,12 +62,17 @@ impl AudioEncoder {
     pub fn encode(&mut self, samples: &[f32]) {
         self.samples_queue.extend(samples);
 
-        while self.samples_queue.pop_slice(&mut self.input_buffer[..], false) > 0 {
+        while self
+            .samples_queue
+            .pop_slice(&mut self.input_buffer[..], false)
+            > 0
+        {
             if let Ok(n) = self
                 .encoder
                 .encode_float(&self.input_buffer[..], &mut self.output_buffer[..])
             {
-                self.packet_queue.push_back(EncodedAudioPacket::new(&self.output_buffer[..n]));
+                self.packet_queue
+                    .push_back(EncodedAudioPacket::new(&self.output_buffer[..n]));
             }
         }
     }
