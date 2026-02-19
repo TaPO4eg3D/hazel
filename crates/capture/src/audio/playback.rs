@@ -165,7 +165,7 @@ impl JitterBuffer {
             .clamp(self.min_delay_ms, self.max_delay_ms);
     }
 
-    fn decode(&mut self, out_limit: usize) -> bool {
+    fn decode(&mut self) -> bool {
         if self.next_playout_seq.is_none() {
             if let Some((&pts, (arrival_ts, _))) = self.packets_buffer.iter().next() {
                 let buffered_ms = arrival_ts.elapsed().as_secs_f64() * 1000.0;
@@ -200,11 +200,13 @@ impl JitterBuffer {
 
             // We might have the next packet with FEC
             if let Some((_, packet)) = self.packets_buffer.remove(&seq) {
-                // println!("Corrected using FEC");
-
                 // We don't need to increment `next_playout_seq`
                 // this packet is used only for correction
-                self.decoder.decode_fec(packet, out_limit);
+                let before = self.decoder.decoded_samples.len();
+                self.decoder.decode_fec(packet);
+                let after = self.decoder.decoded_samples.len();
+
+                println!("FEC: {} | {} ({})", before, after, after - before);
             } else {
                 // No FEC, trying regular PLC
                 self.misses += 1;
@@ -218,7 +220,7 @@ impl JitterBuffer {
                 }
 
                 // Packet is missing, ask decoder for PLC
-                self.decoder.ask_plc(out_limit);
+                self.decoder.ask_plc();
             }
         }
 
@@ -244,7 +246,7 @@ impl JitterBuffer {
 
             // Return if we failed to decode anything, mixer
             // will take care of filling missing bits with zeroes
-            if !self.decode(output.len() - i) {
+            if !self.decode() {
                 break;
             }
         }
