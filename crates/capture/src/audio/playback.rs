@@ -202,11 +202,7 @@ impl JitterBuffer {
             if let Some((_, packet)) = self.packets_buffer.remove(&seq) {
                 // We don't need to increment `next_playout_seq`
                 // this packet is used only for correction
-                let before = self.decoder.decoded_samples.len();
                 self.decoder.decode_fec(packet);
-                let after = self.decoder.decoded_samples.len();
-
-                println!("FEC: {} | {} ({})", before, after, after - before);
             } else {
                 // No FEC, trying regular PLC
                 self.misses += 1;
