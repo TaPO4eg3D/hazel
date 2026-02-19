@@ -144,7 +144,6 @@ impl JitterBuffer {
             let arrival_diff_ms = arrival_ts.duration_since(last_arrival).as_secs_f64() * 1000.;
 
             let ts_diff_ms = timestamp.abs_diff(last_ts) as f64;
-
             let deviation = (arrival_diff_ms - ts_diff_ms).abs();
 
             // Exponential moving average
@@ -166,7 +165,7 @@ impl JitterBuffer {
             .clamp(self.min_delay_ms, self.max_delay_ms);
     }
 
-    fn decode(&mut self) -> bool {
+    fn decode(&mut self, out_limit: usize) -> bool {
         if self.next_playout_seq.is_none() {
             if let Some((&pts, (arrival_ts, _))) = self.packets_buffer.iter().next() {
                 let buffered_ms = arrival_ts.elapsed().as_secs_f64() * 1000.0;
@@ -192,21 +191,35 @@ impl JitterBuffer {
             self.misses = 0;
             self.next_playout_seq = Some(seq.wrapping_add(1));
 
-            self.decoder.decode(Some(packet));
+            self.decoder.decode(packet);
         } else {
-            self.misses += 1;
-            self.next_playout_seq = Some(seq.wrapping_add(1));
+            // YABAI!! No data to play...
 
-            // If have have too much misses, we probably missed the marker
-            // and we need to close the speech chunk
-            if self.misses > 4 {
-                self.close_speech_chunk();
+            let seq = seq.wrapping_add(1);
+            self.next_playout_seq = Some(seq);
 
-                return false;
+            // We might have the next packet with FEC
+            if let Some((_, packet)) = self.packets_buffer.remove(&seq) {
+                // println!("Corrected using FEC");
+
+                // We don't need to increment `next_playout_seq`
+                // this packet is used only for correction
+                self.decoder.decode_fec(packet, out_limit);
+            } else {
+                // No FEC, trying regular PLC
+                self.misses += 1;
+
+                // If have have too much misses, we probably missed the marker
+                // and we need to close the speech chunk
+                if self.misses > 4 {
+                    self.close_speech_chunk();
+
+                    return false;
+                }
+
+                // Packet is missing, ask decoder for PLC
+                self.decoder.ask_plc(out_limit);
             }
-
-            // Packet is missing, ask decoder for PLC
-            self.decoder.decode(None);
         }
 
         while let Some(decoded_sample) = self.decoder.decoded_samples.pop_front() {
@@ -231,7 +244,7 @@ impl JitterBuffer {
 
             // Return if we failed to decode anything, mixer
             // will take care of filling missing bits with zeroes
-            if !self.decode() {
+            if !self.decode(output.len() - i) {
                 break;
             }
         }
