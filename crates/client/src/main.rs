@@ -4,7 +4,9 @@
 use std::rc::Rc;
 
 use clap::Parser;
+
 use gpui::*;
+use gpui_platform::application;
 use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
 
 use anyhow::Result as AResult;
@@ -160,7 +162,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let app = Application::new().with_assets(Assets);
+    let app = application().with_assets(Assets);
 
     app.run(move |cx| {
         gpui_component::init(cx);
