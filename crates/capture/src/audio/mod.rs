@@ -467,29 +467,28 @@ impl Capture {
 pub fn init(debug: bool) -> (Capture, Playback, DeviceRegistry) {
     let (packet_input, packet_output) = init_packet_processing(debug);
 
-    if debug { 
+    if debug {
         let debug_stats = packet_output.debug_stats.clone();
 
         thread::spawn(move || {
             loop {
                 let items = {
-                    let mut debug_stats = debug_stats
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .unwrap();
+                    let mut debug_stats = debug_stats.as_ref().unwrap().lock().unwrap();
 
                     debug_stats.retain(|(_, stats)| stats.strong_count() > 0);
-                    debug_stats.iter().filter_map(|(user_id, stats)| {
-                        let stats = stats.upgrade()?;
-                        let stats = stats.lock().unwrap();
+                    debug_stats
+                        .iter()
+                        .filter_map(|(user_id, stats)| {
+                            let stats = stats.upgrade()?;
+                            let stats = stats.lock().unwrap();
 
-                        Some((*user_id, stats.clone()))
-                    }).collect::<Vec<_>>()
+                            Some((*user_id, stats.clone()))
+                        })
+                        .collect::<Vec<_>>()
                 };
 
                 println!("AUDIO: {items:#?}");
-                
+
                 thread::sleep(Duration::from_secs(10));
             }
         });

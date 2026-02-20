@@ -14,7 +14,8 @@ use bytes::{Bytes, BytesMut};
 use capture::audio::{
     self, Capture, DeviceRegistry,
     playback::{
-        AudioOutputState, AudioPacketCommand, AudioPacketInput, AudioStreamingClientSharedState, PlaybackController,
+        AudioOutputState, AudioPacketCommand, AudioPacketInput, AudioStreamingClientSharedState,
+        PlaybackController,
     },
 };
 use crossbeam::channel;
@@ -118,19 +119,20 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
             // it's kinda pain in the butt to account for them.
             // I think this solution is more than enough
             if last_send.elapsed() > Duration::from_secs(10)
-                && let Some((user_id, addr)) = *addr.lock().unwrap() {
-                    buf.clear();
+                && let Some((user_id, addr)) = *addr.lock().unwrap()
+            {
+                buf.clear();
 
-                    let udp_packet = UDPPacket {
-                        user_id: user_id.value,
-                        payload: UDPPacketType::Ping,
-                    };
+                let udp_packet = UDPPacket {
+                    user_id: user_id.value,
+                    payload: UDPPacketType::Ping,
+                };
 
-                    udp_packet.to_bytes(&mut buf);
+                udp_packet.to_bytes(&mut buf);
 
-                    last_send = Instant::now();
-                    _ = socket.send_to(&buf, addr);
-                }
+                last_send = Instant::now();
+                _ = socket.send_to(&buf, addr);
+            }
 
             transmitting = false;
 

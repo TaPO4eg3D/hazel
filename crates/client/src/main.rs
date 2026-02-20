@@ -104,8 +104,7 @@ impl ConnectionManger {
             return Ok(());
         }
 
-        let connection =
-            Tokio::spawn(cx, Connection::new(format!("{server_ip}:9898"))).await??;
+        let connection = Tokio::spawn(cx, Connection::new(format!("{server_ip}:9898"))).await??;
 
         cx.update_global(move |g: &mut Self, _| {
             g.server_ip = Some(server_ip);
