@@ -1,7 +1,7 @@
 use anyhow::anyhow;
+use client_macros::IconPath;
 use gpui::*;
 use gpui_component::IconNamed;
-use client_macros::IconPath;
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 
@@ -10,7 +10,6 @@ use std::borrow::Cow;
 #[include = "icons/**/*"]
 #[include = "fonts/**/*"]
 pub struct Assets;
-
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -43,8 +42,6 @@ impl Assets {
                     .load(&font_path)?
                     .expect("Assets should never return None");
                 embedded_fonts.push(font_bytes);
-
-                // println!("Loaded font: {}", font_path);
             }
         }
 
@@ -77,5 +74,5 @@ pub enum IconName {
     User,
     Users,
     EllipsisVertical,
-    VolumeFull
+    VolumeFull,
 }
