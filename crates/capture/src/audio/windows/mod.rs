@@ -1,14 +1,13 @@
 //! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
 
 use std::{
-    collections::VecDeque,
     sync::{Arc, Mutex},
     thread,
 };
 
 use ringbuf::{
-    HeapCons, HeapProd, HeapRb,
-    traits::{Consumer, Observer as _, Producer, Split as _},
+    HeapCons, HeapRb,
+    traits::{Consumer, Observer as _, Split as _},
 };
 use windows::{
     Win32::{
@@ -315,7 +314,7 @@ fn chnannel<T>() -> (EventHandle, ChannelState<T>, CommandSender<T>) {
     }
 }
 
-pub fn init(
+pub(crate) fn init(
     packet_input: AudioPacketInput,
     packet_output: AudioPacketOutput,
 ) -> (WindowsCapture, Playback, DeviceRegistry) {

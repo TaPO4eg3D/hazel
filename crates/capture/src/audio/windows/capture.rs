@@ -5,16 +5,16 @@ use windows::Win32::{
     Foundation::HANDLE,
     Media::Audio::{
         AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, EDataFlow,
-        IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, IMMEndpoint,
-        MMDeviceEnumerator, WAVEFORMATEX, eCapture, eConsole,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+        IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
+        WAVEFORMATEX, eCapture, eConsole,
     },
     System::{
         Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree},
         Threading::CreateEventW,
     },
 };
-use windows_core::{HSTRING, Interface, PWSTR};
+use windows_core::HSTRING;
 
 use crate::audio::{DEFAULT_RATE, Notifier, windows::try_get_device};
 

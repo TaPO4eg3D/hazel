@@ -1,7 +1,10 @@
 use std::{
-    collections::{BTreeMap, HashMap}, sync::{
-        Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}
-    }, time::Instant
+    collections::{BTreeMap, HashMap},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
 
 use atomic_float::AtomicF32;
@@ -13,8 +16,7 @@ use ringbuf::{
 use streaming_common::EncodedAudioPacket;
 
 use crate::audio::{
-    AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, PlatformLoopController,
-    decode::AudioDecoder,
+    AudioLoopCommand, DEFAULT_CHANNELS, DEFAULT_RATE, PlatformLoopController, decode::AudioDecoder,
 };
 
 const SAMPLES_BUFFER: usize = (DEFAULT_RATE * DEFAULT_CHANNELS) as usize;
@@ -258,7 +260,7 @@ impl JitterBuffer {
 pub struct AudioStreamingClientState {
     pub user_id: i32,
 
-    jitter_buffer: JitterBuffer,
+    jitter_buffer: Box<JitterBuffer>,
 
     shared: Weak<AudioStreamingClientSharedState>,
     active: bool,
@@ -284,7 +286,7 @@ impl AudioStreamingClientState {
         Self {
             user_id,
             shared,
-            jitter_buffer: JitterBuffer::new(debug),
+            jitter_buffer: Box::new(JitterBuffer::new(debug)),
             active: true,
         }
     }
@@ -325,7 +327,8 @@ impl AudioPacketOutput {
         while let Ok(command) = self.rx.try_recv() {
             match command {
                 AudioPacketCommand::AddClient((user_id, state)) => {
-                    let state = AudioStreamingClientState::new(user_id, state, self.debug_stats.is_some());
+                    let state =
+                        AudioStreamingClientState::new(user_id, state, self.debug_stats.is_some());
 
                     if let Some(debug_stats) = self.debug_stats.as_ref() {
                         let mut debug_stats = debug_stats.lock().unwrap();
@@ -333,8 +336,7 @@ impl AudioPacketOutput {
                         debug_stats.push((user_id, Arc::downgrade(&state.jitter_buffer.stats)));
                     }
 
-                    self.active_clients
-                        .insert(user_id, state);
+                    self.active_clients.insert(user_id, state);
                 }
                 AudioPacketCommand::RemoveClient(user_id) => {
                     self.active_clients.remove(&user_id);

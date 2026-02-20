@@ -1,9 +1,3 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
-
-use ringbuf::{HeapCons, traits::Consumer};
 use windows::Win32::{
     Foundation::HANDLE,
     Media::Audio::{
