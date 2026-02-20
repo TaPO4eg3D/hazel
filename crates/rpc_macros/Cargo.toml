@@ -8,6 +8,6 @@ proc-macro = true
 
 [dependencies]
 heck = "0.5.0"
-proc-macro2 = "1.0.105"
-quote = "1.0.43"
-syn = "2.0.114"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"

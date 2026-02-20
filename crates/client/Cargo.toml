@@ -17,12 +17,22 @@ atomic_float = { workspace = true }
 crossbeam = { workspace = true }
 
 # UI
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
+gpui = { git = "https://github.com/zed-industries/zed", features = [
+    "wayland",
+    "windows-manifest",
+    "x11",
+] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features=[
+    "font-kit",
+    "wayland",
+    "x11"
+] }
 
-rust-embed = "8.9.0"
+gpui-component = { git = "https://github.com/TaPO4eg3D/gpui-component.git" }
+
+rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"
 
 smol = "2.0.2"
-tracing = "0.1.43"
-clap = { version = "4.5.54", features = ["derive"] }
+tracing = "0.1.44"
+clap = { version = "4.5.60", features = ["derive"] }
