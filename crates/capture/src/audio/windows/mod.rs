@@ -239,7 +239,7 @@ impl WindowsCapture {
 }
 
 struct ChannelState<T> {
-    inner: Arc<Mutex<Option<T>>>,
+    inner: Arc<Mutex<Vec<T>>>,
 }
 
 impl<T> Clone for ChannelState<T> {
@@ -253,14 +253,14 @@ impl<T> Clone for ChannelState<T> {
 impl<T> ChannelState<T> {
     fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(None)),
+            inner: Arc::new(Mutex::new(Vec::with_capacity(4))),
         }
     }
 
-    fn take(&self) -> Option<T> {
+    fn pop(&self) -> Option<T> {
         let mut state = self.inner.lock().unwrap();
 
-        state.take()
+        state.pop()
     }
 }
 
@@ -287,10 +287,8 @@ impl<T> Clone for CommandSender<T> {
 
 impl<T> CommandSender<T> {
     pub fn send(&self, msg: T) {
-        {
-            let mut state = self.state.inner.lock().unwrap();
-            *state = Some(msg);
-        }
+        let mut state = self.state.inner.lock().unwrap();
+        state.push(msg);
 
         unsafe {
             _ = SetEvent(self.event.0);
@@ -416,7 +414,7 @@ pub(crate) fn init(
                         device_registry.mark_active_output(&playback_stream.active_device);
                     }
                 } else if wait_result.0 == WAIT_OBJECT_0.0 + 2 {
-                    if let Some(event) = command_state.take() {
+                    while let Some(event) = command_state.pop() {
                         match event {
                             AudioLoopCommand::SetActiveInputDevice(device) => {
                                 let producer = capture_stream.capture_producer.take().unwrap();

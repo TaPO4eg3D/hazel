@@ -1,4 +1,7 @@
-use std::{sync::{Arc, atomic::Ordering}, time::Duration};
+use std::{
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
@@ -17,10 +20,7 @@ use rpc::{
 };
 use smol::stream::StreamExt as _;
 
-use crate::{
-    ConnectionManger,
-    gpui_audio::Streaming,
-};
+use crate::{ConnectionManger, gpui_audio::Streaming};
 
 #[derive(Clone)]
 pub struct VoiceChannel {

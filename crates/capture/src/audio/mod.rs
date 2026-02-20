@@ -309,6 +309,7 @@ type PlatformCapture = linux::LinuxCapture;
 #[cfg(target_os = "windows")]
 type PlatformCapture = windows::WindowsCapture;
 
+#[derive(Debug)]
 pub enum AudioLoopCommand {
     SetEnabledCapture(bool),
     SetEnabledPlayback(bool),
@@ -488,7 +489,6 @@ pub fn init(debug: bool) -> (Capture, Playback, DeviceRegistry) {
                 };
 
                 println!("AUDIO: {items:#?}");
-
                 thread::sleep(Duration::from_secs(10));
             }
         });
