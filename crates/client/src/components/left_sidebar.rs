@@ -414,6 +414,25 @@ struct CaptureControlState {
 }
 
 #[derive(IntoElement)]
+struct NoiseReductionItem {
+    name: &'static str,
+    active: bool,
+}
+
+impl NoiseReductionItem {
+    fn active(mut self, value: bool) -> Self {
+        self.active = value;
+        self
+    }
+}
+
+impl RenderOnce for NoiseReductionItem {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+    }
+}
+
+#[derive(IntoElement)]
 struct NoiseReductionSelector {
     state: Entity<CaptureControlState>,
 }
@@ -458,7 +477,7 @@ impl RenderOnce for NoiseReductionSelector {
                                 Label::new("Disabled")
                                     .text_color(cx.theme().muted_foreground)
                                     .font_semibold()
-                                    .text_xs()
+                                    .text_xs(),
                             ),
                     )
                     .child(Icon::new(IconName::ChevronRight).ml_auto()),
@@ -467,10 +486,10 @@ impl RenderOnce for NoiseReductionSelector {
                 this.child(
                     div()
                         .absolute()
-                        .top(px(-6.))
+                        .top_1()
                         .left_full()
-                        .ml_4()
-                        .size_11()
+                        .ml_3()
+                        .min_w_24()
                         .text_color(cx.theme().popover_foreground)
                         .border_1()
                         .border_color(cx.theme().border)
@@ -481,7 +500,8 @@ impl RenderOnce for NoiseReductionSelector {
                             self.state.update(cx, |this, _cx| {
                                 this.bounds = Some(bounds);
                             })
-                        }),
+                        })
+                        .child(div().v_flex().p_2().child(Divider::horizontal())),
                 )
             })
     }
@@ -571,6 +591,7 @@ impl RenderOnce for AudioDeviceControl {
                             .rounded_l_none()
                             .icon(IconName::ChevronUp),
                     )
+                    .p_0()
                     .content(move |_, window, cx| {
                         let capture_state =
                             window.use_keyed_state("popover-capture", cx, |_, _| {
@@ -612,10 +633,10 @@ impl RenderOnce for AudioDeviceControl {
                                 )
                                 .child(
                                     // An additional container to force the label to wrap
-                                    div()
-                                        .pl_4()
-                                        .w_full()
-                                        .child(Label::new(device.display_name.clone()).text_sm()),
+                                    div().pl_4().w_full().child(
+                                        Label::new("fdsf sdfsd fsdf sdf sdf sdfsd fdsf sdf ds")
+                                            .text_sm(),
+                                    ),
                                 )
                                 .when(!device.is_active, |this| {
                                     this.on_click(move |_, _, cx| {
@@ -635,6 +656,7 @@ impl RenderOnce for AudioDeviceControl {
 
                         div()
                             .id("popover-content")
+                            .w_full()
                             .on_mouse_down_out(cx.listener({
                                 let capture_state = capture_state.clone();
 
@@ -653,29 +675,36 @@ impl RenderOnce for AudioDeviceControl {
                                 }
                             }))
                             .v_flex()
-                            .w_full()
                             .child(
                                 Label::new(match self.device_type {
                                     AudioDeviceType::Capture => "Input Control",
                                     AudioDeviceType::Playback => "Output Control",
                                 })
+                                .p_2()
                                 .text_sm(),
                             )
-                            .child(Divider::horizontal().my_2())
+                            .child(Divider::horizontal())
                             .child(
                                 div()
                                     .id("devices-list")
                                     .v_flex()
-                                    .gap_1()
                                     .w_full()
+                                    .gap_1()
+                                    .p_2()
                                     .children(available_devices),
                             )
-                            .child(Divider::horizontal().my_2())
-                            .when(matches!(self.device_type, AudioDeviceType::Capture), |this| {
-                                this
-                                    .child(NoiseReductionSelector::new(capture_state.clone()))
-                                    .child(Divider::horizontal().my_2())
-                            })
+                            .child(Divider::horizontal())
+                            .when(
+                                matches!(self.device_type, AudioDeviceType::Capture),
+                                |this| {
+                                    this.child(
+                                        div().p_2().child(NoiseReductionSelector::new(
+                                            capture_state.clone(),
+                                        )),
+                                    )
+                                    .child(Divider::horizontal())
+                                },
+                            )
                             .child(
                                 div()
                                     .id("volume-control")
