@@ -1,16 +1,14 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _,
-    RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out,
-    prelude::FluentBuilder, px, rgb, white,
+    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, red, rgb, white
 };
 use gpui_component::{
-    ActiveTheme, Anchor, Icon, Sizable, Size, StyledExt,
+    ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     label::Label,
-    popover::Popover,
+    popover::{Popover, PopoverState},
     slider::Slider,
 };
 
@@ -407,6 +405,63 @@ impl RenderOnce for ControlPanel {
     }
 }
 
+#[derive(Default)]
+struct CaptureControlState {
+    bounds: Option<Bounds<Pixels>>,
+    displaying: bool,
+}
+
+#[derive(IntoElement)]
+struct NoiseReductionSelector {
+    state: Entity<CaptureControlState>,
+}
+
+impl NoiseReductionSelector {
+    fn new(state: Entity<CaptureControlState>) -> Self {
+        Self { state }
+    }
+}
+
+impl RenderOnce for NoiseReductionSelector {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_hovered = self.state.read(cx).displaying;
+
+        div()
+            .id("noise-reduction")
+            .hover(|this| this.bg(cx.theme().secondary))
+            .on_hover({
+                let state = self.state.clone();
+
+                move |hovered, _, cx| {
+                    if *hovered {
+                        state.update(cx, |state, cx| {
+                            state.displaying = true;
+
+                            cx.notify();
+                        })
+                    }
+                }
+            })
+            .child(Label::new("Noise Reduction"))
+            .when(is_hovered, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(-6.))
+                        .left_full()
+                        .ml_4()
+                        .size_11()
+                        .bg(cx.theme().background)
+                        .on_prepaint(move |bounds, _window, cx| {
+                            self.state.update(cx, |this, _cx| {
+                                this.bounds = Some(bounds);
+                            })
+                        }),
+                )
+            })
+    }
+}
+
 #[derive(Clone, Copy)]
 enum AudioDeviceType {
     Capture,
@@ -434,47 +489,6 @@ impl RenderOnce for AudioDeviceControl {
             AudioDeviceType::Playback => self.streaming_state.read(cx).output_devices.clone(),
             AudioDeviceType::Capture => self.streaming_state.read(cx).input_devices.clone(),
         };
-
-        let available_devices = devices.into_iter().map(|device| {
-            div()
-                .id(device.id.clone())
-                .w_full()
-                .rounded_md()
-                .hover(|this| this.bg(cx.theme().secondary))
-                .p_2()
-                .flex()
-                .items_center()
-                .child(
-                    div().pl_1().child(
-                        div()
-                            .size_2()
-                            .rounded_full()
-                            .flex_none()
-                            .when(device.is_active, |this| this.bg(white())),
-                    ),
-                )
-                .child(
-                    // An additional container to force the label to wrap
-                    div()
-                        .pl_4()
-                        .w_full()
-                        .child(Label::new(device.display_name.clone()).text_sm()),
-                )
-                .when(!device.is_active, |this| {
-                    this.on_click(move |_, _, cx| {
-                        let registry = Streaming::get_device_registry(cx);
-
-                        match self.device_type {
-                            AudioDeviceType::Capture => {
-                                registry.set_active_input(&device);
-                            }
-                            AudioDeviceType::Playback => {
-                                registry.set_active_output(&device);
-                            }
-                        }
-                    })
-                })
-        });
 
         let device_volume = {
             match self.device_type {
@@ -524,6 +538,7 @@ impl RenderOnce for AudioDeviceControl {
             .child(
                 Popover::new("popover")
                     .w_64()
+                    .overlay_closable(false)
                     .anchor(Anchor::BottomCenter)
                     .trigger(
                         Button::new("device-select")
@@ -531,8 +546,85 @@ impl RenderOnce for AudioDeviceControl {
                             .rounded_l_none()
                             .icon(IconName::ChevronUp),
                     )
-                    .child(
+                    .content(move |popover, window, cx| {
+                        let capture_state =
+                            window.use_keyed_state("popover-capture", cx, |_, _| {
+                                CaptureControlState::default()
+                            });
+
+                        let available_devices = devices.clone().into_iter().map(|device| {
+                            div()
+                                .id(device.id.clone())
+                                .w_full()
+                                .rounded_md()
+                                .hover(|this| this.bg(cx.theme().secondary))
+                                .when(matches!(self.device_type, AudioDeviceType::Capture), {
+                                    let capture_state = capture_state.clone();
+
+                                    move |this| {
+                                        this.on_hover(move |&hovered, _, cx| {
+                                            if hovered {
+                                                capture_state.update(cx, |state, cx| {
+                                                    state.displaying = false;
+
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                    }
+                                })
+                                .p_2()
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div().pl_1().child(
+                                        div()
+                                            .size_2()
+                                            .rounded_full()
+                                            .flex_none()
+                                            .when(device.is_active, |this| this.bg(white())),
+                                    ),
+                                )
+                                .child(
+                                    // An additional container to force the label to wrap
+                                    div()
+                                        .pl_4()
+                                        .w_full()
+                                        .child(Label::new(device.display_name.clone()).text_sm()),
+                                )
+                                .when(!device.is_active, |this| {
+                                    this.on_click(move |_, _, cx| {
+                                        let registry = Streaming::get_device_registry(cx);
+
+                                        match self.device_type {
+                                            AudioDeviceType::Capture => {
+                                                registry.set_active_input(&device);
+                                            }
+                                            AudioDeviceType::Playback => {
+                                                registry.set_active_output(&device);
+                                            }
+                                        }
+                                    })
+                                })
+                        });
+
                         div()
+                            .id("popover-content")
+                            .on_mouse_down_out(cx.listener({
+                                let capture_state = capture_state.clone();
+
+                                move |popover, e: &MouseDownEvent, window, cx| {
+                                    let state = capture_state.read(cx);
+
+                                    if let Some(bounds) = state.bounds && state.displaying {
+                                        if !bounds.contains(&e.position) {
+                                            popover.dismiss(window, cx);
+                                        }
+                                    } else {
+                                        popover.dismiss(window, cx);
+                                    }
+                                }
+                            }))
                             .v_flex()
                             .w_full()
                             .child(
@@ -552,15 +644,40 @@ impl RenderOnce for AudioDeviceControl {
                                     .children(available_devices),
                             )
                             .child(Divider::horizontal().my_2())
+                            .child(NoiseReductionSelector::new(capture_state.clone()))
+                            .child(Divider::horizontal().my_2())
                             .child(
-                                div().flex().child(Label::new("Volume").text_xs()).child(
-                                    Label::new(format!("{}%", device_volume.read(cx).value()))
-                                        .text_xs()
-                                        .ml_auto(),
-                                ),
+                                div()
+                                    .id("volume-control")
+                                    .when(matches!(self.device_type, AudioDeviceType::Capture), {
+                                        let capture_state = capture_state.clone();
+
+                                        move |this| {
+                                            this.on_hover(move |&hovered, _, cx| {
+                                                if hovered {
+                                                    capture_state.update(cx, |state, cx| {
+                                                        state.displaying = false;
+
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                        }
+                                    })
+                                    .v_flex()
+                                    .child(
+                                        div().flex().child(Label::new("Volume").text_xs()).child(
+                                            Label::new(format!(
+                                                "{}%",
+                                                device_volume.read(cx).value()
+                                            ))
+                                            .text_xs()
+                                            .ml_auto(),
+                                        ),
+                                    )
+                                    .child(Slider::new(&device_volume)),
                             )
-                            .child(Slider::new(&device_volume)),
-                    ),
+                    }),
             )
             .flex_grow()
     }
