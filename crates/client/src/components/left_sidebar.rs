@@ -1,9 +1,7 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
-    ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, Styled, Window, div,
-    ease_in_out, prelude::FluentBuilder, px, red, rgb, white,
+    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, red, relative, rgb, white
 };
 use gpui_component::{
     ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
@@ -415,20 +413,61 @@ struct CaptureControlState {
 
 #[derive(IntoElement)]
 struct NoiseReductionItem {
+    id: ElementId,
+
     name: &'static str,
     active: bool,
+
+    style: StyleRefinement,
 }
 
 impl NoiseReductionItem {
+    fn new(id: impl Into<ElementId>, name: &'static str) -> Self {
+        Self {
+            id: id.into(),
+            name,
+            active: false,
+            style: StyleRefinement::default(),
+        }
+    }
+
     fn active(mut self, value: bool) -> Self {
         self.active = value;
         self
     }
 }
 
+impl Styled for NoiseReductionItem {
+    fn style(&mut self) ->  &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
 impl RenderOnce for NoiseReductionItem {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
+            .id(self.id)
+            .p_2()
+            .hover(|this| this.bg(cx.theme().secondary))
+            .flex()
+            .items_center()
+            .rounded(cx.theme().radius)
+            .child(
+                div().pl_1().child(
+                    div()
+                        .size_2()
+                        .rounded_full()
+                        .flex_none()
+                        .when(self.active, |this| this.bg(white())),
+                ),
+            )
+            .child(
+                Label::new(self.name)
+                    .pl_4()
+                    .pr_2()
+                    .text_sm()
+            )
+            .refine_style(&self.style)
     }
 }
 
@@ -486,7 +525,8 @@ impl RenderOnce for NoiseReductionSelector {
                 this.child(
                     div()
                         .absolute()
-                        .top_1()
+                        .top(relative(-0.5))
+                        .occlude()
                         .left_full()
                         .ml_3()
                         .min_w_24()
@@ -501,7 +541,29 @@ impl RenderOnce for NoiseReductionSelector {
                                 this.bounds = Some(bounds);
                             })
                         })
-                        .child(div().v_flex().p_2().child(Divider::horizontal())),
+                        .child(
+                            div()
+                                .id("noise-supression-algo")
+                                .v_flex()
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .p_2()
+                                        .child(
+                                            NoiseReductionItem::new("disabled", "Disabled")
+                                                .active(true)
+                                        )
+                                )
+                                .child(Divider::horizontal())
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .gap_1()
+                                        .p_2()
+                                        .child(NoiseReductionItem::new("rnnoise", "RNNoise"))
+                                        .child(NoiseReductionItem::new("deepfilter", "DeepFilterNet"))
+                                )
+                        ),
                 )
             })
     }
@@ -633,8 +695,8 @@ impl RenderOnce for AudioDeviceControl {
                                 )
                                 .child(
                                     // An additional container to force the label to wrap
-                                    div().pl_4().w_full().child(
-                                        Label::new("fdsf sdfsd fsdf sdf sdf sdfsd fdsf sdf ds")
+                                    div().pl_4().pr_2().w_full().child(
+                                        Label::new(device.display_name.clone())
                                             .text_sm(),
                                     ),
                                 )
