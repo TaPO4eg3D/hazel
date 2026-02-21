@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, red, rgb, white
+    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, Styled, Window, div,
+    ease_in_out, prelude::FluentBuilder, px, red, rgb, white,
 };
 use gpui_component::{
     ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
@@ -428,7 +430,8 @@ impl RenderOnce for NoiseReductionSelector {
 
         div()
             .id("noise-reduction")
-            .hover(|this| this.bg(cx.theme().secondary))
+            .p_2()
+            .rounded(cx.theme().radius)
             .on_hover({
                 let state = self.state.clone();
 
@@ -442,7 +445,24 @@ impl RenderOnce for NoiseReductionSelector {
                     }
                 }
             })
-            .child(Label::new("Noise Reduction"))
+            .when(is_hovered, |this| this.bg(cx.theme().secondary))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .v_flex()
+                            .child(Label::new("Noise Supression").text_sm())
+                            .child(
+                                Label::new("Disabled")
+                                    .text_color(cx.theme().muted_foreground)
+                                    .font_semibold()
+                                    .text_xs()
+                            ),
+                    )
+                    .child(Icon::new(IconName::ChevronRight).ml_auto()),
+            )
             .when(is_hovered, |this| {
                 this.child(
                     div()
@@ -451,6 +471,11 @@ impl RenderOnce for NoiseReductionSelector {
                         .left_full()
                         .ml_4()
                         .size_11()
+                        .text_color(cx.theme().popover_foreground)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .shadow_lg()
+                        .rounded(cx.theme().radius)
                         .bg(cx.theme().background)
                         .on_prepaint(move |bounds, _window, cx| {
                             self.state.update(cx, |this, _cx| {
@@ -546,7 +571,7 @@ impl RenderOnce for AudioDeviceControl {
                             .rounded_l_none()
                             .icon(IconName::ChevronUp),
                     )
-                    .content(move |popover, window, cx| {
+                    .content(move |_, window, cx| {
                         let capture_state =
                             window.use_keyed_state("popover-capture", cx, |_, _| {
                                 CaptureControlState::default()
@@ -616,7 +641,9 @@ impl RenderOnce for AudioDeviceControl {
                                 move |popover, e: &MouseDownEvent, window, cx| {
                                     let state = capture_state.read(cx);
 
-                                    if let Some(bounds) = state.bounds && state.displaying {
+                                    if let Some(bounds) = state.bounds
+                                        && state.displaying
+                                    {
                                         if !bounds.contains(&e.position) {
                                             popover.dismiss(window, cx);
                                         }
@@ -644,11 +671,15 @@ impl RenderOnce for AudioDeviceControl {
                                     .children(available_devices),
                             )
                             .child(Divider::horizontal().my_2())
-                            .child(NoiseReductionSelector::new(capture_state.clone()))
-                            .child(Divider::horizontal().my_2())
+                            .when(matches!(self.device_type, AudioDeviceType::Capture), |this| {
+                                this
+                                    .child(NoiseReductionSelector::new(capture_state.clone()))
+                                    .child(Divider::horizontal().my_2())
+                            })
                             .child(
                                 div()
                                     .id("volume-control")
+                                    .p_2()
                                     .when(matches!(self.device_type, AudioDeviceType::Capture), {
                                         let capture_state = capture_state.clone();
 
