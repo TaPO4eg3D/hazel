@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use atomic::Atomic;
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{
@@ -24,6 +25,8 @@ use gpui::{App, AppContext, Global};
 use rpc::models::markers::UserId;
 use streaming_common::{EncodedAudioPacket, UDPPacket, UDPPacketType};
 
+use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
+
 type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
 struct SenderState {
@@ -31,6 +34,7 @@ struct SenderState {
     volume_modifier: AtomicF32,
 
     is_talking: AtomicBool,
+    noise_reduction: AtomicNoiseReductionAlgorithm,
 }
 
 impl SenderState {
@@ -39,6 +43,9 @@ impl SenderState {
             is_talking: AtomicBool::new(false),
             transmit_volume: AtomicF32::new(0.010),
             volume_modifier: AtomicF32::new(1.0),
+            noise_reduction: AtomicNoiseReductionAlgorithm::new(
+                NoiseReductionAlgorithm::RNNoise
+            ),
         }
     }
 }
@@ -57,6 +64,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
     loop {
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
         let volume_modifier = state.volume_modifier.load(Ordering::Relaxed) + 0.5;
+        let noise_reduction = state.noise_reduction.load(Ordering::Relaxed);
 
         let encoded_recv = recv.recv_encoded_with(|mut samples| {
             if samples.is_empty() {
@@ -211,6 +219,18 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| {
             stream.sender_state.is_talking.load(Ordering::Relaxed)
         })
+    }
+
+    pub fn set_noise_reduction<C: AppContext>(
+        noise_reduction: NoiseReductionAlgorithm,
+        cx: &C
+    ) {
+        cx.read_global(move |stream: &GlobalStreaming, _| {
+            stream.sender_state.noise_reduction.store(
+                noise_reduction,
+                Ordering::Relaxed,
+            );
+        });
     }
 
     pub fn set_input_volume_modifier<C: AppContext>(cx: &C, value: f32) {

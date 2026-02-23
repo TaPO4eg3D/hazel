@@ -36,3 +36,5 @@ unicode-segmentation = "1.12.0"
 smol = "2.0.2"
 tracing = "0.1.44"
 clap = { version = "4.5.60", features = ["derive"] }
+atomic = { version = "0.6.1", default-features = false }
+atomic_enum = "0.3.0"

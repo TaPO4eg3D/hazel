@@ -20,6 +20,8 @@ thread-priority = "3.0.0"
 heapless = "0.9.2"
 opus = "0.3.1"
 
+rnnoise-sys = { git = "https://github.com/TaPO4eg3D/rnnoise-sys.git" }
+
 [target.'cfg(unix)'.dependencies]
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", features = ["v0_3_49"]}
