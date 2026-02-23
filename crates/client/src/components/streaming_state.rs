@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use atomic_enum::atomic_enum;
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
 use gpui_component::slider::{SliderState, SliderValue};
@@ -88,6 +89,32 @@ impl VoiceChannelMember {
     }
 }
 
+#[atomic_enum]
+#[derive(PartialEq)]
+pub enum NoiseReductionAlgorithm {
+    Disabled = 0,
+    RNNoise,
+    DeepFilterNet
+}
+
+impl NoiseReductionAlgorithm {
+    pub fn id(&self) -> &'static str {
+        match self {
+            NoiseReductionAlgorithm::Disabled => "disabled",
+            NoiseReductionAlgorithm::RNNoise => "rnnoise",
+            NoiseReductionAlgorithm::DeepFilterNet => "deepfilternet",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            NoiseReductionAlgorithm::Disabled => "Disabled",
+            NoiseReductionAlgorithm::RNNoise => "RNNoise",
+            NoiseReductionAlgorithm::DeepFilterNet => "DeepFilterNet",
+        }
+    }
+}
+
 pub struct StreamingState {
     pub voice_channels: Vec<VoiceChannel>,
 
@@ -99,6 +126,8 @@ pub struct StreamingState {
 
     pub input_devices: Vec<AudioDevice>,
     pub output_devices: Vec<AudioDevice>,
+
+    noise_reduction: NoiseReductionAlgorithm,
 }
 
 impl StreamingState {
@@ -126,6 +155,8 @@ impl StreamingState {
 
             is_playback_enabled: true,
             is_capture_enabled: true,
+
+            noise_reduction: NoiseReductionAlgorithm::RNNoise,
         };
 
         cx.subscribe(&state.capture_volume, |_, state, _, cx| {
@@ -151,6 +182,21 @@ impl StreamingState {
 }
 
 impl StreamingState {
+    pub fn noise_reduction(&self) -> NoiseReductionAlgorithm {
+        self.noise_reduction
+    }
+
+    pub fn set_noise_reduction(
+        &mut self,
+        noise_reduction: NoiseReductionAlgorithm,
+        cx: &mut Context<Self>,
+    ) {
+        self.noise_reduction = noise_reduction;
+        Streaming::set_noise_reduction(noise_reduction, cx);
+
+        cx.notify();
+    }
+
     pub fn get_active_channel(&self) -> Option<&VoiceChannel> {
         self.voice_channels.iter().find(|channel| channel.is_active)
     }

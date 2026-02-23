@@ -23,6 +23,7 @@ pub mod windows;
 pub mod decode;
 pub mod encode;
 pub mod playback;
+pub mod noise;
 
 /// Sampling rate per channel
 pub const DEFAULT_RATE: u32 = 48000;

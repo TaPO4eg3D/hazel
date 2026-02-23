@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, red, relative, rgb, white
+    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, div, ease_in_out, prelude::FluentBuilder, px, red, relative, rgb, white,
 };
 use gpui_component::{
     ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
@@ -16,7 +18,9 @@ use crate::{
     ConnectionManger,
     assets::IconName,
     components::{
-        animation::HoverAnimationExt, chat_state::ChatState, streaming_state::StreamingState,
+        animation::HoverAnimationExt,
+        chat_state::ChatState,
+        streaming_state::{NoiseReductionAlgorithm, StreamingState},
     },
     gpui_audio::Streaming,
 };
@@ -418,6 +422,9 @@ struct NoiseReductionItem {
     name: &'static str,
     active: bool,
 
+    #[allow(clippy::type_complexity)]
+    on_click: Option<Box<dyn Fn(&mut Window, &mut App)>>,
+
     style: StyleRefinement,
 }
 
@@ -428,6 +435,7 @@ impl NoiseReductionItem {
             name,
             active: false,
             style: StyleRefinement::default(),
+            on_click: None,
         }
     }
 
@@ -435,10 +443,15 @@ impl NoiseReductionItem {
         self.active = value;
         self
     }
+
+    fn on_click(mut self, value: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(value));
+        self
+    }
 }
 
 impl Styled for NoiseReductionItem {
-    fn style(&mut self) ->  &mut StyleRefinement {
+    fn style(&mut self) -> &mut StyleRefinement {
         &mut self.style
     }
 }
@@ -461,37 +474,43 @@ impl RenderOnce for NoiseReductionItem {
                         .when(self.active, |this| this.bg(white())),
                 ),
             )
-            .child(
-                Label::new(self.name)
-                    .pl_4()
-                    .pr_2()
-                    .text_sm()
-            )
+            .child(Label::new(self.name).pl_4().pr_2().text_sm())
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |_, window, cx| on_click(window, cx))
+            })
             .refine_style(&self.style)
     }
 }
 
 #[derive(IntoElement)]
 struct NoiseReductionSelector {
-    state: Entity<CaptureControlState>,
+    streaming_state: Entity<StreamingState>,
+    capture_state: Entity<CaptureControlState>,
 }
 
 impl NoiseReductionSelector {
-    fn new(state: Entity<CaptureControlState>) -> Self {
-        Self { state }
+    fn new(
+        streaming_state: Entity<StreamingState>,
+        capture_state: Entity<CaptureControlState>,
+    ) -> Self {
+        Self {
+            capture_state,
+            streaming_state,
+        }
     }
 }
 
 impl RenderOnce for NoiseReductionSelector {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_hovered = self.state.read(cx).displaying;
+        let active_algorithm = self.streaming_state.read(cx).noise_reduction();
+        let is_hovered = self.capture_state.read(cx).displaying;
 
         div()
             .id("noise-reduction")
             .p_2()
             .rounded(cx.theme().radius)
             .on_hover({
-                let state = self.state.clone();
+                let state = self.capture_state.clone();
 
                 move |hovered, _, cx| {
                     if *hovered {
@@ -513,7 +532,7 @@ impl RenderOnce for NoiseReductionSelector {
                             .v_flex()
                             .child(Label::new("Noise Supression").text_sm())
                             .child(
-                                Label::new("Disabled")
+                                Label::new(active_algorithm.label())
                                     .text_color(cx.theme().muted_foreground)
                                     .font_semibold()
                                     .text_xs(),
@@ -537,7 +556,7 @@ impl RenderOnce for NoiseReductionSelector {
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().background)
                         .on_prepaint(move |bounds, _window, cx| {
-                            self.state.update(cx, |this, _cx| {
+                            self.capture_state.update(cx, |this, _cx| {
                                 this.bounds = Some(bounds);
                             })
                         })
@@ -545,24 +564,54 @@ impl RenderOnce for NoiseReductionSelector {
                             div()
                                 .id("noise-supression-algo")
                                 .v_flex()
-                                .child(
-                                    div()
-                                        .v_flex()
-                                        .p_2()
-                                        .child(
-                                            NoiseReductionItem::new("disabled", "Disabled")
-                                                .active(true)
-                                        )
-                                )
+                                .child(div().v_flex().p_2().child({
+                                    let state = self.streaming_state.clone();
+                                    let algorithm = NoiseReductionAlgorithm::Disabled;
+
+                                    NoiseReductionItem::new(algorithm.id(), algorithm.label())
+                                        .active(active_algorithm == algorithm)
+                                        .on_click(move |_, cx| {
+                                            state.update(cx, |state, cx| {
+                                                state.set_noise_reduction(algorithm, cx);
+                                            });
+                                        })
+                                }))
                                 .child(Divider::horizontal())
                                 .child(
                                     div()
                                         .v_flex()
                                         .gap_1()
                                         .p_2()
-                                        .child(NoiseReductionItem::new("rnnoise", "RNNoise"))
-                                        .child(NoiseReductionItem::new("deepfilter", "DeepFilterNet"))
-                                )
+                                        .child({
+                                            let state = self.streaming_state.clone();
+                                            let algorithm = NoiseReductionAlgorithm::RNNoise;
+
+                                            NoiseReductionItem::new(
+                                                algorithm.id(),
+                                                algorithm.label(),
+                                            )
+                                            .active(active_algorithm == algorithm)
+                                            .on_click(move |_, cx| {
+                                                state.update(cx, |state, cx| {
+                                                    state.set_noise_reduction(algorithm, cx);
+                                                });
+                                            })
+                                        })
+                                        .child({
+                                            let algorithm = NoiseReductionAlgorithm::DeepFilterNet;
+
+                                            NoiseReductionItem::new(
+                                                algorithm.id(),
+                                                algorithm.label(),
+                                            )
+                                            .active(active_algorithm == algorithm)
+                                            .on_click(move |_, cx| {
+                                                self.streaming_state.update(cx, |state, cx| {
+                                                    state.set_noise_reduction(algorithm, cx);
+                                                });
+                                            })
+                                        }),
+                                ),
                         ),
                 )
             })
@@ -660,61 +709,61 @@ impl RenderOnce for AudioDeviceControl {
                                 CaptureControlState::default()
                             });
 
-                        let available_devices = devices.clone().into_iter().map(|device| {
-                            div()
-                                .id(device.id.clone())
-                                .w_full()
-                                .rounded_md()
-                                .hover(|this| this.bg(cx.theme().secondary))
-                                .when(matches!(self.device_type, AudioDeviceType::Capture), {
-                                    let capture_state = capture_state.clone();
+                        let available_devices =
+                            devices.clone().into_iter().map(|device| {
+                                div()
+                                    .id(device.id.clone())
+                                    .w_full()
+                                    .rounded_md()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .when(matches!(self.device_type, AudioDeviceType::Capture), {
+                                        let capture_state = capture_state.clone();
 
-                                    move |this| {
-                                        this.on_hover(move |&hovered, _, cx| {
-                                            if hovered {
-                                                capture_state.update(cx, |state, cx| {
-                                                    state.displaying = false;
+                                        move |this| {
+                                            this.on_hover(move |&hovered, _, cx| {
+                                                if hovered {
+                                                    capture_state.update(cx, |state, cx| {
+                                                        state.displaying = false;
 
-                                                    cx.notify();
-                                                });
-                                            }
-                                        })
-                                    }
-                                })
-                                .p_2()
-                                .flex()
-                                .items_center()
-                                .child(
-                                    div().pl_1().child(
-                                        div()
-                                            .size_2()
-                                            .rounded_full()
-                                            .flex_none()
-                                            .when(device.is_active, |this| this.bg(white())),
-                                    ),
-                                )
-                                .child(
-                                    // An additional container to force the label to wrap
-                                    div().pl_4().pr_2().w_full().child(
-                                        Label::new(device.display_name.clone())
-                                            .text_sm(),
-                                    ),
-                                )
-                                .when(!device.is_active, |this| {
-                                    this.on_click(move |_, _, cx| {
-                                        let registry = Streaming::get_device_registry(cx);
-
-                                        match self.device_type {
-                                            AudioDeviceType::Capture => {
-                                                registry.set_active_input(&device);
-                                            }
-                                            AudioDeviceType::Playback => {
-                                                registry.set_active_output(&device);
-                                            }
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
                                         }
                                     })
-                                })
-                        });
+                                    .p_2()
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div().pl_1().child(
+                                            div()
+                                                .size_2()
+                                                .rounded_full()
+                                                .flex_none()
+                                                .when(device.is_active, |this| this.bg(white())),
+                                        ),
+                                    )
+                                    .child(
+                                        // An additional container to force the label to wrap
+                                        div().pl_4().pr_2().w_full().child(
+                                            Label::new(device.display_name.clone()).text_sm(),
+                                        ),
+                                    )
+                                    .when(!device.is_active, |this| {
+                                        this.on_click(move |_, _, cx| {
+                                            let registry = Streaming::get_device_registry(cx);
+
+                                            match self.device_type {
+                                                AudioDeviceType::Capture => {
+                                                    registry.set_active_input(&device);
+                                                }
+                                                AudioDeviceType::Playback => {
+                                                    registry.set_active_output(&device);
+                                                }
+                                            }
+                                        })
+                                    })
+                            });
 
                         div()
                             .id("popover-content")
@@ -759,11 +808,10 @@ impl RenderOnce for AudioDeviceControl {
                             .when(
                                 matches!(self.device_type, AudioDeviceType::Capture),
                                 |this| {
-                                    this.child(
-                                        div().p_2().child(NoiseReductionSelector::new(
-                                            capture_state.clone(),
-                                        )),
-                                    )
+                                    this.child(div().p_2().child(NoiseReductionSelector::new(
+                                        self.streaming_state.clone(),
+                                        capture_state.clone(),
+                                    )))
                                     .child(Divider::horizontal())
                                 },
                             )
