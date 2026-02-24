@@ -7,10 +7,10 @@ use pipewire::{
     stream::{Stream, StreamListener, StreamRc},
 };
 
-use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, playback::AudioPacketOutput};
+use crate::audio::{DEFAULT_CHANNELS, DEFAULT_RATE, playback::PlaybackPacketOutput};
 
 struct PlaybackStreamData {
-    packet_output: AudioPacketOutput,
+    packet_output: PlaybackPacketOutput,
 }
 
 pub(crate) struct PlaybackStream {
@@ -55,7 +55,7 @@ impl PlaybackStream {
         }
     }
 
-    pub(crate) fn new(core: CoreRc, packet_output: AudioPacketOutput) -> AResult<Self> {
+    pub(crate) fn new(core: CoreRc, packet_output: PlaybackPacketOutput) -> AResult<Self> {
         let playback_stream = StreamRc::new(
             core,
             Self::STREAM_NAME,

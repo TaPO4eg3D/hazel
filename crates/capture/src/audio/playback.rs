@@ -292,41 +292,41 @@ impl AudioStreamingClientState {
     }
 }
 
-pub enum AudioPacketCommand {
+pub enum PlaybackPacketCommand {
     AddClient((i32, Weak<AudioStreamingClientSharedState>)),
     RemoveClient(i32),
 }
 
-pub struct AudioPacketInput {
-    pub tx: channel::Sender<AudioPacketCommand>,
-    pub output_state: AudioOutputState,
+pub struct PlaybackPacketInput {
+    pub command_sender: channel::Sender<PlaybackPacketCommand>,
+    pub output_state: PlaybackOutputState,
 
     packet_buffer: HeapProd<(i32, Instant, EncodedAudioPacket)>,
 }
 
-type DebugStats = Vec<(i32, Weak<Mutex<JitterBufferStats>>)>;
-pub(crate) struct AudioPacketOutput {
-    active_clients: HashMap<i32, AudioStreamingClientState>,
-
-    rx: channel::Receiver<AudioPacketCommand>,
-    packet_buffer: HeapCons<(i32, Instant, EncodedAudioPacket)>,
-
-    output_state: AudioOutputState,
-
-    pub(crate) debug_stats: Option<Arc<Mutex<DebugStats>>>,
-}
-
-impl AudioPacketInput {
+impl PlaybackPacketInput {
     pub fn send(&mut self, user_id: i32, arrival_ts: Instant, packet: EncodedAudioPacket) {
         _ = self.packet_buffer.try_push((user_id, arrival_ts, packet));
     }
 }
 
-impl AudioPacketOutput {
+type DebugStats = Vec<(i32, Weak<Mutex<JitterBufferStats>>)>;
+pub(crate) struct PlaybackPacketOutput {
+    active_clients: HashMap<i32, AudioStreamingClientState>,
+
+    rx: channel::Receiver<PlaybackPacketCommand>,
+    packet_buffer: HeapCons<(i32, Instant, EncodedAudioPacket)>,
+
+    output_state: PlaybackOutputState,
+
+    pub(crate) debug_stats: Option<Arc<Mutex<DebugStats>>>,
+}
+
+impl PlaybackPacketOutput {
     fn process_commands(&mut self) {
         while let Ok(command) = self.rx.try_recv() {
             match command {
-                AudioPacketCommand::AddClient((user_id, state)) => {
+                PlaybackPacketCommand::AddClient((user_id, state)) => {
                     let state =
                         AudioStreamingClientState::new(user_id, state, self.debug_stats.is_some());
 
@@ -338,7 +338,7 @@ impl AudioPacketOutput {
 
                     self.active_clients.insert(user_id, state);
                 }
-                AudioPacketCommand::RemoveClient(user_id) => {
+                PlaybackPacketCommand::RemoveClient(user_id) => {
                     self.active_clients.remove(&user_id);
                 }
             }
@@ -383,16 +383,16 @@ impl AudioPacketOutput {
 
 /// Used to enqueue raw audio samples
 /// for a playback
-pub struct AudioSamplesSender {}
-pub struct AudioSamplesRecv {}
+pub struct PlaybackSamplesInput {}
+pub struct PlaybackSamplesOutput {}
 
 #[derive(Clone)]
-pub struct AudioOutputState {
+pub struct PlaybackOutputState {
     pub is_sound_off: Arc<AtomicBool>,
     pub volume: Arc<AtomicF32>,
 }
 
-impl Default for AudioOutputState {
+impl Default for PlaybackOutputState {
     fn default() -> Self {
         Self {
             is_sound_off: Arc::new(AtomicBool::new(false)),
@@ -421,25 +421,25 @@ impl PlaybackController {
 }
 
 pub struct Playback {
-    pub packet_input: Option<AudioPacketInput>,
+    pub packet_input: Option<PlaybackPacketInput>,
     pub controller: PlaybackController,
 }
 
-pub(crate) fn init_packet_processing(debug: bool) -> (AudioPacketInput, AudioPacketOutput) {
+pub(crate) fn init_packet_processing(debug: bool) -> (PlaybackPacketInput, PlaybackPacketOutput) {
     let ring = HeapRb::new(24);
     let (packet_prod, packet_cons) = ring.split();
 
     let (tx, rx) = channel::bounded(14);
 
-    let output_state = AudioOutputState::default();
+    let output_state = PlaybackOutputState::default();
 
-    let packet_input = AudioPacketInput {
-        tx,
+    let packet_input = PlaybackPacketInput {
+        command_sender: tx,
         output_state: output_state.clone(),
         packet_buffer: packet_prod,
     };
 
-    let packet_output = AudioPacketOutput {
+    let packet_output = PlaybackPacketOutput {
         rx,
 
         active_clients: HashMap::new(),

@@ -13,7 +13,7 @@ use pipewire::{
 };
 use ringbuf::{HeapProd, traits::Producer};
 
-use crate::audio::{DEFAULT_RATE, linux::Notifier};
+use crate::audio::{DEFAULT_RATE, capture::Notifier};
 
 /// This data is shared across all Pipewire events
 struct CaptureStreamData {
@@ -89,7 +89,11 @@ impl CaptureStream {
             };
 
             this.samples_producer.push_slice(captured_samples);
-            this.notifier.notify();
+
+            let mut ready = this.notifier.0.lock().unwrap();
+            *ready = true;
+
+            this.notifier.1.notify_all();
         }
     }
 

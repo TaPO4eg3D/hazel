@@ -6,19 +6,18 @@ use crate::audio::VecDequeExt;
 
 const RNN_FRAME_SIZE: usize = 480;
 
-pub(crate) struct RNNoiseState {
+pub struct RNNoiseState {
     denoise_state: *mut DenoiseState,
     
     input_buf: [f32; RNN_FRAME_SIZE],
     output_buf: [f32; RNN_FRAME_SIZE],
 
     input_queue: VecDeque<f32>,
-
-    pub(crate) output_queue: VecDeque<f32>,
+    output_queue: VecDeque<f32>,
 }
 
 impl RNNoiseState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         unsafe {
             let denoise_state = rnnoise_create(std::ptr::null_mut());
 
@@ -34,7 +33,7 @@ impl RNNoiseState {
         }
     }
 
-    fn process(&mut self, samples: &[f32]) {
+    pub fn process(&mut self, samples: &[f32]) {
         self.input_queue.extend(samples);
 
         while self.input_queue.pop_slice(&mut self.input_buf, false) > 0 {
@@ -51,6 +50,12 @@ impl RNNoiseState {
     }
 }
 
+impl Default for RNNoiseState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 
 impl Drop for RNNoiseState {
     fn drop(&mut self) {
@@ -58,4 +63,8 @@ impl Drop for RNNoiseState {
             rnnoise_destroy(self.denoise_state);
         }
     }
+}
+
+enum NoiseReductionLayer {
+    RNNoise(RNNoiseState),
 }

@@ -1,59 +1,33 @@
-use std::{cell::RefCell, rc::Rc, thread};
+use std::{cell::RefCell, rc::Rc, sync::{Arc, Condvar, Mutex}, thread};
 
 use pipewire::{self as pw, types::ObjectType};
-use ringbuf::{HeapCons, HeapRb, traits::*};
+use ringbuf::{HeapRb, traits::*};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry, Notifier,
+    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
+    capture::Capture,
     linux::{capture::CaptureStream, playback::PlaybackStream},
-    playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackController},
+    playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
 };
 
 pub mod capture;
 pub mod playback;
 
-pub(crate) struct LinuxCapture {
-    capture_notifier: Notifier,
-
-    pw_sender: pw::channel::Sender<AudioLoopCommand>,
-    capture_consumer: HeapCons<f32>,
-}
-
-impl LinuxCapture {
-    pub fn pop(&mut self, buf: &mut [f32]) -> usize {
-        if self.capture_consumer.occupied_len() == 0 {
-            std::thread::park();
-        }
-
-        self.capture_consumer.pop_slice(buf)
-    }
-
-    pub fn get_controller(&self) -> pw::channel::Sender<AudioLoopCommand> {
-        self.pw_sender.clone()
-    }
-
-    pub fn listen_updates(&mut self) {
-        self.capture_notifier.listen_updates();
-    }
-}
-
 pub(crate) fn init(
-    packet_input: AudioPacketInput,
-    packet_output: AudioPacketOutput,
-) -> (LinuxCapture, Playback, DeviceRegistry) {
+    packet_input: PlaybackPacketInput,
+    packet_output: PlaybackPacketOutput,
+) -> (Capture, Playback, DeviceRegistry) {
     let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
-    let capture_notifier = Notifier::new();
-
-    let capture = LinuxCapture {
+    let capture_notifier = Arc::new((Mutex::new(false), Condvar::new()));
+    let capture = Capture::new(
+        capture_notifier.clone(),
         capture_consumer,
-
-        pw_sender: pw_sender.clone(),
-        capture_notifier: capture_notifier.clone(),
-    };
+        pw_sender.clone(),
+    );
 
     let playback = Playback {
         controller: PlaybackController::new(pw_sender.clone()),
