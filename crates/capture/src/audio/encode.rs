@@ -21,8 +21,8 @@ pub struct AudioEncoder {
     /// Opus requires a specific number of samples to
     /// be supplied into it. This buffer is used to accumulate
     /// enough amount of them
-    samples_queue: VecDeque<f32>,
-    packet_queue: VecDeque<EncodedAudioPacket>,
+    pub samples_queue: VecDeque<f32>,
+    pub packet_queue: VecDeque<EncodedAudioPacket>,
 }
 
 impl AudioEncoder {
@@ -57,6 +57,12 @@ impl AudioEncoder {
 
     pub fn pop_packet(&mut self) -> Option<EncodedAudioPacket> {
         self.packet_queue.pop_front()
+    }
+
+    pub fn reset(&mut self) {
+        while self.samples_queue.pop_front().is_some() {}
+
+        _ = self.encoder.reset_state();
     }
 
     pub fn encode(&mut self, samples: &[f32]) {
