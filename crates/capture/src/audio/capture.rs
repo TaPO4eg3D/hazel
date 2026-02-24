@@ -30,13 +30,12 @@ impl CaptureController {
 
 pub(crate) type Notifier = Arc<(Mutex<bool>, Condvar)>;
 pub struct Capture {
-    is_enabled: Arc<AtomicBool>,
-    platform_loop_controller: PlatformLoopController,
+    pub encoder: AudioEncoder,
+    pub is_enabled: Arc<AtomicBool>,
+    pub samples_buffer: HeapCons<f32>,
 
     notifier: Notifier,
-
-    pub encoder: AudioEncoder,
-    pub samples_buffer: HeapCons<f32>,
+    platform_loop_controller: PlatformLoopController,
 }
 
 pub enum WaitResult {

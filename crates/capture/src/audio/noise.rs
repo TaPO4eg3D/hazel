@@ -9,11 +9,10 @@ const RNN_FRAME_SIZE: usize = 480;
 pub struct RNNoiseState {
     denoise_state: *mut DenoiseState,
     
-    input_buf: [f32; RNN_FRAME_SIZE],
-    output_buf: [f32; RNN_FRAME_SIZE],
+    buffer: [f32; RNN_FRAME_SIZE],
 
     input_queue: VecDeque<f32>,
-    output_queue: VecDeque<f32>,
+    pub output_queue: VecDeque<f32>,
 }
 
 impl RNNoiseState {
@@ -24,8 +23,7 @@ impl RNNoiseState {
             Self {
                 denoise_state,
 
-                input_buf: [0.; RNN_FRAME_SIZE],
-                output_buf: [0.; RNN_FRAME_SIZE],
+                buffer: [0.; RNN_FRAME_SIZE],
 
                 input_queue: VecDeque::new(),
                 output_queue: VecDeque::new(),
@@ -36,15 +34,15 @@ impl RNNoiseState {
     pub fn process(&mut self, samples: &[f32]) {
         self.input_queue.extend(samples);
 
-        while self.input_queue.pop_slice(&mut self.input_buf, false) > 0 {
+        while self.input_queue.pop_slice(&mut self.buffer, false) > 0 {
             unsafe {
                 let _ = rnnoise_process_frame(
                     self.denoise_state,
-                    self.output_buf.as_mut_ptr(),
-                    self.input_buf.as_ptr(),
+                    self.buffer.as_mut_ptr(),
+                    self.buffer.as_ptr(),
                 );
 
-                self.output_queue.extend(self.output_buf);
+                self.output_queue.extend(self.buffer);
             }
         }
     }

@@ -12,8 +12,9 @@ use std::{
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{
-    self, DeviceRegistry,
-    capture::{Capture, CaptureController},
+    self, DEFAULT_BIT_RATE, DEFAULT_CHANNELS, DeviceRegistry,
+    capture::{Capture, CaptureController, WaitResult},
+    noise::RNNoiseState,
     playback::{
         AudioStreamingClientSharedState, PlaybackController, PlaybackOutputState,
         PlaybackPacketCommand, PlaybackPacketInput,
@@ -22,6 +23,7 @@ use capture::audio::{
 use crossbeam::channel;
 use gpui::{App, AppContext, Global};
 
+use ringbuf::traits::Consumer as _;
 use rpc::models::markers::UserId;
 use streaming_common::{EncodedAudioPacket, UDPPacket, UDPPacketType};
 
@@ -29,7 +31,7 @@ use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseRed
 
 type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
-struct SenderState {
+struct SenderSharedState {
     transmit_volume: AtomicF32,
     volume_modifier: AtomicF32,
 
@@ -37,7 +39,7 @@ struct SenderState {
     noise_reduction: AtomicNoiseReductionAlgorithm,
 }
 
-impl SenderState {
+impl SenderSharedState {
     fn new() -> Self {
         Self {
             is_talking: AtomicBool::new(false),
@@ -48,122 +50,224 @@ impl SenderState {
     }
 }
 
-fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, capture: Capture) {
-    let mut seq = 0;
+enum DenoiserState {
+    Disabled,
+    RNNoise(RNNoiseState),
+}
 
-    let mut buf = BytesMut::new();
+impl DenoiserState {
+    fn apply_denoiser(&mut self, input: &mut [f32]) -> usize {
+        match self {
+            DenoiserState::Disabled => input.len(),
+            DenoiserState::RNNoise(state) => {
+                state.process(input);
 
-    let mut last_send = Instant::now();
-    let mut transmitting = false;
+                let mut count = 0;
+                for sample in input.iter_mut() {
+                    if let Some(value) = state.output_queue.pop_front() {
+                        count += 1;
 
-    let last_silence = RefCell::new(Some(Instant::now()));
-
-    loop {
-        let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
-        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
-        let noise_reduction = state.noise_reduction.load(Ordering::Relaxed);
-
-        let encoded_recv = recv.recv_encoded_with(|mut samples| {
-            if samples.is_empty() {
-                state.is_talking.store(false, Ordering::Relaxed);
-
-                return None;
-            }
-
-            samples
-                .iter_mut()
-                .for_each(|sample| *sample *= volume_modifier);
-
-            let max_volume = *(samples.iter().max_by(|a, b| a.total_cmp(b)).unwrap()); // Safe due to the check above
-
-            if max_volume < transmit_volume {
-                let now = Instant::now();
-
-                let silence = { *last_silence.borrow() };
-                match silence {
-                    Some(value) => {
-                        if now - value > Duration::from_millis(400) {
-                            state.is_talking.store(false, Ordering::Relaxed);
-
-                            return None;
-                        }
+                        *sample = value;
+                    } else {
+                        return count;
                     }
-                    None => *last_silence.borrow_mut() = Some(now),
                 }
-            } else {
-                state.is_talking.store(true, Ordering::Relaxed);
 
-                *last_silence.borrow_mut() = None;
+                count
             }
+        }
+    }
+}
 
-            Some(samples)
-        });
+struct PacketSender {
+    seq: u64,
+    buf: BytesMut,
 
-        if encoded_recv.is_none() {
-            // Let the receivers know that we finished with our speech chunk
-            if transmitting && let Some((user_id, addr)) = *addr.lock().unwrap() {
-                buf.clear();
+    transmitting: bool,
 
-                let mut packet = EncodedAudioPacket::marker();
-                packet.seq = seq;
+    last_send: Instant,
+    last_vad: Instant,
 
-                let udp_packet = UDPPacket {
-                    user_id: user_id.value,
-                    payload: UDPPacketType::Voice(packet),
-                };
+    shared_state: Arc<SenderSharedState>,
+    capture: Capture,
 
-                udp_packet.to_bytes(&mut buf);
+    addr: Addr,
+    socket: Arc<UdpSocket>,
 
-                seq += 1;
-                last_send = Instant::now();
+    denoiser_state: DenoiserState,
+}
 
-                _ = socket.send_to(&buf, addr);
+impl PacketSender {
+    fn new(
+        addr: Addr,
+        socket: Arc<UdpSocket>,
+        state: Arc<SenderSharedState>,
+        capture: Capture,
+    ) -> Self {
+        Self {
+            seq: 0,
+            buf: BytesMut::new(),
+
+            transmitting: false,
+
+            last_send: Instant::now(),
+            last_vad: Instant::now(),
+
+            addr,
+            shared_state: state,
+            socket,
+            capture,
+
+            denoiser_state: DenoiserState::Disabled,
+        }
+    }
+
+    /// Send a special packet that marks the end of the speech section.
+    /// It prevents the growth of the jitter buffer on the recv side
+    fn send_marker(&mut self) {
+        if let Some((user_id, addr)) = *self.addr.lock().unwrap() {
+            self.buf.clear();
+
+            let mut packet = EncodedAudioPacket::marker();
+            packet.seq = self.seq;
+
+            let udp_packet = UDPPacket {
+                user_id: user_id.value,
+                payload: UDPPacketType::Voice(packet),
+            };
+
+            udp_packet.to_bytes(&mut self.buf);
+
+            self.seq += 1;
+            self.last_send = Instant::now();
+
+            _ = self.socket.send_to(&self.buf, addr);
+        }
+    }
+
+    /// Just a ping message to keep NAT mapping opened
+    fn send_ping(&mut self) {
+        if let Some((user_id, addr)) = *self.addr.lock().unwrap() {
+            self.buf.clear();
+
+            let udp_packet = UDPPacket {
+                user_id: user_id.value,
+                payload: UDPPacketType::Ping,
+            };
+
+            udp_packet.to_bytes(&mut self.buf);
+
+            self.last_send = Instant::now();
+            _ = self.socket.send_to(&self.buf, addr);
+        }
+    }
+
+    fn increase_volume(&self, input: &mut [f32]) {
+        let volume_modifier = self.shared_state.volume_modifier.load(Ordering::Relaxed);
+        input.iter_mut()
+            .for_each(|s| *s *= volume_modifier);
+    }
+
+    fn apply_denoiser(&mut self, input: &mut [f32]) -> usize {
+        let denoise = self.shared_state.noise_reduction.load(Ordering::Relaxed);
+
+        match denoise {
+            NoiseReductionAlgorithm::Disabled => {
+                self.denoiser_state = DenoiserState::Disabled;
             }
-
-            // Yes, recv packets also prolong UDP NAT mapping but
-            // it's kinda pain in the butt to account for them.
-            // I think this solution is more than enough
-            if last_send.elapsed() > Duration::from_secs(10)
-                && let Some((user_id, addr)) = *addr.lock().unwrap()
-            {
-                buf.clear();
-
-                let udp_packet = UDPPacket {
-                    user_id: user_id.value,
-                    payload: UDPPacketType::Ping,
-                };
-
-                udp_packet.to_bytes(&mut buf);
-
-                last_send = Instant::now();
-                _ = socket.send_to(&buf, addr);
+            NoiseReductionAlgorithm::RNNoise | NoiseReductionAlgorithm::DeepFilterNet => {
+                self.denoiser_state = DenoiserState::RNNoise(RNNoiseState::new());
             }
-
-            transmitting = false;
-
-            continue;
         }
 
-        if let Some(mut encoded_recv) = encoded_recv {
-            transmitting = true;
+        self.denoiser_state.apply_denoiser(input)
+    }
 
-            while let Some(mut encoded_packet) = encoded_recv.pop() {
-                if let Some((user_id, addr)) = *addr.lock().unwrap() {
-                    buf.clear();
+    fn should_transmit(&self, input: &[f32]) -> bool {
+        let transmit_volume = self.shared_state.transmit_volume.load(Ordering::Relaxed);
+        let max_volume = *(input
+            .iter()
+            .max_by(|a, b| a.total_cmp(b))
+            .expect("Input buffer should not be empty"));
 
-                    encoded_packet.seq = seq;
+        max_volume >= transmit_volume
+    }
+
+    fn is_silence(&self) -> bool {
+        // To not cut the sound off too sharply
+        self.last_vad.elapsed() > Duration::from_millis(280)
+    }
+
+    fn process_samples(&mut self) {
+        let mut input_buffer = [0_f32; DEFAULT_BIT_RATE];
+
+        let mut count = self.capture.samples_buffer.pop_slice(&mut input_buffer);
+        if count > 0 {
+            count = self.apply_denoiser(&mut input_buffer[..count]);
+
+            // Denoiser is not ready yet
+            if count == 0 {
+                return;
+            }
+
+            self.increase_volume(&mut input_buffer[..count]);
+            if self.should_transmit(&input_buffer[..count]) {
+                self.last_vad = Instant::now();
+            }
+
+            if !self.is_silence() {
+                self.transmitting = true;
+                self.capture.encoder.encode(&input_buffer[..count]);
+            } else if self.transmitting {
+                self.transmitting = false;
+                self.capture.encoder.reset();
+
+                self.send_marker();
+            }
+        }
+    }
+
+    fn run(mut self) {
+        loop {
+            let result = self.capture.wait(Duration::from_millis(80));
+            let is_enabled = self.capture.is_enabled.load(Ordering::Relaxed);
+
+            if matches!(result, WaitResult::Ready) {
+                self.process_samples();
+            }
+
+            if self.transmitting
+                && (matches!(result, WaitResult::Timeout) || !is_enabled)
+            {
+                self.transmitting = false;
+                self.capture.encoder.reset();
+
+                self.send_marker();
+            }
+
+            while let Some(mut packet) = self.capture.encoder.pop_packet() {
+                if self.transmitting && let Some((user_id, addr)) = *self.addr.lock().unwrap() {
+                    self.buf.clear();
+
+                    packet.seq = self.seq;
                     let udp_packet = UDPPacket {
                         user_id: user_id.value,
-                        payload: UDPPacketType::Voice(encoded_packet),
+                        payload: UDPPacketType::Voice(packet),
                     };
 
-                    udp_packet.to_bytes(&mut buf);
+                    udp_packet.to_bytes(&mut self.buf);
 
-                    seq += 1;
-                    last_send = Instant::now();
+                    self.seq += 1;
+                    self.last_send = Instant::now();
 
-                    _ = socket.send_to(&buf, addr);
+                    _ = self.socket.send_to(&self.buf, addr);
                 }
+            }
+
+            self.shared_state.is_talking.store(self.transmitting, Ordering::Relaxed);
+
+            if self.last_send.elapsed() > Duration::from_secs(10) {
+                self.send_ping();
             }
         }
     }
@@ -204,7 +308,7 @@ struct GlobalStreaming {
 
     stream_addr: Addr,
 
-    sender_state: Arc<SenderState>,
+    sender_state: Arc<SenderSharedState>,
 }
 
 impl Global for GlobalStreaming {}
@@ -283,7 +387,7 @@ pub fn init(cx: &mut App, debug: bool) {
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
     let (capture, mut playback, device_registry) = audio::init(debug);
 
-    let sender_state = Arc::new(SenderState::new());
+    let sender_state = Arc::new(SenderSharedState::new());
 
     let packet_input = playback.packet_input.take().unwrap();
 
@@ -300,7 +404,9 @@ pub fn init(cx: &mut App, debug: bool) {
             let state = sender_state.clone();
 
             move || {
-                spawn_sender(addr, socket, state, capture);
+                let sender = PacketSender::new(addr, socket, state, capture);
+
+                sender.run();
             }
         })
         .unwrap();
