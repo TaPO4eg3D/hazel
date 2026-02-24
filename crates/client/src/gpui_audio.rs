@@ -176,7 +176,9 @@ impl PacketSender {
                 self.denoiser_state = DenoiserState::Disabled;
             }
             NoiseReductionAlgorithm::RNNoise | NoiseReductionAlgorithm::DeepFilterNet => {
-                self.denoiser_state = DenoiserState::RNNoise(RNNoiseState::new());
+                if !matches!(self.denoiser_state, DenoiserState::RNNoise(_)) {
+                    self.denoiser_state = DenoiserState::RNNoise(RNNoiseState::new());
+                }
             }
         }
 
