@@ -12,7 +12,7 @@ use std::{
 use crossbeam::channel;
 use streaming_common::EncodedAudioPacket;
 
-use crate::audio::encode::AudioEncoder;
+use crate::audio::{capture::Capture, encode::AudioEncoder};
 use crate::audio::playback::{Playback, init_packet_processing};
 
 #[cfg(target_os = "linux")]
@@ -23,6 +23,7 @@ pub mod windows;
 pub mod decode;
 pub mod encode;
 pub mod playback;
+pub mod capture;
 pub mod noise;
 
 /// Sampling rate per channel
@@ -68,44 +69,12 @@ impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
     }
 }
 
-/// Wakes up a sleeping thread when data
-/// is available for consumption
-#[derive(Clone, Default)]
-pub(crate) struct Notifier {
-    thread: Arc<Mutex<Option<Thread>>>,
-}
-
-impl Notifier {
-    pub fn new() -> Self {
-        Self {
-            thread: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub fn notify(&self) {
-        let handle = {
-            let guard = self.thread.lock().unwrap();
-
-            guard.clone()
-        };
-
-        if let Some(thread) = handle {
-            thread.unpark();
-        }
-    }
-
-    pub fn listen_updates(&self) {
-        let mut guard = self.thread.lock().unwrap();
-        *guard = Some(std::thread::current());
-    }
-}
-
 #[derive(Clone)]
 pub struct DeviceRegistry {
     inner: Arc<RwLock<DeviceRegistryInner>>,
 }
 
-pub struct Subscription {
+pub struct DeviceSubscription {
     is_first_fetch: bool,
 
     registry: DeviceRegistry,
@@ -137,7 +106,7 @@ impl Future for RecvFuture {
     }
 }
 
-impl Subscription {
+impl DeviceSubscription {
     pub fn recv(&mut self) -> RecvFuture {
         let future = RecvFuture {
             first: !self.is_first_fetch,
@@ -157,8 +126,8 @@ impl DeviceRegistry {
         }
     }
 
-    pub fn subscribe(self) -> Subscription {
-        Subscription {
+    pub fn subscribe(self) -> DeviceSubscription {
+        DeviceSubscription {
             is_first_fetch: true,
             registry: self,
         }
@@ -262,9 +231,9 @@ impl DeviceRegistry {
 }
 
 #[cfg(target_os = "windows")]
-type PlatformLoopController = windows::CommandSender<AudioLoopCommand>;
+pub(crate) type PlatformLoopController = windows::CommandSender<AudioLoopCommand>;
 #[cfg(target_os = "linux")]
-type PlatformLoopController = pipewire::channel::Sender<AudioLoopCommand>;
+pub(crate) type PlatformLoopController = pipewire::channel::Sender<AudioLoopCommand>;
 
 struct DeviceRegistryInner {
     input: Vec<AudioDevice>,
@@ -305,11 +274,6 @@ pub struct AudioDevice {
     pub is_active: bool,
 }
 
-#[cfg(target_os = "linux")]
-type PlatformCapture = linux::LinuxCapture;
-#[cfg(target_os = "windows")]
-type PlatformCapture = windows::WindowsCapture;
-
 #[derive(Debug)]
 pub enum AudioLoopCommand {
     SetEnabledCapture(bool),
@@ -317,153 +281,6 @@ pub enum AudioLoopCommand {
 
     SetActiveInputDevice(AudioDevice),
     SetActiveOutputDevice(AudioDevice),
-}
-
-/// (id, Sender)
-type CaptureConsumer = (usize, channel::Sender<Vec<f32>>);
-
-/// Playback handle, can be safely shared between threads
-#[derive(Clone)]
-pub struct Capture {
-    idx_count: Arc<AtomicUsize>,
-
-    handle: Arc<thread::JoinHandle<()>>,
-    is_enabled: Arc<AtomicBool>,
-
-    platform_loop_controller: PlatformLoopController,
-    consumers: Arc<RwLock<Vec<CaptureConsumer>>>,
-}
-
-pub struct CaptureReciever<'a> {
-    idx: usize,
-    pub rx: channel::Receiver<Vec<f32>>,
-    encoder: AudioEncoder,
-    capture: &'a Capture,
-}
-
-pub struct EncodedRecv<'a> {
-    encoder: &'a mut AudioEncoder,
-}
-
-impl<'a> EncodedRecv<'a> {
-    pub fn pop(&mut self) -> Option<EncodedAudioPacket> {
-        self.encoder.pop_packet()
-    }
-}
-
-impl<'a> CaptureReciever<'a> {
-    fn new(capture: &'a Capture) -> CaptureReciever<'a> {
-        let mut recievers = capture.consumers.write().unwrap();
-
-        let idx = capture.idx_count.fetch_add(1, Ordering::AcqRel);
-
-        let (tx, rx) = channel::unbounded();
-        recievers.push((idx, tx));
-
-        Self {
-            idx,
-            encoder: AudioEncoder::new(),
-            rx,
-            capture,
-        }
-    }
-
-    pub fn recv_encoded_with<'b>(
-        &'b mut self,
-        f: impl Fn(Vec<f32>) -> Option<Vec<f32>>,
-    ) -> Option<EncodedRecv<'b>> {
-        if let Ok(samples) = self.rx.recv_timeout(Duration::from_millis(40)) {
-            self.encoder.encode(&f(samples)?);
-
-            return Some(EncodedRecv {
-                encoder: &mut self.encoder,
-            });
-        }
-
-        None
-    }
-}
-
-impl<'a> Drop for CaptureReciever<'a> {
-    fn drop(&mut self) {
-        let mut recievers = self.capture.consumers.write().unwrap();
-
-        recievers.retain(|(id, _)| *id != self.idx);
-
-        if recievers.is_empty() {
-            self.capture.set_enabled(false);
-        }
-    }
-}
-
-impl Capture {
-    fn new(mut platform_capture: PlatformCapture) -> Self {
-        let is_enabled = Arc::new(AtomicBool::new(false));
-        let platform_loop_controller = platform_capture.get_controller();
-
-        let consumers: Arc<RwLock<Vec<CaptureConsumer>>> = Arc::new(RwLock::new(Vec::new()));
-
-        let handle = thread::Builder::new()
-            .name("capture-controller".into())
-            .spawn({
-                let consumers = consumers.clone();
-                let is_enabled = is_enabled.clone();
-
-                move || {
-                    let mut buf = vec![0.; (DEFAULT_RATE * DEFAULT_CHANNELS) as usize];
-
-                    // IMPORTANT: without this function, the thread
-                    // will not be unparked on new data
-                    platform_capture.listen_updates();
-
-                    // We start with disabled capturing
-                    thread::park();
-
-                    loop {
-                        if !is_enabled.load(Ordering::Relaxed) {
-                            std::thread::park();
-                        }
-
-                        let len = platform_capture.pop(&mut buf);
-                        if len == 0 {
-                            continue;
-                        }
-
-                        let consumers = consumers.read().unwrap();
-
-                        for (_, consumer) in consumers.iter() {
-                            _ = consumer.send(buf[0..len].to_vec());
-                        }
-                    }
-                }
-            })
-            .unwrap();
-
-        Self {
-            is_enabled,
-            consumers,
-            platform_loop_controller,
-            handle: Arc::new(handle),
-            idx_count: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    /// TODO: Make it a builder API. To build your receiver in layers
-    pub fn get_recv(&self) -> CaptureReciever<'_> {
-        CaptureReciever::new(self)
-    }
-
-    pub fn set_enabled(&self, value: bool) {
-        self.is_enabled.store(value, Ordering::Relaxed);
-
-        _ = self
-            .platform_loop_controller
-            .send(AudioLoopCommand::SetEnabledCapture(value));
-
-        if value {
-            self.handle.thread().unpark();
-        }
-    }
 }
 
 pub fn init(debug: bool) -> (Capture, Playback, DeviceRegistry) {
@@ -499,8 +316,6 @@ pub fn init(debug: bool) -> (Capture, Playback, DeviceRegistry) {
     let (capture, playback, device_registry) = linux::init(packet_input, packet_output);
     #[cfg(target_os = "windows")]
     let (capture, playback, device_registry) = windows::init(packet_input, packet_output);
-
-    let capture = Capture::new(capture);
 
     (capture, playback, device_registry)
 }

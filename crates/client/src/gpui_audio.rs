@@ -9,14 +9,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use atomic::Atomic;
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{
-    self, Capture, DeviceRegistry,
+    self, DeviceRegistry,
+    capture::{Capture, CaptureController},
     playback::{
-        AudioOutputState, AudioPacketCommand, AudioPacketInput, AudioStreamingClientSharedState,
-        PlaybackController,
+        AudioStreamingClientSharedState, PlaybackController, PlaybackOutputState,
+        PlaybackPacketCommand, PlaybackPacketInput,
     },
 };
 use crossbeam::channel;
@@ -43,9 +43,7 @@ impl SenderState {
             is_talking: AtomicBool::new(false),
             transmit_volume: AtomicF32::new(0.010),
             volume_modifier: AtomicF32::new(1.0),
-            noise_reduction: AtomicNoiseReductionAlgorithm::new(
-                NoiseReductionAlgorithm::RNNoise
-            ),
+            noise_reduction: AtomicNoiseReductionAlgorithm::new(NoiseReductionAlgorithm::RNNoise),
         }
     }
 }
@@ -54,7 +52,6 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
     let mut seq = 0;
 
     let mut buf = BytesMut::new();
-    let mut recv = capture.get_recv();
 
     let mut last_send = Instant::now();
     let mut transmitting = false;
@@ -63,7 +60,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
 
     loop {
         let transmit_volume = state.transmit_volume.load(Ordering::Relaxed);
-        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed) + 0.5;
+        let volume_modifier = state.volume_modifier.load(Ordering::Relaxed);
         let noise_reduction = state.noise_reduction.load(Ordering::Relaxed);
 
         let encoded_recv = recv.recv_encoded_with(|mut samples| {
@@ -172,7 +169,7 @@ fn spawn_sender(addr: Addr, socket: Arc<UdpSocket>, state: Arc<SenderState>, cap
     }
 }
 
-fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: AudioPacketInput) {
+fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput) {
     let mut buf = BytesMut::with_capacity(4800 * 2);
 
     loop {
@@ -197,11 +194,11 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: AudioPacketInput) {
 }
 
 struct GlobalStreaming {
-    capture: Capture,
+    capture: CaptureController,
     playback: PlaybackController,
 
-    packet_tx: channel::Sender<AudioPacketCommand>,
-    packet_output_state: AudioOutputState,
+    packet_tx: channel::Sender<PlaybackPacketCommand>,
+    packet_output_state: PlaybackOutputState,
 
     device_registry: DeviceRegistry,
 
@@ -221,15 +218,12 @@ impl Streaming {
         })
     }
 
-    pub fn set_noise_reduction<C: AppContext>(
-        noise_reduction: NoiseReductionAlgorithm,
-        cx: &C
-    ) {
+    pub fn set_noise_reduction<C: AppContext>(noise_reduction: NoiseReductionAlgorithm, cx: &C) {
         cx.read_global(move |stream: &GlobalStreaming, _| {
-            stream.sender_state.noise_reduction.store(
-                noise_reduction,
-                Ordering::Relaxed,
-            );
+            stream
+                .sender_state
+                .noise_reduction
+                .store(noise_reduction, Ordering::Relaxed);
         });
     }
 
@@ -259,7 +253,7 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| stream.device_registry.clone())
     }
 
-    pub fn get_capture<C: AppContext>(cx: &C) -> Capture {
+    pub fn get_capture<C: AppContext>(cx: &C) -> CaptureController {
         cx.read_global(|stream: &GlobalStreaming, _| stream.capture.clone())
     }
 
@@ -275,7 +269,7 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let shared = shared.upgrade().unwrap();
 
-            _ = stream.packet_tx.send(AudioPacketCommand::AddClient((
+            _ = stream.packet_tx.send(PlaybackPacketCommand::AddClient((
                 shared.user_id,
                 Arc::downgrade(&shared),
             )));
@@ -293,14 +287,15 @@ pub fn init(cx: &mut App, debug: bool) {
 
     let packet_input = playback.packet_input.take().unwrap();
 
-    let packet_tx = packet_input.tx.clone();
+    let packet_tx = packet_input.command_sender.clone();
     let packet_output_state = packet_input.output_state.clone();
+
+    let capture_controller = capture.get_controller();
 
     thread::Builder::new()
         .name("udp-sender".into())
         .spawn({
             let addr = stream_addr.clone();
-            let capture = capture.clone();
             let socket = socket.clone();
             let state = sender_state.clone();
 
@@ -322,7 +317,7 @@ pub fn init(cx: &mut App, debug: bool) {
         .unwrap();
 
     cx.set_global(GlobalStreaming {
-        capture,
+        capture: capture_controller,
         playback: playback.controller,
         packet_tx,
         packet_output_state,
