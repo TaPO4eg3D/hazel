@@ -13,12 +13,12 @@ use windows::Win32::{
 };
 use windows_core::HSTRING;
 
-use crate::audio::{DEFAULT_RATE, playback::AudioPacketOutput, windows::try_get_device};
+use crate::audio::{DEFAULT_RATE, playback::PlaybackPacketOutput, windows::try_get_device};
 
 // TODO: Implement Drop
 pub(crate) struct PlaybackStream {
     pub(crate) event_handle: HANDLE,
-    pub(crate) packet_output: Option<AudioPacketOutput>,
+    pub(crate) packet_output: Option<PlaybackPacketOutput>,
     pub(crate) active_device: String,
 
     audio_client: IAudioClient,
@@ -45,7 +45,7 @@ fn try_activate_device(
 
 impl PlaybackStream {
     pub(crate) fn new(
-        packet_output: AudioPacketOutput,
+        packet_output: PlaybackPacketOutput,
         preffered_device: Option<String>,
     ) -> windows::core::Result<Self> {
         unsafe {

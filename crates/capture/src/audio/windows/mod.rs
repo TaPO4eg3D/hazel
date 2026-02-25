@@ -1,14 +1,11 @@
 //! TODO: Migrate to safe WASAPI wrapper? Like this one: https://github.com/HEnquist/wasapi-rs
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
     thread,
 };
 
-use ringbuf::{
-    HeapCons, HeapRb,
-    traits::{Consumer, Observer as _, Split as _},
-};
+use ringbuf::{HeapRb, traits::Split as _};
 use windows::{
     Win32::{
         Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
@@ -31,8 +28,9 @@ use windows::{
 use windows_core::{HSTRING, Interface as _, PWSTR};
 
 use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry, Notifier,
-    playback::{AudioPacketInput, AudioPacketOutput, Playback, PlaybackController},
+    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
+    capture::Capture,
+    playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
     windows::{capture::CaptureStream, playback::PlaybackStream},
 };
 
@@ -214,30 +212,6 @@ impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
     }
 }
 
-pub struct WindowsCapture {
-    notifier: Notifier,
-    loop_controller: CommandSender<AudioLoopCommand>,
-    capture_consumer: HeapCons<f32>,
-}
-
-impl WindowsCapture {
-    pub fn get_controller(&self) -> CommandSender<AudioLoopCommand> {
-        self.loop_controller.clone()
-    }
-
-    pub fn listen_updates(&self) {
-        self.notifier.listen_updates();
-    }
-
-    pub fn pop(&mut self, buf: &mut [f32]) -> usize {
-        if self.capture_consumer.occupied_len() == 0 {
-            std::thread::park();
-        }
-
-        self.capture_consumer.pop_slice(buf)
-    }
-}
-
 struct ChannelState<T> {
     inner: Arc<Mutex<Vec<T>>>,
 }
@@ -313,9 +287,9 @@ fn chnannel<T>() -> (EventHandle, ChannelState<T>, CommandSender<T>) {
 }
 
 pub(crate) fn init(
-    packet_input: AudioPacketInput,
-    packet_output: AudioPacketOutput,
-) -> (WindowsCapture, Playback, DeviceRegistry) {
+    packet_input: PlaybackPacketInput,
+    packet_output: PlaybackPacketOutput,
+) -> (Capture, Playback, DeviceRegistry) {
     // We capture in mono and there's no point to store
     // more than 60ms
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
@@ -323,12 +297,8 @@ pub(crate) fn init(
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
 
-    let capture_notifier = Notifier::new();
-    let capture = WindowsCapture {
-        capture_consumer,
-        loop_controller: sender.clone(),
-        notifier: capture_notifier.clone(),
-    };
+    let capture_notifier = Arc::new((Mutex::new(false), Condvar::new()));
+    let capture = Capture::new(capture_notifier.clone(), capture_consumer, sender.clone());
 
     let playback = Playback {
         controller: PlaybackController::new(sender.clone()),
