@@ -16,7 +16,7 @@ use windows::Win32::{
 };
 use windows_core::HSTRING;
 
-use crate::audio::{DEFAULT_RATE, Notifier, windows::try_get_device};
+use crate::audio::{DEFAULT_RATE, capture::Notifier, windows::try_get_device};
 
 pub(crate) struct CaptureStream {
     pub(crate) event_handle: HANDLE,
@@ -161,7 +161,10 @@ impl CaptureStream {
                     if let Some(producer) = self.capture_producer.as_mut() {
                         producer.push_slice(samples);
 
-                        self.capture_notifier.notify();
+                        let mut ready = self.capture_notifier.0.lock().unwrap();
+                        *ready = true;
+
+                        self.capture_notifier.1.notify_all();
                     }
                 }
 
