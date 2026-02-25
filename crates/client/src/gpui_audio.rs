@@ -185,7 +185,7 @@ impl PacketSender {
         self.denoiser_state.apply_denoiser(input)
     }
 
-    fn should_transmit(&self, input: &[f32]) -> bool {
+    fn is_voice_activity_detected(&self, input: &[f32]) -> bool {
         let transmit_volume = self.shared_state.transmit_volume.load(Ordering::Relaxed);
         let max_volume = *(input
             .iter()
@@ -197,7 +197,7 @@ impl PacketSender {
 
     fn is_silence(&self) -> bool {
         // To not cut the sound off too sharply
-        self.last_vad.elapsed() > Duration::from_millis(280)
+        self.last_vad.elapsed() > Duration::from_millis(400)
     }
 
     fn process_samples(&mut self) {
@@ -213,7 +213,7 @@ impl PacketSender {
             }
 
             self.increase_volume(&mut input_buffer[..count]);
-            if self.should_transmit(&input_buffer[..count]) {
+            if self.is_voice_activity_detected(&input_buffer[..count]) {
                 self.last_vad = Instant::now();
             }
 
