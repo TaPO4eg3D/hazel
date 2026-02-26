@@ -20,118 +20,16 @@ use crate::{
     components::{
         animation::HoverAnimationExt,
         chat_state::ChatState,
+        collapsable_card::{CollapsableCard, CollapsableCardState},
         streaming_state::{NoiseReductionAlgorithm, StreamingState},
     },
     gpui_audio::Streaming,
 };
 
+pub mod text_channels;
+pub mod voice_channels;
+
 type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;
-
-#[derive(IntoElement)]
-pub struct TextChannelsComponent {
-    chat_state: Entity<ChatState>,
-
-    is_collapsed: bool,
-    on_toggle_click: Option<EventCallback<bool>>,
-}
-
-impl TextChannelsComponent {
-    pub fn new(chat_state: &Entity<ChatState>) -> Self {
-        Self {
-            chat_state: chat_state.clone(),
-
-            is_collapsed: false,
-            on_toggle_click: None,
-        }
-    }
-
-    pub fn is_collapsed(mut self, value: bool) -> Self {
-        self.is_collapsed = value;
-
-        self
-    }
-
-    pub fn on_toggle_click(
-        mut self,
-        on_toggle_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_toggle_click = Some(Box::new(on_toggle_click));
-
-        self
-    }
-}
-
-impl RenderOnce for TextChannelsComponent {
-    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-        let state = self.chat_state.read(cx);
-        let secondary = cx.theme().secondary;
-
-        let channels = state.text_channels.iter().map(|channel| {
-            let is_active = channel.is_active;
-            let muted = cx.theme().muted;
-
-            div().id(ElementId::Integer(channel.id)).child(
-                div()
-                    .rounded_lg()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .py_2()
-                            .px_3()
-                            .child(Icon::new(IconName::Hash).mr_2().with_size(Size::Medium))
-                            .child(Label::new(channel.name.clone()).mt(px(0.5))),
-                    )
-                    .with_hover_animation(
-                        "hover-bg",
-                        Animation::new(Duration::from_millis(200)).with_easing(ease_in_out),
-                        move |this, delta| {
-                            if is_active {
-                                this.bg(muted.opacity(1. - delta.min(0.2)))
-                            } else {
-                                this.bg(secondary.opacity(delta))
-                            }
-                        },
-                    ),
-            )
-        });
-
-        div()
-            .id("text-channels")
-            .p_3()
-            .w_full()
-            .v_flex()
-            .child(
-                div()
-                    .mb_2()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .child(Label::new("Text channels").text_sm().font_semibold())
-                    .child(
-                        Button::new("collapse")
-                            .ml_auto()
-                            .cursor_pointer()
-                            .icon({
-                                if self.is_collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                }
-                            })
-                            .ghost()
-                            .when_some(self.on_toggle_click, |this, on_toggle_click| {
-                                this.on_click(move |_, window, cx| {
-                                    on_toggle_click(&!self.is_collapsed, window, cx);
-                                })
-                            }),
-                    ),
-            )
-            .when(!self.is_collapsed, |this| {
-                this.child(div().v_flex().children(channels))
-            })
-    }
-}
 
 #[derive(IntoElement)]
 pub struct VoiceChannelsComponent {
@@ -591,11 +489,13 @@ impl RenderOnce for NoiseReductionSelector {
                                                 algorithm.label(),
                                             )
                                             .active(active_algorithm == algorithm)
-                                            .on_click(move |_, cx| {
-                                                state.update(cx, |state, cx| {
-                                                    state.set_noise_reduction(algorithm, cx);
-                                                });
-                                            })
+                                            .on_click(
+                                                move |_, cx| {
+                                                    state.update(cx, |state, cx| {
+                                                        state.set_noise_reduction(algorithm, cx);
+                                                    });
+                                                },
+                                            )
                                         })
                                         .child({
                                             let algorithm = NoiseReductionAlgorithm::DeepFilterNet;
@@ -605,11 +505,13 @@ impl RenderOnce for NoiseReductionSelector {
                                                 algorithm.label(),
                                             )
                                             .active(active_algorithm == algorithm)
-                                            .on_click(move |_, cx| {
-                                                self.streaming_state.update(cx, |state, cx| {
-                                                    state.set_noise_reduction(algorithm, cx);
-                                                });
-                                            })
+                                            .on_click(
+                                                move |_, cx| {
+                                                    self.streaming_state.update(cx, |state, cx| {
+                                                        state.set_noise_reduction(algorithm, cx);
+                                                    });
+                                                },
+                                            )
                                         }),
                                 ),
                         ),
