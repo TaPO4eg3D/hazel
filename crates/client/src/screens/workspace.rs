@@ -3,24 +3,26 @@ use gpui::{
     px,
 };
 use gpui_component::{
-    StyledExt, divider::Divider, resizable::{
-        h_resizable,
-        resizable_panel,
-    }
+    StyledExt,
+    divider::Divider,
+    resizable::{h_resizable, resizable_panel},
 };
 
 use crate::components::{
     chat_state::ChatState,
-    left_sidebar::{ControlPanel, TextChannelsComponent, VoiceChannelsComponent},
+    collapsable_card::CollapsableCardState,
+    left_sidebar::{
+        ControlPanel, text_channels::TextChannelsComponent, voice_channels::VoiceChannelsComponent,
+    },
     streaming_state::StreamingState,
 };
 
 pub struct WorkspaceScreen {
-    text_channels_collapsed: bool,
-    voice_channels_collapsed: bool,
-
     chat: Entity<ChatState>,
     streaming: Entity<StreamingState>,
+
+    text_card: Entity<CollapsableCardState>,
+    voice_card: Entity<CollapsableCardState>,
 }
 
 impl WorkspaceScreen {
@@ -37,12 +39,15 @@ impl WorkspaceScreen {
         let chat = cx.new(|cx| ChatState::new(window, cx));
         let streaming = cx.new(StreamingState::new);
 
+        let text_card = cx.new(|_| CollapsableCardState::new());
+        let voice_card = cx.new(|_| CollapsableCardState::new());
+
         Self {
             chat,
             streaming,
 
-            text_channels_collapsed: false,
-            voice_channels_collapsed: false,
+            text_card,
+            voice_card,
         }
     }
 }
@@ -65,25 +70,14 @@ impl Render for WorkspaceScreen {
                     div()
                         .size_full()
                         .v_flex()
-                        .child(
-                            TextChannelsComponent::new(&self.chat)
-                                .is_collapsed(self.text_channels_collapsed)
-                                .on_toggle_click(cx.listener(|this, ev, _, _cx| {
-                                    this.text_channels_collapsed = *ev;
-                                })),
-                        )
+                        .child(TextChannelsComponent::new(&self.text_card, &self.chat))
                         .child(Divider::horizontal().mx_3())
-                        .child(
-                            VoiceChannelsComponent::new(&self.streaming)
-                                .is_collapsed(self.voice_channels_collapsed)
-                                .on_toggle_click(cx.listener(|this, ev, _, _cx| {
-                                    this.voice_channels_collapsed = *ev;
-                                })),
-                        )
+                        .child(VoiceChannelsComponent::new(
+                            &self.voice_card,
+                            &self.streaming,
+                        ))
                         .child(Divider::horizontal().mx_3().mt_auto())
-                        .child(
-                            ControlPanel::new(&self.streaming)
-                        )
+                        .child(ControlPanel::new(&self.streaming)),
                 ),
             )
             .child(
