@@ -1,12 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, App, Corner, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
-    InspectorElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window, anchored, deferred,
-    div, px,
+    AnyElement, App, Bounds, Corner, Div, Element, ElementId, GlobalElementId, Hitbox,
+    HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window,
+    anchored, deferred, div, px,
 };
-use gpui_component::{StyledExt, black};
+use gpui_component::{ActiveTheme, ElementExt, StyledExt, black};
 
 /// A extension trait for adding a context menu to an element.
 pub trait ContextPopover: ParentElement + Styled {
@@ -16,15 +16,13 @@ pub trait ContextPopover: ParentElement + Styled {
     /// Because the `ContextMenu` element is positioned `absolute`, it will not affect the layout of the parent element.
     fn context_menu(
         self,
+        id: impl Into<ElementId>,
         f: impl Fn(ContextMenuItem, &mut Window, &mut App) -> ContextMenuItem + 'static,
     ) -> ContextMenu<Self>
     where
         Self: Sized,
     {
-        // Generate a unique ID based on the element's memory address to ensure
-        // each context menu has its own state and doesn't share with others
-        let id = format!("context-menu-{:p}", &self as *const _);
-        ContextMenu::new(id, self).content(f)
+        ContextMenu::new(id.into(), self).content(f)
     }
 }
 
@@ -64,9 +62,9 @@ impl InteractiveElement for ContextMenuItem {
 }
 
 impl RenderOnce for ContextMenuItem {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         self.base
-            .bg(black())
+            .popover_style(cx)
             .occlude()
             .children(self.children)
             .refine_style(&self.style)
@@ -233,6 +231,11 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
                         }
                     });
 
+                    let position = Point {
+                        x: position.x - px(10.),
+                        y: position.y - px(10.),
+                    };
+
                     content_element = Some(
                         deferred(
                             anchored().child(
@@ -288,6 +291,7 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
         if let Some(element) = &mut request_layout.element {
             element.prepaint(window, cx);
         }
+
         window.insert_hitbox(bounds, HitboxBehavior::Normal)
     }
 
