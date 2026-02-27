@@ -1,4 +1,4 @@
-use rpc::{models::common::{APIError, RPCMethod}, server::RpcRouter};
+use rpc::models::common::{APIError, RPCMethod};
 use sea_orm::DbErr;
 
 use crate::{AppState, ConnectionState};
@@ -29,7 +29,7 @@ macro_rules! register_endpoints {
         $router
             $(
                 .register(
-                    $endpoint::key(), 
+                    $endpoint::key(),
                     $endpoint::handle
                 )
             )+

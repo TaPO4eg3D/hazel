@@ -1,18 +1,12 @@
 use std::{
     collections::VecDeque,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::{Arc, RwLock},
     task::{Poll, Waker},
-    thread::{self, Thread},
+    thread::{self},
     time::Duration,
 };
 
-use crossbeam::channel;
-use streaming_common::EncodedAudioPacket;
-
-use crate::audio::{capture::Capture, encode::AudioEncoder};
+use crate::audio::capture::Capture;
 use crate::audio::playback::{Playback, init_packet_processing};
 
 #[cfg(target_os = "linux")]
@@ -20,11 +14,11 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+pub mod capture;
 pub mod decode;
 pub mod encode;
-pub mod playback;
-pub mod capture;
 pub mod noise;
+pub mod playback;
 
 /// Sampling rate per channel
 pub const DEFAULT_RATE: u32 = 48000;

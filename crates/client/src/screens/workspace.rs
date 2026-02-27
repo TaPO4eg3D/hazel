@@ -56,7 +56,7 @@ impl Render for WorkspaceScreen {
     fn render(
         &mut self,
         _window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         h_resizable("my-layout")
             .on_resize(|state, _window, cx| {

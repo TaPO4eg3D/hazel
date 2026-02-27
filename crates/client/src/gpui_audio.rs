@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     net::{SocketAddr, UdpSocket},
     sync::{
         Arc, Mutex, Weak,
@@ -12,7 +11,7 @@ use std::{
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::audio::{
-    self, DEFAULT_BIT_RATE, DEFAULT_CHANNELS, DeviceRegistry,
+    self, DEFAULT_BIT_RATE, DeviceRegistry,
     capture::{Capture, CaptureController, WaitResult},
     noise::RNNoiseState,
     playback::{
@@ -164,8 +163,7 @@ impl PacketSender {
 
     fn increase_volume(&self, input: &mut [f32]) {
         let volume_modifier = self.shared_state.volume_modifier.load(Ordering::Relaxed);
-        input.iter_mut()
-            .for_each(|s| *s *= volume_modifier);
+        input.iter_mut().for_each(|s| *s *= volume_modifier);
     }
 
     fn apply_denoiser(&mut self, input: &mut [f32]) -> usize {
@@ -238,9 +236,7 @@ impl PacketSender {
                 self.process_samples();
             }
 
-            if self.transmitting
-                && (matches!(result, WaitResult::Timeout) || !is_enabled)
-            {
+            if self.transmitting && (matches!(result, WaitResult::Timeout) || !is_enabled) {
                 self.transmitting = false;
                 self.capture.encoder.reset();
 
@@ -248,7 +244,9 @@ impl PacketSender {
             }
 
             while let Some(mut packet) = self.capture.encoder.pop_packet() {
-                if self.transmitting && let Some((user_id, addr)) = *self.addr.lock().unwrap() {
+                if self.transmitting
+                    && let Some((user_id, addr)) = *self.addr.lock().unwrap()
+                {
                     self.buf.clear();
 
                     packet.seq = self.seq;
@@ -266,7 +264,9 @@ impl PacketSender {
                 }
             }
 
-            self.shared_state.is_talking.store(self.transmitting, Ordering::Relaxed);
+            self.shared_state
+                .is_talking
+                .store(self.transmitting, Ordering::Relaxed);
 
             if self.last_send.elapsed() > Duration::from_secs(10) {
                 self.send_ping();

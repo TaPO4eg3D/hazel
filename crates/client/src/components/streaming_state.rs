@@ -5,8 +5,8 @@ use std::{
 
 use atomic_enum::atomic_enum;
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
-use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, WeakEntity, Window};
-use gpui_component::slider::{SliderState, SliderValue};
+use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Subscription, WeakEntity, Window};
+use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
 use rpc::{
     common::Empty,
     models::{
@@ -32,6 +32,12 @@ pub struct VoiceChannel {
     pub members: Vec<VoiceChannelMember>,
 }
 
+struct VoiceChannelMemberState {
+    playback: Arc<AudioStreamingClientSharedState>,
+
+    _subscription: Subscription,
+}
+
 #[derive(Clone)]
 pub struct VoiceChannelMember {
     pub id: UserId,
@@ -43,11 +49,15 @@ pub struct VoiceChannelMember {
     pub is_streaming: bool,
     pub is_talking: bool,
 
-    shared: Option<Arc<AudioStreamingClientSharedState>>,
+    pub output_volume: Entity<SliderState>,
+
+    shared: Option<Entity<VoiceChannelMemberState>>,
 }
 
 impl VoiceChannelMember {
-    pub fn new(id: UserId, name: SharedString) -> Self {
+    pub fn new(id: UserId, name: SharedString, cx: &mut Context<StreamingState>) -> Self {
+        let output_volume = cx.new(|_cx| SliderState::new());
+
         VoiceChannelMember {
             id,
             name,
@@ -56,11 +66,13 @@ impl VoiceChannelMember {
             is_sound_off: false,
             is_streaming: false,
             is_talking: false,
+            output_volume,
             shared: None,
+            // _volume_subscription: subscription,
         }
     }
 
-    pub fn fetch_is_talking<C: AppContext>(&mut self, cx: &C) -> bool {
+    pub fn fetch_is_talking(&mut self, cx: &Context<StreamingState>) -> bool {
         let current = self.is_talking;
         let current_user = ConnectionManger::get_user_id(cx);
 
@@ -68,8 +80,8 @@ impl VoiceChannelMember {
             && user == self.id
         {
             Streaming::is_talking(cx)
-        } else if let Some(shared) = self.shared.as_ref() {
-            shared.is_talking.load(Ordering::Relaxed)
+        } else if let Some(state) = self.shared.as_ref() {
+            state.read(cx).playback.is_talking.load(Ordering::Relaxed)
         } else {
             false
         };
@@ -77,11 +89,34 @@ impl VoiceChannelMember {
         self.is_talking != current
     }
 
-    pub fn register<C: AppContext>(&mut self, cx: &C) {
-        let shared = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
-        self.shared = Some(shared.clone());
+    pub fn register(&mut self, cx: &mut Context<StreamingState>) {
+        let playback_state = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
 
-        Streaming::add_voice_member(cx, Arc::downgrade(&shared));
+        let subscription = cx.subscribe(&self.output_volume, {
+            let playback_state = playback_state.clone();
+
+            move |_, _, ev, _| {
+                let SliderEvent::Change(value) = ev;
+                let SliderValue::Single(value) = value else {
+                    return;
+                };
+
+                playback_state.volume.store(*value, Ordering::Relaxed);
+            }
+        });
+
+        let shared = cx.new({
+            let playback_state = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
+
+            move |_cx| VoiceChannelMemberState {
+                playback: playback_state.clone(),
+                _subscription: subscription,
+            }
+        });
+
+        self.shared = Some(shared);
+
+        Streaming::add_voice_member(cx, Arc::downgrade(&playback_state));
     }
 
     pub fn unregister(&mut self) {
@@ -94,7 +129,7 @@ impl VoiceChannelMember {
 pub enum NoiseReductionAlgorithm {
     Disabled = 0,
     RNNoise,
-    DeepFilterNet
+    DeepFilterNet,
 }
 
 impl NoiseReductionAlgorithm {
@@ -342,7 +377,7 @@ impl StreamingState {
             return;
         };
 
-        this.update(cx, move |this, _cx| {
+        this.update(cx, move |this, cx| {
             this.voice_channels = channels
                 .into_iter()
                 .map(|channel| VoiceChannel {
@@ -352,7 +387,7 @@ impl StreamingState {
                     members: channel
                         .members
                         .into_iter()
-                        .map(|member| VoiceChannelMember::new(member.id, member.name.into()))
+                        .map(|member| VoiceChannelMember::new(member.id, member.name.into(), cx))
                         .collect(),
                 })
                 .collect();
@@ -423,7 +458,8 @@ impl StreamingState {
                                 return;
                             };
 
-                            let mut member = VoiceChannelMember::new(user.id, user.username.into());
+                            let mut member =
+                                VoiceChannelMember::new(user.id, user.username.into(), cx);
 
                             if channel.is_active {
                                 member.register(cx);

@@ -1,10 +1,10 @@
-use std::sync::mpsc::channel;
-
 use rpc::common::Empty;
 use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification};
 use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
-    GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveVoiceChannel, UpdateVoiceUserState, VoiceUserState, VoiceChannelMember, VoiceChannelUpdate, VoiceChannelUpdateMessage
+    GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload,
+    LeaveVoiceChannel, UpdateVoiceUserState, VoiceChannelMember, VoiceChannelUpdate,
+    VoiceChannelUpdateMessage, VoiceUserState,
 };
 use rpc::server::RpcRouter;
 
@@ -107,7 +107,8 @@ impl RPCHandle for UpdateVoiceUserState {
         };
 
         {
-            let Some(mut voice_users) = app_state.channels.voice_channels.get_mut(&active_channel) else {
+            let Some(mut voice_users) = app_state.channels.voice_channels.get_mut(&active_channel)
+            else {
                 return Ok(());
             };
 

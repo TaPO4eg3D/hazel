@@ -3,14 +3,14 @@ use std::time::Duration;
 use gpui::{
     Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
     ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled,
-    Window, div, ease_in_out, prelude::FluentBuilder, px, red, relative, rgb, white,
+    Window, div, ease_in_out, prelude::FluentBuilder, px, relative, rgb, white,
 };
 use gpui_component::{
     ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     label::Label,
-    popover::{Popover, PopoverState},
+    popover::Popover,
     slider::Slider,
 };
 
@@ -19,8 +19,6 @@ use crate::{
     assets::IconName,
     components::{
         animation::HoverAnimationExt,
-        chat_state::ChatState,
-        collapsable_card::{CollapsableCard, CollapsableCardState},
         streaming_state::{NoiseReductionAlgorithm, StreamingState},
     },
     gpui_audio::Streaming,
@@ -399,7 +397,7 @@ impl NoiseReductionSelector {
 }
 
 impl RenderOnce for NoiseReductionSelector {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_algorithm = self.streaming_state.read(cx).noise_reduction();
         let is_hovered = self.capture_state.read(cx).displaying;
 

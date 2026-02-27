@@ -21,7 +21,7 @@ impl CollapsableCardState {
         }
     }
 
-    pub fn toggle(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle(&mut self, _cx: &mut Context<Self>) {
         self.is_collapsed = !self.is_collapsed;
     }
 }
