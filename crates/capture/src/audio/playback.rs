@@ -270,6 +270,8 @@ pub struct AudioStreamingClientState {
 pub struct AudioStreamingClientSharedState {
     pub user_id: i32,
     pub is_talking: AtomicBool,
+
+    pub volume: AtomicF32,
 }
 
 impl AudioStreamingClientSharedState {
@@ -277,6 +279,7 @@ impl AudioStreamingClientSharedState {
         Self {
             user_id,
             is_talking: AtomicBool::new(false),
+            volume: AtomicF32::new(1.),
         }
     }
 }

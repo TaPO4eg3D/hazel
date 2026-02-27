@@ -1,11 +1,15 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, Div, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _,
-    RenderOnce, Stateful, StatefulInteractiveElement, Styled, Window, div, ease_in_out,
+    Animation, App, ElementId, Entity, InteractiveElement, IntoElement, ParentElement as _,
+    RenderOnce, StatefulInteractiveElement, Styled, Window, div, ease_in_out,
     prelude::FluentBuilder, px, rgb,
 };
-use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, label::Label};
+use gpui_component::{
+    ActiveTheme, Icon, Sizable, Size, StyledExt,
+    label::Label,
+    slider::{Slider, SliderState},
+};
 
 use crate::{
     ConnectionManger,
@@ -13,9 +17,37 @@ use crate::{
     components::{
         animation::HoverAnimationExt,
         collapsable_card::{CollapsableCard, CollapsableCardState},
+        context_popover::ContextPopover as _,
         streaming_state::{StreamingState, VoiceChannel, VoiceChannelMember},
     },
 };
+
+#[derive(IntoElement)]
+struct VolumeSlider {
+    volume: Entity<SliderState>,
+}
+
+impl VolumeSlider {
+    fn new(volume: Entity<SliderState>) -> Self {
+        Self { volume }
+    }
+}
+
+impl RenderOnce for VolumeSlider {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+            .p_2()
+            .v_flex()
+            .child(
+                div().flex().child(Label::new("Volume").text_xs()).child(
+                    Label::new(format!("{}%", self.volume.read(cx).value()))
+                        .text_xs()
+                        .ml_auto(),
+                ),
+            )
+            .child(Slider::new(&self.volume))
+    }
+}
 
 #[derive(IntoElement)]
 pub struct VoiceChannelsComponent {
@@ -35,25 +67,50 @@ impl VoiceChannelsComponent {
     }
 }
 
-impl VoiceChannelsComponent {
-    fn render_memebers(
-        &self,
-        members: &[VoiceChannelMember],
-        cx: &mut App,
-    ) -> impl Iterator<Item = Stateful<Div>> {
+#[derive(IntoElement)]
+struct VoiceMemberComponent {
+    streaming_state: Entity<StreamingState>,
+    member: VoiceChannelMember,
+}
+
+impl RenderOnce for VoiceMemberComponent {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let current_user = ConnectionManger::get_user_id(cx);
 
-        let (is_mic_off, is_sound_off) = {
+        let (is_capture_enabled, is_playback_enabled) = {
             let state = self.streaming_state.read(cx);
 
             (!state.is_capture_enabled, !state.is_playback_enabled)
         };
 
         let secondary = cx.theme().secondary;
-        members.iter().map(move |member| {
-            let is_me = current_user.is_some_and(|id| member.id == id);
 
-            div().id(ElementId::Integer(member.id.value as u64)).child(
+        let is_me = current_user.is_some_and(|id| self.member.id == id);
+
+        let is_mic_off = if is_me {
+            is_capture_enabled
+        } else {
+            self.member.is_mic_off
+        };
+
+        let is_sound_off = if is_me {
+            is_playback_enabled
+        } else {
+            self.member.is_sound_off
+        };
+
+        // `is_talking` is special and managed internally
+        let is_talking = self.member.is_talking && (!is_mic_off && !is_sound_off);
+
+        let is_selected = window.use_keyed_state(
+            format!("voice-member-{}-selected", self.member.id.value),
+            cx,
+            |_, _| false,
+        );
+
+        div()
+            .id(ElementId::Integer(self.member.id.value as u64))
+            .child(
                 div()
                     .rounded_lg()
                     .child(
@@ -63,29 +120,28 @@ impl VoiceChannelsComponent {
                             .py_2()
                             .px_3()
                             .child(Icon::new(IconName::User).mr_2().with_size(Size::Medium))
-                            .child(Label::new(member.name.clone()).mt(px(0.5)))
+                            .child(Label::new(self.member.name.clone()).mt(px(0.5)))
                             // Status icons
                             .child(
                                 div()
                                     .flex()
                                     .gap_1()
                                     .ml_auto()
-                                    .when(member.is_mic_off || is_me && is_mic_off, |this| {
+                                    .when(is_mic_off, |this| {
                                         this.child(
                                             Icon::new(IconName::MicOff)
                                                 .text_color(cx.theme().danger)
                                                 .with_size(Size::XSmall),
                                         )
                                     })
-                                    .when(member.is_sound_off || is_me && is_sound_off, |this| {
+                                    .when(is_sound_off, |this| {
                                         this.child(
                                             Icon::new(IconName::HeadphoneOff)
                                                 .text_color(cx.theme().danger)
                                                 .with_size(Size::XSmall),
                                         )
                                     })
-                                    // `is_talking` is special since it's managed internally
-                                    .when(member.is_talking, |this| {
+                                    .when(is_talking, |this| {
                                         this.child(div().size_2().rounded_full().bg(rgb(0x00C950)))
                                     }),
                             ),
@@ -94,25 +150,46 @@ impl VoiceChannelsComponent {
                         "hover-bg",
                         Animation::new(Duration::from_millis(200)).with_easing(ease_in_out),
                         move |this, delta| this.bg(secondary.opacity(delta)),
-                    ),
+                    )
+                    .when(*is_selected.read(cx), |this| this.bg(secondary)),
             )
-        })
-    }
+            .context_menu({
+                let output_volume = self.member.output_volume.clone();
 
+                move |this, _, _cx| {
+                    this.v_flex()
+                        .child(VolumeSlider::new(output_volume.clone()))
+                }
+            })
+            .on_toggle(move |&opened, _, cx| {
+                is_selected.update(cx, |this, _| {
+                    *this = opened;
+                })
+            })
+    }
+}
+
+impl VoiceChannelsComponent {
     fn render_channels(
         &self,
-        channels: &[VoiceChannel],
+        channels: Vec<VoiceChannel>,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl Iterator<Item = Stateful<Div>> {
+    ) -> impl Iterator<Item = impl IntoElement> {
         let muted = cx.theme().muted;
         let secondary = cx.theme().secondary;
 
-        channels.iter().map(move |channel| {
+        channels.into_iter().map(move |channel| {
             let channel_id = channel.id;
             let is_active = channel.is_active;
 
-            let members = self.render_memebers(&channel.members, cx);
+            let members = channel
+                .members
+                .into_iter()
+                .map(|member| VoiceMemberComponent {
+                    streaming_state: self.streaming_state.clone(),
+                    member,
+                });
 
             div()
                 .id(ElementId::Integer(channel.id.value as u64))
@@ -171,7 +248,7 @@ impl RenderOnce for VoiceChannelsComponent {
             .content(
                 div()
                     .v_flex()
-                    .children(self.render_channels(&channels, window, cx)),
+                    .children(self.render_channels(channels, window, cx)),
             )
     }
 }

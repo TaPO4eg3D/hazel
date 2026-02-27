@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use rpc::{models::messages::{SendMessagePayload, TextMessageChannel}, server::RpcRouter};
+use rpc::{models::messages::SendMessagePayload, server::RpcRouter};
 
 use crate::{AppState, ConnectionState};
 
@@ -16,6 +14,5 @@ async fn send_message(
 }
 
 pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState, ConnectionState> {
-    router
-        .register("SendMessage", send_message)
+    router.register("SendMessage", send_message)
 }

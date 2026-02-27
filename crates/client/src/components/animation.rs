@@ -2,8 +2,10 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gpui::{
     Animation, AnyElement, App, Bounds, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, IntoElement, MouseMoveEvent, Pixels, Window,
+    HitboxBehavior, InspectorElementId, IntoElement, MouseMoveEvent, Pixels, Style,
+    StyleRefinement, Styled, Window,
 };
+use gpui_component::StyledExt;
 
 pub trait HoverAnimationExt {
     /// Render this component or element with a hover-triggered animation.
@@ -41,6 +43,7 @@ pub trait HoverAnimationExt {
             element: Some(self),
             animation,
             animator: Box::new(animator),
+            style: StyleRefinement::default(),
         }
     }
 }
@@ -75,6 +78,8 @@ pub struct HoverAnimationElement<E> {
     element: Option<E>,
     animation: Animation,
     animator: Box<dyn Fn(E, f32) -> E + 'static>,
+
+    style: StyleRefinement,
 }
 
 impl<E> HoverAnimationElement<E> {
@@ -86,7 +91,13 @@ impl<E> HoverAnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> IntoElement for HoverAnimationElement<E> {
+impl<E> Styled for HoverAnimationElement<E> {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl<E: IntoElement + Styled + 'static> IntoElement for HoverAnimationElement<E> {
     type Element = HoverAnimationElement<E>;
 
     fn into_element(self) -> Self::Element {
@@ -94,7 +105,7 @@ impl<E: IntoElement + 'static> IntoElement for HoverAnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> Element for HoverAnimationElement<E> {
+impl<E: IntoElement + Styled + 'static> Element for HoverAnimationElement<E> {
     type RequestLayoutState = (AnyElement, f32);
     type PrepaintState = (Hitbox, f32);
 
@@ -144,7 +155,9 @@ impl<E: IntoElement + 'static> Element for HoverAnimationElement<E> {
                     }
 
                     let element = self.element.take().expect("should only be called once");
-                    let animated_element = (self.animator)(element, eased_delta);
+                    let animated_element =
+                        (self.animator)(element, eased_delta).refine_style(&self.style);
+
                     let mut element = animated_element.into_any_element();
 
                     let layout_id = element.request_layout(window, cx);

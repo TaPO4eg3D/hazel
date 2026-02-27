@@ -10,7 +10,7 @@ const SCALE_DOWN: f32 = 1.0 / SCALE_UP;
 
 pub struct RNNoiseState {
     denoise_state: *mut DenoiseState,
-    
+
     buffer: [f32; RNN_FRAME_SIZE],
 
     input_queue: VecDeque<f32>,
@@ -65,15 +65,10 @@ impl Default for RNNoiseState {
     }
 }
 
-
 impl Drop for RNNoiseState {
     fn drop(&mut self) {
         unsafe {
             rnnoise_destroy(self.denoise_state);
         }
     }
-}
-
-enum NoiseReductionLayer {
-    RNNoise(RNNoiseState),
 }

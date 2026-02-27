@@ -1,4 +1,4 @@
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 use rpc::models::{
     auth::{
         GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
