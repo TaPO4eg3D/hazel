@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gpui::{
     Animation, AnyElement, App, Bounds, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, IntoElement, MouseMoveEvent, Pixels, Style,
-    StyleRefinement, Styled, Window,
+    HitboxBehavior, InspectorElementId, IntoElement, MouseMoveEvent, Pixels, StyleRefinement,
+    Styled, Window,
 };
 use gpui_component::StyledExt;
 

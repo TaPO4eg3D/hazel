@@ -56,7 +56,13 @@ pub struct VoiceChannelMember {
 
 impl VoiceChannelMember {
     pub fn new(id: UserId, name: SharedString, cx: &mut Context<StreamingState>) -> Self {
-        let output_volume = cx.new(|_cx| SliderState::new());
+        let output_volume = cx.new(|_cx| {
+            SliderState::new()
+                .min(0.)
+                .max(200.)
+                .step(1.)
+                .default_value(100.)
+        });
 
         VoiceChannelMember {
             id,
@@ -101,12 +107,14 @@ impl VoiceChannelMember {
                     return;
                 };
 
-                playback_state.volume.store(*value, Ordering::Relaxed);
+                playback_state
+                    .volume
+                    .store(*value / 100., Ordering::Relaxed);
             }
         });
 
         let shared = cx.new({
-            let playback_state = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
+            let playback_state = playback_state.clone();
 
             move |_cx| VoiceChannelMemberState {
                 playback: playback_state.clone(),
@@ -328,6 +336,7 @@ impl StreamingState {
         }
 
         cx.spawn(async move |this, cx| {
+            let user_id = ConnectionManger::get_user_id(cx);
             let connection = ConnectionManger::get(cx);
 
             let _response =
@@ -340,6 +349,12 @@ impl StreamingState {
                     channel.is_active = true;
 
                     for member in channel.members.iter_mut() {
+                        if let Some(user_id) = user_id {
+                            if member.id == user_id {
+                                continue;
+                            }
+                        }
+
                         member.register(cx);
                     }
                 }

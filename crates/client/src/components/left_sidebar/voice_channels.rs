@@ -77,7 +77,7 @@ impl RenderOnce for VoiceMemberComponent {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let current_user = ConnectionManger::get_user_id(cx);
 
-        let (is_capture_enabled, is_playback_enabled) = {
+        let (is_capture_disabled, is_playback_disabled) = {
             let state = self.streaming_state.read(cx);
 
             (!state.is_capture_enabled, !state.is_playback_enabled)
@@ -88,13 +88,13 @@ impl RenderOnce for VoiceMemberComponent {
         let is_me = current_user.is_some_and(|id| self.member.id == id);
 
         let is_mic_off = if is_me {
-            is_capture_enabled
+            is_capture_disabled
         } else {
             self.member.is_mic_off
         };
 
         let is_sound_off = if is_me {
-            is_playback_enabled
+            is_playback_disabled
         } else {
             self.member.is_sound_off
         };
@@ -153,11 +153,13 @@ impl RenderOnce for VoiceMemberComponent {
                     )
                     .when(*is_selected.read(cx), |this| this.bg(secondary)),
             )
-            .context_menu({
+            .context_menu(format!("context-voice-{}", self.member.id.value), {
                 let output_volume = self.member.output_volume.clone();
 
                 move |this, _, _cx| {
                     this.v_flex()
+                        .w_48()
+                        .px_2()
                         .child(VolumeSlider::new(output_volume.clone()))
                 }
             })

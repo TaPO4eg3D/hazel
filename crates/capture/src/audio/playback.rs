@@ -366,9 +366,15 @@ impl PlaybackPacketOutput {
         output.iter_mut().for_each(|s| *s = 0.);
 
         for client_state in self.active_clients.values_mut() {
+            let volume = if let Some(state) = client_state.shared.upgrade() {
+                state.volume.load(Ordering::Relaxed)
+            } else {
+                1.
+            };
+
             let played = client_state
                 .jitter_buffer
-                .pop_slice(output, |old, new| old + new);
+                .pop_slice(output, |old, new| old + (new * volume));
 
             if let Some(shared) = client_state.shared.upgrade() {
                 shared.is_talking.store(played, Ordering::Relaxed);
