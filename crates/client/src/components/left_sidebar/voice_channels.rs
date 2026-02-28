@@ -108,7 +108,7 @@ impl RenderOnce for VoiceMemberComponent {
             |_, _| false,
         );
 
-        div()
+        let element = div()
             .id(ElementId::Integer(self.member.id.value as u64))
             .child(
                 div()
@@ -152,22 +152,29 @@ impl RenderOnce for VoiceMemberComponent {
                         move |this, delta| this.bg(secondary.opacity(delta)),
                     )
                     .when(*is_selected.read(cx), |this| this.bg(secondary)),
-            )
-            .context_menu(format!("context-voice-{}", self.member.id.value), {
-                let output_volume = self.member.output_volume.clone();
+            );
 
-                move |this, _, _cx| {
-                    this.v_flex()
-                        .w_48()
-                        .px_2()
-                        .child(VolumeSlider::new(output_volume.clone()))
-                }
-            })
-            .on_toggle(move |&opened, _, cx| {
-                is_selected.update(cx, |this, _| {
-                    *this = opened;
+        if !is_me {
+            element
+                .context_menu(format!("context-voice-{}", self.member.id.value), {
+                    let output_volume = self.member.output_volume.clone();
+
+                    move |this, _, _cx| {
+                        this.v_flex()
+                            .w_48()
+                            .px_2()
+                            .child(VolumeSlider::new(output_volume.clone()))
+                    }
                 })
-            })
+                .on_toggle(move |&opened, _, cx| {
+                    is_selected.update(cx, |this, _| {
+                        *this = opened;
+                    })
+                })
+                .into_any_element()
+        } else {
+            element.into_any_element()
+        }
     }
 }
 

@@ -109,7 +109,7 @@ impl VoiceChannelMember {
 
                 playback_state
                     .volume
-                    .store(*value / 100., Ordering::Relaxed);
+                    .store((*value / 100.).powf(3.), Ordering::Relaxed);
             }
         });
 
@@ -206,7 +206,7 @@ impl StreamingState {
             let state = state.read(cx);
 
             if let SliderValue::Single(value) = state.value() {
-                Streaming::set_input_volume_modifier(cx, value / 100.);
+                Streaming::set_input_volume_modifier(cx, (value / 100.).powf(3.));
             }
         })
         .detach();
@@ -215,7 +215,7 @@ impl StreamingState {
             let state = state.read(cx);
 
             if let SliderValue::Single(value) = state.value() {
-                Streaming::set_output_volume_modifier(cx, value / 100.);
+                Streaming::set_output_volume_modifier(cx, (value / 100.).powf(3.));
             }
         })
         .detach();
