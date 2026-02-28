@@ -1,12 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, App, Bounds, Corner, Div, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window,
-    anchored, deferred, div, px,
+    AnyElement, App, Corner, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
+    InspectorElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window, anchored, deferred,
+    div, px,
 };
-use gpui_component::{ActiveTheme, ElementExt, StyledExt, black};
+use gpui_component::StyledExt;
 
 /// A extension trait for adding a context menu to an element.
 pub trait ContextPopover: ParentElement + Styled {
