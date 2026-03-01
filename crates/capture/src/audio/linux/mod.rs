@@ -1,4 +1,9 @@
-use std::{cell::RefCell, rc::Rc, sync::{Arc, Condvar, Mutex}, thread};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Condvar, Mutex},
+    thread,
+};
 
 use pipewire::{self as pw, types::ObjectType};
 use ringbuf::{HeapRb, traits::*};
