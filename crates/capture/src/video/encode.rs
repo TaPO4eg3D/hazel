@@ -1,15 +1,17 @@
-use std::{ffi::CString, ptr};
+use std::{
+    ffi::{CString, c_uint, c_void},
+    ptr,
+};
 
 use ffmpeg_next::{
-    Rational,
-    codec::{self, traits::Encoder},
-    encoder,
+    Rational, codec, encoder,
     ffi::{
-        AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext, AVFilterGraph,
-        AVHWFramesContext, AVPixelFormat, av_buffer_ref, av_buffer_unref,
-        av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_free,
-        av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, avfilter_get_by_name,
-        avfilter_graph_alloc, avfilter_graph_alloc_filter, avfilter_graph_free, avfilter_init_str,
+        AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext,
+        AVFilterGraph, AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_ref,
+        av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_free,
+        av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, av_opt_set_array,
+        avfilter_free, avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
+        avfilter_graph_free, avfilter_init_str,
     },
     filter,
     format::Pixel,
@@ -181,6 +183,14 @@ struct Filter {
     ctx: *mut AVFilterContext,
 }
 
+impl Drop for Filter {
+    fn drop(&mut self) {
+        unsafe {
+            avfilter_free(self.ctx);
+        }
+    }
+}
+
 impl Filter {
     fn find(name: &str) -> Option<Self> {
         let name = CString::new(name).unwrap();
@@ -199,7 +209,7 @@ impl Filter {
         }
     }
 
-    fn commit(&self) -> Option<()> {
+    fn commit_to_graph(&self) -> Option<()> {
         let err = unsafe { avfilter_init_str(self.ctx, ptr::null()) };
         if err < 0 { None } else { Some(()) }
     }
@@ -285,6 +295,34 @@ impl BufferFilterBuilder {
     }
 }
 
+struct BufferSinkFilterBuilder {
+    filter: Filter,
+}
+
+impl BufferSinkFilterBuilder {
+    fn build(self) -> Filter {
+        self.filter
+    }
+
+    fn set_pixel_formats(self, formats: &[AVPixelFormat]) -> Option<Self> {
+        let opt_name = CString::new("pixel_formats").unwrap();
+
+        unsafe {
+            let err = av_opt_set_array(
+                self.filter.ctx as *mut _,
+                opt_name.as_ptr(),
+                AV_OPT_SEARCH_CHILDREN,
+                0,
+                formats.len() as c_uint,
+                AVOptionType::AV_OPT_TYPE_PIXEL_FMT,
+                formats.as_ptr() as *const c_void,
+            );
+
+            if err < 0 { None } else { Some(self) }
+        }
+    }
+}
+
 struct Graph(*mut AVFilterGraph);
 
 impl Drop for Graph {
@@ -324,24 +362,17 @@ impl Graph {
 
         BufferFilterBuilder::new(filter)
     }
+
+    fn alloc_buffersink_filter(&self, node_name: &str) -> Option<BufferSinkFilterBuilder> {
+        let filter = self.alloc_filter_by_name("buffersink", node_name)?;
+
+        Some(BufferSinkFilterBuilder { filter })
+    }
 }
 
 pub struct VideoEncoder {}
 
 impl VideoEncoder {
-    fn add_source_filter(params: &EncoderParams, hw_frame_ctx: &HWFrameContext, graph: &mut Graph) {
-        let time_base = Rational(1, 1000000);
-    }
-
-    fn add_sink_filter(params: &EncoderParams, graph: &mut filter::Graph) {
-        let sink_filter = filter::find("buffersink").unwrap();
-        let mut sink_ctx = graph
-            .add(&sink_filter, "Sink", "")
-            .expect("Failed to add sink filter");
-
-        sink_ctx.set_pixel_format(Pixel::VAAPI);
-    }
-
     pub fn new(params: EncoderParams) {
         let codec = encoder::find_by_name(params.codec_name).expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
@@ -363,7 +394,8 @@ impl VideoEncoder {
             .expect("Failed to build HWFrameContext");
 
         let graph = Graph::new().expect("Failed ot alloc filter graph");
-        let buffer_filter = graph
+
+        let source_filter = graph
             .alloc_buffer_filter("Source")
             .expect("Failed to alloc BufferFilter params")
             .set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
@@ -374,8 +406,15 @@ impl VideoEncoder {
             .set_aspect_ratio(Rational(1, 1))
             .build()
             .expect("Failed to set BufferFilter params");
+        source_filter.commit_to_graph();
 
-        buffer_filter.commit();
+        let sink_filter = graph
+            .alloc_buffersink_filter("Sink")
+            .expect("Failed to alloc `buffersink` filter")
+            .set_pixel_formats(&[AVPixelFormat::AV_PIX_FMT_VAAPI])
+            .expect("Failed to set Pixel Formats")
+            .build();
+        sink_filter.commit_to_graph();
 
         video.set_width(params.height);
         video.set_height(params.height);
