@@ -1,5 +1,5 @@
 use std::{
-    ffi::{CString, c_uint, c_void},
+    ffi::{CString, c_int, c_uint, c_void},
     ptr,
 };
 
@@ -7,11 +7,11 @@ use ffmpeg_next::{
     Rational, codec, encoder,
     ffi::{
         AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext,
-        AVFilterGraph, AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_ref,
-        av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_free,
-        av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, av_opt_set_array,
-        avfilter_free, avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
-        avfilter_graph_free, avfilter_init_str,
+        AVFilterGraph, AVFilterInOut, AVHWFramesContext, AVOptionType, AVPixelFormat,
+        av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
+        av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init,
+        av_opt_set_array, av_strdup, avfilter_free, avfilter_get_by_name, avfilter_graph_alloc,
+        avfilter_graph_alloc_filter, avfilter_graph_free, avfilter_init_str, avfilter_inout_alloc,
     },
     filter,
     format::Pixel,
@@ -181,6 +181,8 @@ impl Drop for HWFrameContext {
 struct Filter {
     ptr: *const AVFilter,
     ctx: *mut AVFilterContext,
+
+    is_committed: bool,
 }
 
 impl Drop for Filter {
@@ -204,14 +206,26 @@ impl Filter {
                 Some(Self {
                     ptr,
                     ctx: std::ptr::null_mut(),
+                    is_committed: false,
                 })
             }
         }
     }
 
-    fn commit_to_graph(&self) -> Option<()> {
+    fn commit_to_graph(&mut self) -> Option<()> {
+        if self.is_committed {
+            return None;
+        }
+
         let err = unsafe { avfilter_init_str(self.ctx, ptr::null()) };
-        if err < 0 { None } else { Some(()) }
+
+        if err < 0 {
+            None
+        } else {
+            self.is_committed = true;
+
+            Some(())
+        }
     }
 }
 
@@ -357,17 +371,120 @@ impl Graph {
         }
     }
 
-    fn alloc_buffer_filter(&self, node_name: &str) -> Option<BufferFilterBuilder> {
+    fn create_buffer_filter(
+        &self,
+        node_name: &str,
+        f: impl FnOnce(BufferFilterBuilder) -> BufferFilterBuilder,
+    ) -> Option<Filter> {
         let filter = self.alloc_filter_by_name("buffer", node_name)?;
 
-        BufferFilterBuilder::new(filter)
+        let buffer_filter = BufferFilterBuilder::new(filter)?;
+        let mut filter = f(buffer_filter).build()?;
+        filter.commit_to_graph();
+
+        Some(filter)
     }
 
-    fn alloc_buffersink_filter(&self, node_name: &str) -> Option<BufferSinkFilterBuilder> {
+    fn create_buffersink_filter(
+        &self,
+        node_name: &str,
+        f: impl FnOnce(BufferSinkFilterBuilder) -> BufferSinkFilterBuilder,
+    ) -> Option<Filter> {
         let filter = self.alloc_filter_by_name("buffersink", node_name)?;
 
-        Some(BufferSinkFilterBuilder { filter })
+        let filter = BufferSinkFilterBuilder { filter };
+        let mut filter = f(filter).build();
+        filter.commit_to_graph();
+
+        Some(filter)
     }
+}
+
+pub struct Parser<'a> {
+    graph: &'a mut Graph,
+    inputs: *mut AVFilterInOut,
+    outputs: *mut AVFilterInOut,
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(graph: &mut Graph) -> Parser<'_> {
+        Parser {
+            graph,
+            inputs: ptr::null_mut(),
+            outputs: ptr::null_mut(),
+        }
+    }
+
+    pub fn input(mut self, name: &str, filter: &Filter, pad: usize) -> Self {
+        unsafe {
+            let input = avfilter_inout_alloc();
+            if input.is_null() {
+                panic!("out of memory");
+            }
+
+            let name = CString::new(name).unwrap();
+
+            (*input).name = av_strdup(name.as_ptr());
+            (*input).filter_ctx = filter.ctx;
+            (*input).pad_idx = pad as c_int;
+            (*input).next = ptr::null_mut();
+
+            if self.inputs.is_null() {
+                self.inputs = input;
+            } else {
+                (*self.inputs).next = input;
+            }
+        }
+
+        self
+    }
+
+    pub fn output(mut self, name: &str, filter: &Filter, pad: usize) -> Self {
+        unsafe {
+            let output = avfilter_inout_alloc();
+
+            if output.is_null() {
+                panic!("out of memory");
+            }
+
+            let name = CString::new(name).unwrap();
+
+            (*output).name = av_strdup(name.as_ptr());
+            (*output).filter_ctx = filter.ctx;
+            (*output).pad_idx = pad as c_int;
+            (*output).next = ptr::null_mut();
+
+            if self.outputs.is_null() {
+                self.outputs = output;
+            } else {
+                (*self.outputs).next = output;
+            }
+        }
+
+        self
+    }
+
+    // pub fn parse(mut self, spec: &str) -> Result<(), Error> {
+    //     unsafe {
+    //         let spec = CString::new(spec).unwrap();
+
+    //         let result = avfilter_graph_parse_ptr(
+    //             self.graph.as_mut_ptr(),
+    //             spec.as_ptr(),
+    //             &mut self.inputs,
+    //             &mut self.outputs,
+    //             ptr::null_mut(),
+    //         );
+
+    //         avfilter_inout_free(&mut self.inputs);
+    //         avfilter_inout_free(&mut self.outputs);
+
+    //         match result {
+    //             n if n >= 0 => Ok(()),
+    //             e => Err(Error::from(e)),
+    //         }
+    //     }
+    // }
 }
 
 pub struct VideoEncoder {}
@@ -395,26 +512,23 @@ impl VideoEncoder {
 
         let graph = Graph::new().expect("Failed ot alloc filter graph");
 
-        let source_filter = graph
-            .alloc_buffer_filter("Source")
-            .expect("Failed to alloc BufferFilter params")
-            .set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
-            .set_hw_frame_ctx(hw_frame_ctx.clone())
-            .set_width(params.width as i32)
-            .set_height(params.height as i32)
-            .set_time_base(time_base)
-            .set_aspect_ratio(Rational(1, 1))
-            .build()
-            .expect("Failed to set BufferFilter params");
-        source_filter.commit_to_graph();
+        let mut source_filter = graph
+            .create_buffer_filter("Source", |this| {
+                this.set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
+                    .set_hw_frame_ctx(hw_frame_ctx.clone())
+                    .set_width(params.width as i32)
+                    .set_height(params.height as i32)
+                    .set_time_base(time_base)
+                    .set_aspect_ratio(Rational(1, 1))
+            })
+            .expect("Failed to create buffer filter");
 
-        let sink_filter = graph
-            .alloc_buffersink_filter("Sink")
-            .expect("Failed to alloc `buffersink` filter")
-            .set_pixel_formats(&[AVPixelFormat::AV_PIX_FMT_VAAPI])
-            .expect("Failed to set Pixel Formats")
-            .build();
-        sink_filter.commit_to_graph();
+        let mut sink_filter = graph
+            .create_buffersink_filter("Sink", |this| {
+                this.set_pixel_formats(&[AVPixelFormat::AV_PIX_FMT_VAAPI])
+                    .expect("Failed to set pixel format")
+            })
+            .expect("Failed tot create buffersink filter");
 
         video.set_width(params.height);
         video.set_height(params.height);
