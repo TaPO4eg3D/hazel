@@ -12,7 +12,8 @@ use ffmpeg_next::{
         av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
         av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init,
         av_opt_set_array, av_strdup, avfilter_free, avfilter_get_by_name, avfilter_graph_alloc,
-        avfilter_graph_alloc_filter, avfilter_graph_free, avfilter_init_str, avfilter_inout_alloc,
+        avfilter_graph_alloc_filter, avfilter_graph_config, avfilter_graph_free,
+        avfilter_graph_parse_ptr, avfilter_init_str, avfilter_inout_alloc, avfilter_inout_free,
     },
     filter,
     format::Pixel,
@@ -25,7 +26,7 @@ pub struct EncoderParams {
     pub width: u32,
 }
 
-struct GPUDevice(*mut AVBufferRef);
+pub struct GPUDevice(*mut AVBufferRef);
 
 impl GPUDevice {
     fn new() -> Option<Self> {
@@ -360,6 +361,14 @@ impl Graph {
         }
     }
 
+    fn config(&self) -> Option<()> {
+        unsafe {
+            let err = avfilter_graph_config(self.0, ptr::null_mut());
+
+            if err < 0 { None } else { Some(()) }
+        }
+    }
+
     fn alloc_filter_by_name<'a>(
         &'a self,
         filter_name: &str,
@@ -409,17 +418,20 @@ impl Graph {
 }
 
 pub struct Parser<'a> {
-    graph: &'a mut Graph,
+    graph: &'a Graph,
     inputs: *mut AVFilterInOut,
     outputs: *mut AVFilterInOut,
+
+    gpu_device: Option<GPUDevice>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(graph: &mut Graph) -> Parser<'_> {
+    pub fn new(graph: &Graph) -> Parser<'_> {
         Parser {
             graph,
             inputs: ptr::null_mut(),
             outputs: ptr::null_mut(),
+            gpu_device: None,
         }
     }
 
@@ -472,27 +484,46 @@ impl<'a> Parser<'a> {
         self
     }
 
-    // pub fn parse(mut self, spec: &str) -> Result<(), Error> {
-    //     unsafe {
-    //         let spec = CString::new(spec).unwrap();
+    pub fn with_gpu_device(mut self, gpu_device: GPUDevice) -> Self {
+        self.gpu_device = Some(gpu_device);
+        self
+    }
 
-    //         let result = avfilter_graph_parse_ptr(
-    //             self.graph.as_mut_ptr(),
-    //             spec.as_ptr(),
-    //             &mut self.inputs,
-    //             &mut self.outputs,
-    //             ptr::null_mut(),
-    //         );
+    pub fn parse(mut self, spec: &str) -> Option<()> {
+        unsafe {
+            let spec = CString::new(spec).unwrap();
 
-    //         avfilter_inout_free(&mut self.inputs);
-    //         avfilter_inout_free(&mut self.outputs);
+            let result = avfilter_graph_parse_ptr(
+                self.graph.0,
+                spec.as_ptr(),
+                &mut self.inputs,
+                &mut self.outputs,
+                ptr::null_mut(),
+            );
 
-    //         match result {
-    //             n if n >= 0 => Ok(()),
-    //             e => Err(Error::from(e)),
-    //         }
-    //     }
-    // }
+            avfilter_inout_free(&mut self.inputs);
+            avfilter_inout_free(&mut self.outputs);
+
+            match result {
+                n if n >= 0 => {
+                    // Filters that create HW frames ('hwupload', 'hwmap', ...) need
+                    // AVBufferRef in their hw_device_ctx. Unfortunately, there is no
+                    // simple API to do that for filters created by avfilter_graph_parse_ptr().
+                    // The code below is inspired by wf-recorder
+                    if let Some(device) = self.gpu_device {
+                        for i in 0..(*self.graph.0).nb_filters {
+                            let item = (*(*self.graph.0).filters).add(i as usize);
+
+                            (*item).hw_device_ctx = device.clone().into_raw();
+                        }
+                    }
+
+                    Some(())
+                }
+                _ => None,
+            }
+        }
+    }
 }
 
 pub struct VideoEncoder {}
@@ -519,8 +550,7 @@ impl VideoEncoder {
             .expect("Failed to build HWFrameContext");
 
         let graph = Graph::new().expect("Failed ot alloc filter graph");
-
-        let mut source_filter = graph
+        let source_filter = graph
             .create_buffer_filter("Source", |this| {
                 this.set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
                     .set_hw_frame_ctx(hw_frame_ctx.clone())
@@ -531,12 +561,30 @@ impl VideoEncoder {
             })
             .expect("Failed to create buffer filter");
 
-        let mut sink_filter = graph
+        let sink_filter = graph
             .create_buffersink_filter("Sink", |this| {
                 this.set_pixel_formats(&[AVPixelFormat::AV_PIX_FMT_VAAPI])
                     .expect("Failed to set pixel format")
             })
             .expect("Failed to create buffersink filter");
+
+        // Create the connections to the filter graph
+        //
+        // The in/out swap is not a mistake:
+        //
+        //   ----------       -----------------------------      --------
+        //   | Source | ----> | in -> filter_graph -> out | ---> | Sink |
+        //   ----------       -----------------------------      --------
+        //
+        // The 'in' of filter_graph is the output of the Source buffer
+        // The 'out' of filter_graph is the input of the Sink buffer
+        Parser::new(&graph)
+            .output("in", &source_filter, 0)
+            .input("out", &sink_filter, 0)
+            .with_gpu_device(device)
+            .parse("scale_vaapi=format=nv12:out_range=full");
+
+        graph.config().expect("Failed to configure the graph");
 
         video.set_width(params.height);
         video.set_height(params.height);
