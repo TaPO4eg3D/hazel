@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 crossbeam = { workspace = true }
 atomic_float = { workspace = true }
 ringbuf = { workspace = true }
+tokio = { workspace = true }
 
 streaming_common = { workspace = true }
 
@@ -22,8 +23,12 @@ opus = "0.3.1"
 
 rnnoise-sys = { git = "https://github.com/TaPO4eg3D/rnnoise-sys.git" }
 ffmpeg-next = "8.0.0"
+drm-fourcc = "2.2.0"
 
 [target.'cfg(unix)'.dependencies]
+ashpd = { version = "0.13.4", features = ["screencast"] }
+libva = { package = "cros-libva", version = "0.0.13" }
+
 libspa = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git" }
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", features = ["v0_3_49"]}
 
