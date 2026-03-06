@@ -21,6 +21,8 @@ use ffmpeg_next::{
     format::Pixel,
 };
 
+use crate::video::ScreenSurface;
+
 pub struct EncoderParams {
     pub codec_name: &'static str,
 
@@ -530,6 +532,8 @@ pub struct VideoEncoder {
 }
 
 impl VideoEncoder {
+    pub fn encode(&self, surface: ScreenSurface) {}
+
     pub fn new(params: EncoderParams) -> Self {
         let codec = encoder::find_by_name(params.codec_name).expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)

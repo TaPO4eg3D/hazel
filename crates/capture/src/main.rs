@@ -1,9 +1,9 @@
-use capture::video::encode::{EncoderParams, VideoEncoder};
+use capture::video::{
+    encode::{EncoderParams, VideoEncoder},
+    linux::screengrab::start_streaming,
+};
 
-fn main() {
-    let encoder = VideoEncoder::new(EncoderParams {
-        codec_name: "h264_vaapi",
-        width: 1920,
-        height: 1080,
-    });
+#[tokio::main]
+async fn main() {
+    start_streaming().await.unwrap();
 }
