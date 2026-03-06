@@ -189,13 +189,13 @@ pub struct Filter<'a> {
     _marker: PhantomData<fn() -> &'a Graph>,
 }
 
-impl<'a> Drop for Filter<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            avfilter_free(self.ctx);
-        }
-    }
-}
+// impl<'a> Drop for Filter<'a> {
+//     fn drop(&mut self) {
+//         unsafe {
+//             avfilter_free(self.ctx);
+//         }
+//     }
+// }
 
 impl<'a> Filter<'a> {
     fn find(name: &str) -> Option<Self> {
@@ -512,7 +512,7 @@ impl<'a> Parser<'a> {
                     // The code below is inspired by wf-recorder
                     if let Some(device) = self.gpu_device {
                         for i in 0..(*self.graph.0).nb_filters {
-                            let item = (*(*self.graph.0).filters).add(i as usize);
+                            let item = *(*self.graph.0).filters.add(i as usize);
 
                             (*item).hw_device_ctx = device.clone().into_raw();
                         }
