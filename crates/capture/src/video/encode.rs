@@ -5,7 +5,8 @@ use std::{
 };
 
 use ffmpeg_next::{
-    Rational, codec, encoder,
+    Rational, codec,
+    encoder::{self, Encoder, video},
     ffi::{
         AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext,
         AVFilterGraph, AVFilterInOut, AVHWFramesContext, AVOptionType, AVPixelFormat,
@@ -181,13 +182,11 @@ impl Drop for HWFrameContext {
     }
 }
 
-pub struct Filter<'a> {
+pub struct Filter {
     ptr: *const AVFilter,
     ctx: *mut AVFilterContext,
 
     is_committed: bool,
-
-    _marker: PhantomData<fn() -> &'a Graph>,
 }
 
 // impl<'a> Drop for Filter<'a> {
@@ -198,7 +197,7 @@ pub struct Filter<'a> {
 //     }
 // }
 
-impl<'a> Filter<'a> {
+impl Filter {
     fn find(name: &str) -> Option<Self> {
         let name = CString::new(name).unwrap();
 
@@ -212,7 +211,6 @@ impl<'a> Filter<'a> {
                     ptr,
                     ctx: std::ptr::null_mut(),
                     is_committed: false,
-                    _marker: PhantomData,
                 })
             }
         }
@@ -235,13 +233,13 @@ impl<'a> Filter<'a> {
     }
 }
 
-struct BufferFilterBuilder<'a> {
-    filter: Filter<'a>,
+struct BufferFilterBuilder {
+    filter: Filter,
     params: *mut AVBufferSrcParameters,
 }
 
-impl<'a> BufferFilterBuilder<'a> {
-    fn new(filter: Filter<'a>) -> Option<Self> {
+impl<'a> BufferFilterBuilder {
+    fn new(filter: Filter) -> Option<Self> {
         unsafe {
             let params = av_buffersrc_parameters_alloc();
 
@@ -253,7 +251,7 @@ impl<'a> BufferFilterBuilder<'a> {
         }
     }
 
-    fn build(self) -> Option<Filter<'a>> {
+    fn build(self) -> Option<Filter> {
         let ctx = self.filter.ctx;
 
         let err = unsafe { av_buffersrc_parameters_set(ctx, self.params) };
@@ -315,12 +313,12 @@ impl<'a> BufferFilterBuilder<'a> {
     }
 }
 
-struct BufferSinkFilterBuilder<'a> {
-    filter: Filter<'a>,
+struct BufferSinkFilterBuilder {
+    filter: Filter,
 }
 
-impl<'a> BufferSinkFilterBuilder<'a> {
-    fn build(self) -> Filter<'a> {
+impl<'a> BufferSinkFilterBuilder {
+    fn build(self) -> Filter {
         self.filter
     }
 
@@ -370,11 +368,7 @@ impl Graph {
         }
     }
 
-    fn alloc_filter_by_name<'a>(
-        &'a self,
-        filter_name: &str,
-        node_name: &str,
-    ) -> Option<Filter<'a>> {
+    fn alloc_filter_by_name(&self, filter_name: &str, node_name: &str) -> Option<Filter> {
         let mut filter = Filter::find(filter_name)?;
 
         let node_name = CString::new(node_name).unwrap();
@@ -389,11 +383,11 @@ impl Graph {
         }
     }
 
-    fn create_buffer_filter<'a>(
-        &'a self,
+    fn create_buffer_filter(
+        &self,
         node_name: &str,
         f: impl FnOnce(BufferFilterBuilder) -> BufferFilterBuilder,
-    ) -> Option<Filter<'a>> {
+    ) -> Option<Filter> {
         let filter = self.alloc_filter_by_name("buffer", node_name)?;
 
         let buffer_filter = BufferFilterBuilder::new(filter)?;
@@ -404,10 +398,10 @@ impl Graph {
     }
 
     fn create_buffersink_filter<'a>(
-        &'a self,
+        &self,
         node_name: &str,
         f: impl FnOnce(BufferSinkFilterBuilder) -> BufferSinkFilterBuilder,
-    ) -> Option<Filter<'a>> {
+    ) -> Option<Filter> {
         let filter = self.alloc_filter_by_name("buffersink", node_name)?;
 
         let filter = BufferSinkFilterBuilder { filter };
@@ -527,10 +521,16 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub struct VideoEncoder {}
+pub struct VideoEncoder {
+    encoder: codec::encoder::video::Encoder,
+    graph: Graph,
+
+    sink_filter: Filter,
+    source_filter: Filter,
+}
 
 impl VideoEncoder {
-    pub fn new(params: EncoderParams) {
+    pub fn new(params: EncoderParams) -> Self {
         let codec = encoder::find_by_name(params.codec_name).expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
             .encoder()
@@ -609,6 +609,13 @@ impl VideoEncoder {
         // Self::add_source_filter(&params, &hw_frame_ctx, &mut graph);
         // Self::add_sink_filter(&params, &mut graph);
 
-        // video.open().expect("Failed to open the codec");
+        let encoder = video.open().expect("Failed to open the codec");
+
+        Self {
+            encoder,
+            sink_filter,
+            source_filter,
+            graph,
+        }
     }
 }
