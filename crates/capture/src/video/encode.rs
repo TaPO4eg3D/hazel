@@ -601,13 +601,10 @@ impl VideoEncoder {
             (*video.as_mut_ptr()).hw_frames_ctx =
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
-            // video.set_time_base((*filter_output).time_base);
-            // video.set_frame_rate(Some(Rational(1, 0)));
-            // video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
+            video.set_time_base((*filter_output).time_base);
+            video.set_frame_rate(Some(Rational(1, 0)));
+            video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
         }
-
-        // Self::add_source_filter(&params, &hw_frame_ctx, &mut graph);
-        // Self::add_sink_filter(&params, &mut graph);
 
         let encoder = video.open().expect("Failed to open the codec");
 
