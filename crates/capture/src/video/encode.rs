@@ -1,5 +1,6 @@
 use std::{
     ffi::{CString, c_int, c_uint, c_void},
+    marker::PhantomData,
     ptr,
 };
 
@@ -178,14 +179,16 @@ impl Drop for HWFrameContext {
     }
 }
 
-struct Filter {
+pub struct Filter<'a> {
     ptr: *const AVFilter,
     ctx: *mut AVFilterContext,
 
     is_committed: bool,
+
+    _marker: PhantomData<fn() -> &'a Graph>,
 }
 
-impl Drop for Filter {
+impl<'a> Drop for Filter<'a> {
     fn drop(&mut self) {
         unsafe {
             avfilter_free(self.ctx);
@@ -193,7 +196,7 @@ impl Drop for Filter {
     }
 }
 
-impl Filter {
+impl<'a> Filter<'a> {
     fn find(name: &str) -> Option<Self> {
         let name = CString::new(name).unwrap();
 
@@ -207,6 +210,7 @@ impl Filter {
                     ptr,
                     ctx: std::ptr::null_mut(),
                     is_committed: false,
+                    _marker: PhantomData,
                 })
             }
         }
@@ -229,13 +233,13 @@ impl Filter {
     }
 }
 
-struct BufferFilterBuilder {
-    filter: Filter,
+struct BufferFilterBuilder<'a> {
+    filter: Filter<'a>,
     params: *mut AVBufferSrcParameters,
 }
 
-impl BufferFilterBuilder {
-    fn new(filter: Filter) -> Option<Self> {
+impl<'a> BufferFilterBuilder<'a> {
+    fn new(filter: Filter<'a>) -> Option<Self> {
         unsafe {
             let params = av_buffersrc_parameters_alloc();
 
@@ -247,7 +251,7 @@ impl BufferFilterBuilder {
         }
     }
 
-    fn build(self) -> Option<Filter> {
+    fn build(self) -> Option<Filter<'a>> {
         let ctx = self.filter.ctx;
 
         let err = unsafe { av_buffersrc_parameters_set(ctx, self.params) };
@@ -309,12 +313,12 @@ impl BufferFilterBuilder {
     }
 }
 
-struct BufferSinkFilterBuilder {
-    filter: Filter,
+struct BufferSinkFilterBuilder<'a> {
+    filter: Filter<'a>,
 }
 
-impl BufferSinkFilterBuilder {
-    fn build(self) -> Filter {
+impl<'a> BufferSinkFilterBuilder<'a> {
+    fn build(self) -> Filter<'a> {
         self.filter
     }
 
@@ -337,7 +341,7 @@ impl BufferSinkFilterBuilder {
     }
 }
 
-struct Graph(*mut AVFilterGraph);
+pub struct Graph(*mut AVFilterGraph);
 
 impl Drop for Graph {
     fn drop(&mut self) {
@@ -356,7 +360,11 @@ impl Graph {
         }
     }
 
-    fn alloc_filter_by_name(&self, filter_name: &str, node_name: &str) -> Option<Filter> {
+    fn alloc_filter_by_name<'a>(
+        &'a self,
+        filter_name: &str,
+        node_name: &str,
+    ) -> Option<Filter<'a>> {
         let mut filter = Filter::find(filter_name)?;
 
         let node_name = CString::new(node_name).unwrap();
@@ -371,11 +379,11 @@ impl Graph {
         }
     }
 
-    fn create_buffer_filter(
-        &self,
+    fn create_buffer_filter<'a>(
+        &'a self,
         node_name: &str,
         f: impl FnOnce(BufferFilterBuilder) -> BufferFilterBuilder,
-    ) -> Option<Filter> {
+    ) -> Option<Filter<'a>> {
         let filter = self.alloc_filter_by_name("buffer", node_name)?;
 
         let buffer_filter = BufferFilterBuilder::new(filter)?;
@@ -385,11 +393,11 @@ impl Graph {
         Some(filter)
     }
 
-    fn create_buffersink_filter(
-        &self,
+    fn create_buffersink_filter<'a>(
+        &'a self,
         node_name: &str,
         f: impl FnOnce(BufferSinkFilterBuilder) -> BufferSinkFilterBuilder,
-    ) -> Option<Filter> {
+    ) -> Option<Filter<'a>> {
         let filter = self.alloc_filter_by_name("buffersink", node_name)?;
 
         let filter = BufferSinkFilterBuilder { filter };
@@ -528,7 +536,7 @@ impl VideoEncoder {
                 this.set_pixel_formats(&[AVPixelFormat::AV_PIX_FMT_VAAPI])
                     .expect("Failed to set pixel format")
             })
-            .expect("Failed tot create buffersink filter");
+            .expect("Failed to create buffersink filter");
 
         video.set_width(params.height);
         video.set_height(params.height);
