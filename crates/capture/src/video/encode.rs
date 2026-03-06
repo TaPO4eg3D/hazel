@@ -9,9 +9,10 @@ use ffmpeg_next::{
     ffi::{
         AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext,
         AVFilterGraph, AVFilterInOut, AVHWFramesContext, AVOptionType, AVPixelFormat,
-        av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
-        av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init,
-        av_opt_set_array, av_strdup, avfilter_free, avfilter_get_by_name, avfilter_graph_alloc,
+        av_buffer_ref, av_buffer_unref, av_buffersink_get_hw_frames_ctx,
+        av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_free,
+        av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, av_opt_set_array,
+        av_strdup, avfilter_free, avfilter_get_by_name, avfilter_graph_alloc,
         avfilter_graph_alloc_filter, avfilter_graph_config, avfilter_graph_free,
         avfilter_graph_parse_ptr, avfilter_init_str, avfilter_inout_alloc, avfilter_inout_free,
     },
@@ -586,9 +587,24 @@ impl VideoEncoder {
 
         graph.config().expect("Failed to configure the graph");
 
-        video.set_width(params.height);
-        video.set_height(params.height);
-        video.set_time_base(time_base);
+        // TODO: Make a safe wrapper for that, I am feeling a bit lazy
+        // for this right now
+        unsafe {
+            // The (input of the) sink is the output of the whole filter.
+            let filter_output = *(*sink_filter.ctx).inputs;
+
+            video.set_width((*filter_output).w as u32);
+            video.set_height((*filter_output).h as u32);
+
+            (*video.as_mut_ptr()).pix_fmt =
+                std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);
+            (*video.as_mut_ptr()).hw_frames_ctx =
+                av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
+
+            // video.set_time_base((*filter_output).time_base);
+            // video.set_frame_rate(Some(Rational(1, 0)));
+            // video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
+        }
 
         // Self::add_source_filter(&params, &hw_frame_ctx, &mut graph);
         // Self::add_sink_filter(&params, &mut graph);
