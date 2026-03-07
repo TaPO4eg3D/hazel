@@ -1,5 +1,5 @@
 use capture::video::{
-    encode::{EncoderParams, VideoEncoder},
+    encode::{EncoderParams, VAAPIEncoder},
     linux::screengrab::start_streaming,
 };
 
