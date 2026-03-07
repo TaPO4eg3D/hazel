@@ -1,4 +1,4 @@
-use std::os::fd::OwnedFd;
+use std::{io::Cursor, os::fd::OwnedFd};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -14,9 +14,17 @@ use drm_fourcc::DrmModifier;
 use ffmpeg_next::format::open;
 
 use libspa::{
-    param::format::FormatProperties,
-    pod::{ChoiceValue, Pod, PropertyFlags},
-    utils::ChoiceFlags,
+    buffer::{Data, DataType},
+    param::{
+        ParamType,
+        format::{FormatProperties, MediaSubtype, MediaType},
+        video::VideoFormat,
+    },
+    pod::{ChoiceValue, Pod, Property, PropertyFlags, serialize::PodSerializer},
+    sys::{
+        SPA_PARAM_BUFFERS_blocks, SPA_PARAM_BUFFERS_buffers, SPA_PARAM_BUFFERS_dataType, spa_data,
+    },
+    utils::{Choice, ChoiceEnum, ChoiceFlags, SpaTypes},
 };
 use libva::{Display, VAEntrypoint, VAProfile};
 use pipewire::{
@@ -26,7 +34,7 @@ use pipewire::{
     stream::{Stream, StreamListener, StreamRc},
 };
 
-use crate::video::encode::VideoEncoder;
+use crate::video::encode::{EncoderParams, VAAPIEncoder};
 
 async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
@@ -60,9 +68,18 @@ async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
     Ok((stream.pipe_wire_node_id(), fd))
 }
 
+fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
+    PodSerializer::serialize(
+        Cursor::new(&mut *buffer),
+        &pw::spa::pod::Value::Object(object),
+    )
+    .unwrap();
+    Pod::from_bytes(buffer).unwrap()
+}
+
 #[derive(Default)]
 struct ScreencastStreamData {
-    encoder: Option<VideoEncoder>,
+    encoder: Option<VAAPIEncoder>,
     format: pw::spa::param::video::VideoInfoRaw,
 }
 
@@ -90,30 +107,22 @@ impl ScreencastStream {
             .register()
             .unwrap();
 
-        let obj = pw::spa::pod::object!(
-            pw::spa::utils::SpaTypes::ObjectParamFormat,
-            pw::spa::param::ParamType::EnumFormat,
+        let dma_obj = pw::spa::pod::object!(
+            SpaTypes::ObjectParamFormat,
+            ParamType::EnumFormat,
+            pw::spa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
+            pw::spa::pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
             pw::spa::pod::property!(
-                pw::spa::param::format::FormatProperties::MediaType,
-                Id,
-                pw::spa::param::format::MediaType::Video
-            ),
-            pw::spa::pod::property!(
-                pw::spa::param::format::FormatProperties::MediaSubtype,
-                Id,
-                pw::spa::param::format::MediaSubtype::Raw
-            ),
-            pw::spa::pod::property!(
-                pw::spa::param::format::FormatProperties::VideoFormat,
+                FormatProperties::VideoFormat,
                 Choice,
                 Enum,
                 Id,
-                pw::spa::param::video::VideoFormat::RGB,
-                pw::spa::param::video::VideoFormat::RGBA,
-                pw::spa::param::video::VideoFormat::RGBx,
-                pw::spa::param::video::VideoFormat::BGRx,
-                pw::spa::param::video::VideoFormat::YUY2,
-                pw::spa::param::video::VideoFormat::I420,
+                VideoFormat::RGB,
+                VideoFormat::RGBA,
+                VideoFormat::RGBx,
+                VideoFormat::BGRx,
+                VideoFormat::YUY2,
+                VideoFormat::I420,
             ),
             pw::spa::pod::Property {
                 key: FormatProperties::VideoModifier.as_raw(),
@@ -160,7 +169,7 @@ impl ScreencastStream {
 
         let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
             std::io::Cursor::new(Vec::new()),
-            &pw::spa::pod::Value::Object(obj),
+            &pw::spa::pod::Value::Object(dma_obj),
         )
         .unwrap()
         .0
@@ -175,7 +184,10 @@ impl ScreencastStream {
             &mut params,
         )?;
 
-        Ok(Self { _stream: stream, _listener: listener })
+        Ok(Self {
+            _stream: stream,
+            _listener: listener,
+        })
     }
 
     fn on_param_changed(
@@ -207,24 +219,56 @@ impl ScreencastStream {
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
 
-        println!("got video format:");
-        println!("{:?}", this.format);
-        println!(
-            "\tsize: {}x{}",
-            this.format.size().width,
-            this.format.size().height
-        );
-        println!("{:?}", param.type_());
-        println!(
-            "\tframerate: {}/{}",
-            this.format.framerate().num,
-            this.format.framerate().denom
-        );
+        println!("Format updated: {:#?}", this.format);
 
-        // Initialize encoder once format is known
+        this.encoder = None;
+    }
+
+    fn process_dmabuf(data: &mut Data, this: &mut ScreencastStreamData) {
+        let encoder = this.encoder.unwrap_or_else(|| {
+            let data_raw = data.as_raw();
+            let fd = data_raw.fd;
+
+            let (stride, offset) = unsafe {
+                let chunk = data_raw.chunk;
+
+                let stride = (*chunk).stride as i64;
+                let offset = (*chunk).offset as u64;
+
+                (stride, offset)
+            };
+
+            let width = this.format.size().width;
+            let height = this.format.size().height;
+
+            VAAPIEncoder::new(EncoderParams {
+                codec_name: "h264_vaapi",
+                height,
+                width,
+            })
+        });
     }
 
     fn on_process(stream: &Stream, this: &mut ScreencastStreamData) {
+        let Some(mut buffer) = stream.dequeue_buffer() else {
+            return;
+        };
+
+        let datas = buffer.datas_mut();
+        if datas.is_empty() {
+            return;
+        }
+
+        let data = &mut datas[0];
+        match data.type_() {
+            DataType::DmaBuf => {
+                Self::process_dmabuf(data, this);
+            }
+            DataType::MemFd => {
+                panic!("Fallback to shared memory is not yet supported");
+            }
+            _ => todo!("Hanlde those cases?"),
+        }
     }
 }
 

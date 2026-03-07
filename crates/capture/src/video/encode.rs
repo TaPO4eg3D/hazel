@@ -24,8 +24,6 @@ use ffmpeg_next::{
 use crate::video::ScreenSurface;
 
 pub struct EncoderParams {
-    pub codec_name: &'static str,
-
     pub height: u32,
     pub width: u32,
 }
@@ -523,7 +521,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub struct VideoEncoder {
+pub struct VAAPIEncoder {
     encoder: codec::encoder::video::Encoder,
     graph: Graph,
 
@@ -531,11 +529,11 @@ pub struct VideoEncoder {
     source_filter: Filter,
 }
 
-impl VideoEncoder {
+impl VAAPIEncoder {
     pub fn encode(&self, surface: ScreenSurface) {}
 
     pub fn new(params: EncoderParams) -> Self {
-        let codec = encoder::find_by_name(params.codec_name).expect("Failed to find Video Codec");
+        let codec = encoder::find_by_name("h264_vaapi").expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
             .encoder()
             .video()
