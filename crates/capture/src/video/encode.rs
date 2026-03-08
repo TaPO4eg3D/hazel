@@ -4,6 +4,7 @@ use std::{
     ptr,
 };
 
+use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Rational, codec,
     encoder::{self, Encoder, video},
@@ -22,11 +23,6 @@ use ffmpeg_next::{
 };
 
 use crate::video::ScreenSurface;
-
-pub struct EncoderParams {
-    pub height: u32,
-    pub width: u32,
-}
 
 pub struct GPUDevice(*mut AVBufferRef);
 
@@ -521,6 +517,18 @@ impl<'a> Parser<'a> {
     }
 }
 
+pub struct VAAPIEncoderParams {
+    pub height: u32,
+    pub width: u32,
+
+    pub fd: i64,
+    pub stride: i32,
+    pub offset: u32,
+
+    pub format: DrmFourcc,
+    pub modifier: u64,
+}
+
 pub struct VAAPIEncoder {
     encoder: codec::encoder::video::Encoder,
     graph: Graph,
@@ -532,7 +540,7 @@ pub struct VAAPIEncoder {
 impl VAAPIEncoder {
     pub fn encode(&self, surface: ScreenSurface) {}
 
-    pub fn new(params: EncoderParams) -> Self {
+    pub fn new(params: VAAPIEncoderParams) -> Self {
         let codec = encoder::find_by_name("h264_vaapi").expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
             .encoder()

@@ -10,7 +10,7 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
-use drm_fourcc::DrmModifier;
+use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::format::open;
 
 use libspa::{
@@ -34,7 +34,7 @@ use pipewire::{
     stream::{Stream, StreamListener, StreamRc},
 };
 
-use crate::video::encode::{EncoderParams, VAAPIEncoder};
+use crate::video::encode::{VAAPIEncoder, VAAPIEncoderParams};
 
 async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
@@ -232,8 +232,8 @@ impl ScreencastStream {
             let (stride, offset) = unsafe {
                 let chunk = data_raw.chunk;
 
-                let stride = (*chunk).stride as i64;
-                let offset = (*chunk).offset as u64;
+                let stride = (*chunk).stride;
+                let offset = (*chunk).offset;
 
                 (stride, offset)
             };
@@ -241,10 +241,24 @@ impl ScreencastStream {
             let width = this.format.size().width;
             let height = this.format.size().height;
 
-            VAAPIEncoder::new(EncoderParams {
-                codec_name: "h264_vaapi",
+            // Select DRM FourCC based on PipeWire format when possible
+            let format = match this.format.format() {
+                VideoFormat::BGRx => DrmFourcc::Xrgb8888,
+                VideoFormat::RGBx => DrmFourcc::Xbgr8888,
+                _ => todo!("Implement"),
+            };
+
+            VAAPIEncoder::new(VAAPIEncoderParams {
+                fd,
+
                 height,
                 width,
+
+                stride,
+                offset,
+
+                format,
+                modifier: this.format.modifier(),
             })
         });
     }
