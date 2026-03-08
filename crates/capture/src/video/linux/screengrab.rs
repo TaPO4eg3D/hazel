@@ -225,7 +225,7 @@ impl ScreencastStream {
     }
 
     fn process_dmabuf(data: &mut Data, this: &mut ScreencastStreamData) {
-        let encoder = this.encoder.unwrap_or_else(|| {
+        if this.encoder.is_none() {
             let data_raw = data.as_raw();
             let fd = data_raw.fd;
 
@@ -248,7 +248,7 @@ impl ScreencastStream {
                 _ => todo!("Implement"),
             };
 
-            VAAPIEncoder::new(VAAPIEncoderParams {
+            this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
                 fd,
 
                 height,
@@ -259,8 +259,10 @@ impl ScreencastStream {
 
                 format,
                 modifier: this.format.modifier(),
-            })
-        });
+            }))
+        }
+
+        let encoder = this.encoder.as_mut().unwrap();
     }
 
     fn on_process(stream: &Stream, this: &mut ScreencastStreamData) {
