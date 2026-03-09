@@ -1,22 +1,22 @@
 use std::{
-    ffi::{CString, c_int, c_uint, c_void},
+    ffi::{c_int, c_uint, c_void, CString},
     ptr,
 };
 
 use drm_fourcc::DrmFourcc;
 use ffmpeg_next::{
-    Rational,
     ffi::{
-        AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters,
-        AVDRMFrameDescriptor, AVFilter, AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame,
-        AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_create, av_buffer_default_free,
-        av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
-        av_frame_alloc, av_frame_free, av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc,
-        av_hwframe_ctx_init, av_hwframe_map, av_malloc, av_mallocz, av_opt_set_array, av_strdup,
-        avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
-        avfilter_graph_config, avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str,
-        avfilter_inout_alloc, avfilter_inout_free,
+        av_buffer_create, av_buffer_default_free, av_buffer_ref, av_buffer_unref,
+        av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_frame_alloc, av_frame_free,
+        av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, av_hwframe_map,
+        av_malloc, av_mallocz, av_opt_set_array, av_strdup, avfilter_get_by_name,
+        avfilter_graph_alloc, avfilter_graph_alloc_filter, avfilter_graph_config,
+        avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str, avfilter_inout_alloc,
+        avfilter_inout_free, AVBufferRef, AVBufferSrcParameters, AVDRMFrameDescriptor, AVFilter,
+        AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame, AVHWFramesContext, AVOptionType,
+        AVPixelFormat, AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN,
     },
+    Rational,
 };
 
 pub(crate) struct GPUDevice(*mut AVBufferRef);
@@ -74,6 +74,16 @@ impl Drop for GPUDevice {
 
 pub(crate) struct HWFrameContextBuilder(*mut AVBufferRef);
 
+impl Drop for HWFrameContextBuilder {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.0.is_null() {
+                av_buffer_unref(&raw mut self.0);
+            }
+        }
+    }
+}
+
 impl HWFrameContextBuilder {
     pub(crate) fn new(device: &GPUDevice) -> Option<Self> {
         unsafe {
@@ -89,11 +99,16 @@ impl HWFrameContextBuilder {
 
     pub(crate) fn build(self) -> Option<HWFrameContext> {
         unsafe {
-            let err = av_hwframe_ctx_init(self.0);
-            let ctx = HWFrameContext(self.0);
+            let ptr = self.0;
+            // Prevent the builder's Drop from unreffing — ownership transfers
+            // to HWFrameContext (or we unref on error below).
+            std::mem::forget(self);
+
+            let err = av_hwframe_ctx_init(ptr);
+            let ctx = HWFrameContext(ptr);
 
             if err < 0 {
-                // `ctx` will be unreffed by impl Drop
+                // `ctx` will be unreffed by its Drop
                 return None;
             }
 
@@ -327,7 +342,11 @@ impl<'a> BufferSinkFilterBuilder {
                 formats.as_ptr() as *const c_void,
             );
 
-            if err < 0 { None } else { Some(self) }
+            if err < 0 {
+                None
+            } else {
+                Some(self)
+            }
         }
     }
 }
@@ -347,7 +366,11 @@ impl Graph {
         unsafe {
             let ptr = avfilter_graph_alloc();
 
-            if ptr.is_null() { None } else { Some(Self(ptr)) }
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Self(ptr))
+            }
         }
     }
 
@@ -355,7 +378,11 @@ impl Graph {
         unsafe {
             let err = avfilter_graph_config(self.0, ptr::null_mut());
 
-            if err < 0 { None } else { Some(()) }
+            if err < 0 {
+                None
+            } else {
+                Some(())
+            }
         }
     }
 
@@ -542,8 +569,8 @@ pub struct DrmFrame {
 impl Drop for DrmFrame {
     fn drop(&mut self) {
         unsafe {
+            // av_frame_free unrefs buf[0] as well
             av_frame_free(&raw mut self.av_frame);
-            av_free(self.av_desc as *mut _);
         }
     }
 }

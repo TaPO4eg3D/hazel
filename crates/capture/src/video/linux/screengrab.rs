@@ -1,4 +1,4 @@
-use std::{io::Cursor, os::fd::OwnedFd};
+use std::{io::{Cursor, Write}, os::fd::OwnedFd};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -77,10 +77,11 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
     Pod::from_bytes(buffer).unwrap()
 }
 
-#[derive(Default)]
 struct ScreencastStreamData {
     encoder: Option<VAAPIEncoder>,
     format: pw::spa::param::video::VideoInfoRaw,
+
+    fout: std::fs::File,
 }
 
 struct ScreencastStream {
@@ -101,7 +102,11 @@ impl ScreencastStream {
         )?;
 
         let listener = stream
-            .add_local_listener_with_user_data(ScreencastStreamData::default())
+            .add_local_listener_with_user_data(ScreencastStreamData {
+                encoder: None,
+                format: Default::default(),
+                fout: std::fs::File::create("/tmp/screengrab.out").unwrap(),
+            })
             .param_changed(Self::on_param_changed)
             .process(Self::on_process)
             .register()
@@ -270,6 +275,11 @@ impl ScreencastStream {
 
         let encoder = this.encoder.as_mut().unwrap();
         encoder.encode();
+
+        while let Some(data) = encoder.frame_queue.pop_front() {
+            this.fout.write_all(&data)
+                .unwrap();
+        }
     }
 
     fn on_process(stream: &Stream, this: &mut ScreencastStreamData) {
