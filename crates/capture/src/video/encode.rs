@@ -1,5 +1,6 @@
 use core::panic;
 use std::{
+    collections::VecDeque,
     ffi::{c_int, c_uint, c_void, CString},
     marker::PhantomData,
     ptr,
@@ -7,9 +8,17 @@ use std::{
 
 use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
-    Rational, codec, encoder::{self, Encoder, video}, ffi::{
-        AV_BUFFERSRC_FLAG_KEEP_REF, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_packet_alloc, av_packet_free, avcodec_receive_packet, avcodec_send_frame
-    }, filter, format::Pixel
+    codec,
+    encoder::{self, video, Encoder},
+    ffi::{
+        av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx,
+        av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_frame_unref,
+        av_packet_alloc, av_packet_free, av_packet_unref, avcodec_receive_packet,
+        avcodec_send_frame, AVFrame, AVPacket, AVPixelFormat, AV_BUFFERSRC_FLAG_KEEP_REF, EAGAIN,
+    },
+    filter,
+    format::Pixel,
+    Rational,
 };
 
 use crate::video::wrapper::{
@@ -32,6 +41,8 @@ pub struct VAAPIEncoder {
     out_frame: *mut AVFrame,
 
     packet: *mut AVPacket,
+
+    pub frame_queue: VecDeque<Vec<u8>>,
 }
 
 impl Drop for VAAPIEncoder {
@@ -65,14 +76,15 @@ impl VAAPIEncoder {
             }
 
             let err = avcodec_send_frame(self.encoder.as_mut_ptr(), self.out_frame);
+            // Unref the frame to release the VAAPI surface back to the pool.
+            av_frame_unref(self.out_frame);
+
             if err < 0 {
                 panic!("Failed to encode the frame");
             }
 
             loop {
                 let ret = avcodec_receive_packet(self.encoder.as_mut_ptr(), self.packet);
-
-                // TODO: Handle better?
                 if ret != 0 {
                     break;
                 }
@@ -80,6 +92,11 @@ impl VAAPIEncoder {
                 (*self.packet).stream_index = 0;
                 let buf =
                     std::slice::from_raw_parts((*self.packet).data, (*self.packet).size as usize);
+
+                self.frame_queue.push_back(buf.to_vec());
+
+                // Unref the packet to release the encoded bitstream buffer.
+                av_packet_unref(self.packet);
             }
         }
     }
@@ -151,7 +168,7 @@ impl VAAPIEncoder {
 
             (*video.as_mut_ptr()).pix_fmt =
                 std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);
-            // TODO: unref at the end of lifetime
+            // NOTE: Encoder drop will unref this
             (*video.as_mut_ptr()).hw_frames_ctx =
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
@@ -181,6 +198,7 @@ impl VAAPIEncoder {
             hw_frame,
             out_frame,
             packet,
+            frame_queue: VecDeque::new(),
         }
     }
 }
