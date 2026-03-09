@@ -1,17 +1,15 @@
 use core::panic;
 use std::{
-    ffi::{CString, c_int, c_uint, c_void},
+    ffi::{c_int, c_uint, c_void, CString},
     marker::PhantomData,
     ptr,
 };
 
 use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
-    Rational, codec,
-    encoder::{self, Encoder, video},
-    ffi::{AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_packet_alloc, av_packet_free, avcodec_receive_packet, avcodec_send_frame},
-    filter,
-    format::Pixel,
+    Rational, codec, encoder::{self, Encoder, video}, ffi::{
+        AV_BUFFERSRC_FLAG_KEEP_REF, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_packet_alloc, av_packet_free, avcodec_receive_packet, avcodec_send_frame
+    }, filter, format::Pixel
 };
 
 use crate::video::wrapper::{
@@ -48,9 +46,11 @@ impl Drop for VAAPIEncoder {
 impl VAAPIEncoder {
     pub fn encode(&mut self) {
         unsafe {
-            // Push the frame into the filter graph
-            let err =
-                av_buffersrc_add_frame_flags(self.source_filter.ctx, self.hw_frame.av_frame, 0);
+            let err = av_buffersrc_add_frame_flags(
+                self.source_filter.ctx,
+                self.hw_frame.av_frame,
+                AV_BUFFERSRC_FLAG_KEEP_REF as i32,
+            );
 
             if err < 0 {
                 panic!("Error feeding the filtergraph!");
@@ -78,9 +78,8 @@ impl VAAPIEncoder {
                 }
 
                 (*self.packet).stream_index = 0;
-                let buf = std::slice::from_raw_parts((*self.packet).data, (*self.packet).size as usize);
-
-                println!("{}", buf.len())
+                let buf =
+                    std::slice::from_raw_parts((*self.packet).data, (*self.packet).size as usize);
             }
         }
     }
