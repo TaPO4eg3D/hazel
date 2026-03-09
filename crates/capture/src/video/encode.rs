@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     ffi::{CString, c_int, c_uint, c_void},
     marker::PhantomData,
@@ -6,22 +7,20 @@ use std::{
 
 use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
-    Rational, codec, encoder::{self, Encoder, video}, ffi::{AVPixelFormat, av_buffer_ref, av_buffersink_get_hw_frames_ctx}, filter, format::Pixel
+    Rational, codec,
+    encoder::{self, Encoder, video},
+    ffi::{AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_packet_alloc, av_packet_free, avcodec_receive_packet, avcodec_send_frame},
+    filter,
+    format::Pixel,
 };
 
-use crate::video::wrapper::{Filter, GPUDevice, Graph, HWFrameContextBuilder, Parser};
-
+use crate::video::wrapper::{
+    DrmFrame, Filter, GPUDevice, Graph, HWFrameContextBuilder, Parser, VAAPIFrame,
+};
 
 pub struct VAAPIEncoderParams {
     pub height: u32,
     pub width: u32,
-
-    pub fd: i64,
-    pub stride: i32,
-    pub offset: u32,
-
-    pub format: DrmFourcc,
-    pub modifier: u64,
 }
 
 pub struct VAAPIEncoder {
@@ -30,10 +29,63 @@ pub struct VAAPIEncoder {
 
     sink_filter: Filter,
     source_filter: Filter,
+
+    hw_frame: VAAPIFrame,
+    out_frame: *mut AVFrame,
+
+    packet: *mut AVPacket,
+}
+
+impl Drop for VAAPIEncoder {
+    fn drop(&mut self) {
+        unsafe {
+            av_packet_free(&raw mut self.packet);
+            av_frame_free(&raw mut self.out_frame);
+        }
+    }
 }
 
 impl VAAPIEncoder {
-    pub fn new(params: VAAPIEncoderParams) -> Self {
+    pub fn encode(&mut self) {
+        unsafe {
+            // Push the frame into the filter graph
+            let err =
+                av_buffersrc_add_frame_flags(self.source_filter.ctx, self.hw_frame.av_frame, 0);
+
+            if err < 0 {
+                panic!("Error feeding the filtergraph!");
+            }
+
+            // Pulling out the result of the filter graph
+            let err = av_buffersink_get_frame(self.sink_filter.ctx, self.out_frame);
+            if err == -EAGAIN {
+                return;
+            } else if err < 0 {
+                panic!("Failed to process a frame")
+            }
+
+            let err = avcodec_send_frame(self.encoder.as_mut_ptr(), self.out_frame);
+            if err < 0 {
+                panic!("Failed to encode the frame");
+            }
+
+            loop {
+                let ret = avcodec_receive_packet(self.encoder.as_mut_ptr(), self.packet);
+
+                // TODO: Handle better?
+                if ret != 0 {
+                    break;
+                }
+
+                (*self.packet).stream_index = 0;
+                let buf = std::slice::from_raw_parts((*self.packet).data, (*self.packet).size as usize);
+
+                println!("{}", buf.len())
+            }
+        }
+    }
+
+    pub fn new(params: VAAPIEncoderParams, drm_frame: DrmFrame) -> Self {
         let codec = encoder::find_by_name("h264_vaapi").expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
             .encoder()
@@ -90,8 +142,7 @@ impl VAAPIEncoder {
 
         graph.config().expect("Failed to configure the graph");
 
-        // TODO: Make a safe wrapper for that, I am feeling a bit lazy
-        // for this right now
+        // TODO: Make a safe wrapper for that, I am feeling a bit lazy atm
         unsafe {
             // The (input of the) sink is the output of the whole filter.
             let filter_output = *(*sink_filter.ctx).inputs;
@@ -101,6 +152,7 @@ impl VAAPIEncoder {
 
             (*video.as_mut_ptr()).pix_fmt =
                 std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);
+            // TODO: unref at the end of lifetime
             (*video.as_mut_ptr()).hw_frames_ctx =
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
@@ -109,6 +161,17 @@ impl VAAPIEncoder {
             video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
         }
 
+        let out_frame = unsafe { av_frame_alloc() };
+        if out_frame.is_null() {
+            panic!("Failed to alloc out frame");
+        }
+
+        let packet = unsafe { av_packet_alloc() };
+        if packet.is_null() {
+            panic!("Failed to alloc encoder packet");
+        }
+
+        let hw_frame = VAAPIFrame::new(drm_frame, hw_frame_ctx.clone());
         let encoder = video.open().expect("Failed to open the codec");
 
         Self {
@@ -116,6 +179,9 @@ impl VAAPIEncoder {
             sink_filter,
             source_filter,
             graph,
+            hw_frame,
+            out_frame,
+            packet,
         }
     }
 }
