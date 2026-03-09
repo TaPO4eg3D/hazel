@@ -3,16 +3,19 @@ use std::{
     ptr,
 };
 
+use drm_fourcc::DrmFourcc;
 use ffmpeg_next::{
     Rational,
     ffi::{
-        AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters, AVFilter, AVFilterContext,
-        AVFilterGraph, AVFilterInOut, AVHWFramesContext, AVOptionType, AVPixelFormat,
+        AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters,
+        AVDRMFrameDescriptor, AVFilter, AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame,
+        AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_create, av_buffer_default_free,
         av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
-        av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init,
-        av_opt_set_array, av_strdup, avfilter_get_by_name, avfilter_graph_alloc,
-        avfilter_graph_alloc_filter, avfilter_graph_config, avfilter_graph_free,
-        avfilter_graph_parse_ptr, avfilter_init_str, avfilter_inout_alloc, avfilter_inout_free,
+        av_frame_alloc, av_frame_free, av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc,
+        av_hwframe_ctx_init, av_hwframe_map, av_malloc, av_mallocz, av_opt_set_array, av_strdup,
+        avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
+        avfilter_graph_config, avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str,
+        avfilter_inout_alloc, avfilter_inout_free,
     },
 };
 
@@ -356,7 +359,11 @@ impl Graph {
         }
     }
 
-    pub(crate) fn alloc_filter_by_name(&self, filter_name: &str, node_name: &str) -> Option<Filter> {
+    pub(crate) fn alloc_filter_by_name(
+        &self,
+        filter_name: &str,
+        node_name: &str,
+    ) -> Option<Filter> {
         let mut filter = Filter::find(filter_name)?;
 
         let node_name = CString::new(node_name).unwrap();
@@ -504,6 +511,132 @@ impl<'a> Parser<'a> {
                     Some(())
                 }
                 _ => None,
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct DrmFormat {
+    pub width: i32,
+    pub height: i32,
+
+    pub format: DrmFourcc,
+    pub modifier: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct DrmPlane {
+    pub offset: isize,
+    pub stride: isize,
+}
+
+pub struct DrmFrame {
+    fd: i64,
+    size: usize,
+
+    av_desc: *mut AVDRMFrameDescriptor,
+    av_frame: *mut AVFrame,
+}
+
+impl Drop for DrmFrame {
+    fn drop(&mut self) {
+        unsafe {
+            av_frame_free(&raw mut self.av_frame);
+            av_free(self.av_desc as *mut _);
+        }
+    }
+}
+
+impl DrmFrame {
+    pub fn new(fd: i64, size: usize, format: DrmFormat, planes: &[DrmPlane]) -> Self {
+        unsafe {
+            let desc = av_mallocz(std::mem::size_of::<AVDRMFrameDescriptor>())
+                as *mut AVDRMFrameDescriptor;
+            if desc.is_null() {
+                panic!("Failed to allocate AVDRMFrameDescriptor");
+            }
+
+            (*desc).nb_objects = 1;
+            (*desc).objects[0].fd = fd as i32;
+            (*desc).objects[0].size = size;
+            (*desc).objects[0].format_modifier = format.modifier;
+
+            (*desc).nb_layers = 1;
+            (*desc).layers[0].format = format.format as u32;
+            (*desc).layers[0].nb_planes = planes.len() as i32;
+
+            for (i, plane) in planes.iter().enumerate() {
+                (*desc).layers[0].planes[i].object_index = i as i32;
+                (*desc).layers[0].planes[i].offset = plane.offset;
+                (*desc).layers[0].planes[i].pitch = plane.stride;
+            }
+
+            let mut drm_frame = unsafe { av_frame_alloc() };
+            if drm_frame.is_null() {
+                panic!("Unable to allocate DRMFrame");
+            }
+
+            (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+            (*drm_frame).width = format.width;
+            (*drm_frame).height = format.height;
+            (*drm_frame).data[0] = desc as *mut u8;
+            (*drm_frame).linesize[0] = std::mem::size_of::<AVDRMFrameDescriptor>() as i32;
+
+            (*drm_frame).buf[0] = av_buffer_create(
+                desc as *mut u8,
+                std::mem::size_of::<AVDRMFrameDescriptor>(),
+                Some(av_buffer_default_free),
+                std::ptr::null_mut(),
+                0,
+            );
+
+            if (*drm_frame).buf[0].is_null() {
+                panic!("Failed to create frame buffer");
+            }
+
+            Self {
+                fd,
+                size,
+                av_desc: desc,
+                av_frame: drm_frame,
+            }
+        }
+    }
+}
+
+pub struct VAAPIFrame {
+    pub(crate) av_frame: *mut AVFrame,
+    drm_frame: DrmFrame,
+}
+
+impl Drop for VAAPIFrame {
+    fn drop(&mut self) {
+        unsafe {
+            av_frame_free(&raw mut self.av_frame);
+        }
+    }
+}
+
+impl VAAPIFrame {
+    pub fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
+        unsafe {
+            let mut vaapi_frame = av_frame_alloc();
+            if vaapi_frame.is_null() {
+                panic!("Unable to allocate VAAPI Frame");
+            }
+
+            (*vaapi_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+            (*vaapi_frame).hw_frames_ctx = hw_frames_ctx.clone().into_raw();
+
+            let err = av_hwframe_map(vaapi_frame, drm_frame.av_frame, AV_HWFRAME_MAP_READ as i32);
+            if err < 0 {
+                panic!("Failed to map the DRMFrame to the VAAPIFrame");
+            }
+
+            Self {
+                drm_frame,
+                av_frame: vaapi_frame,
             }
         }
     }

@@ -34,7 +34,7 @@ use pipewire::{
     stream::{Stream, StreamListener, StreamRc},
 };
 
-use crate::video::encode::{VAAPIEncoder, VAAPIEncoderParams};
+use crate::video::{encode::{VAAPIEncoder, VAAPIEncoderParams}, wrapper::{DrmFormat, DrmFrame, DrmPlane}};
 
 async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
@@ -248,21 +248,28 @@ impl ScreencastStream {
                 _ => todo!("Implement"),
             };
 
-            this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
-                fd,
-
-                height,
-                width,
-
-                stride,
-                offset,
-
+            let format = DrmFormat {
+                width: width as i32,
+                height: height as i32,
                 format,
                 modifier: this.format.modifier(),
-            }))
+            };
+
+            let drm_frame = DrmFrame::new(fd, (stride * height as i32) as usize, format, &[
+                DrmPlane {
+                    offset: offset as isize,
+                    stride: stride as isize,
+                }
+            ]);
+
+            this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
+                height,
+                width,
+            }, drm_frame))
         }
 
         let encoder = this.encoder.as_mut().unwrap();
+        encoder.encode();
     }
 
     fn on_process(stream: &Stream, this: &mut ScreencastStreamData) {
