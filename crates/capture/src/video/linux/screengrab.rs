@@ -1,4 +1,4 @@
-use std::{io::{Cursor, Write}, os::fd::OwnedFd};
+use std::{io::{Cursor, Write}, os::fd::OwnedFd, time::Instant};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -80,6 +80,7 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 struct ScreencastStreamData {
     encoder: Option<VAAPIEncoder>,
     format: pw::spa::param::video::VideoInfoRaw,
+    start_time: Instant,
 
     fout: std::fs::File,
 }
@@ -105,6 +106,7 @@ impl ScreencastStream {
             .add_local_listener_with_user_data(ScreencastStreamData {
                 encoder: None,
                 format: Default::default(),
+                start_time: Instant::now(),
                 fout: std::fs::File::create("/tmp/screengrab.out").unwrap(),
             })
             .param_changed(Self::on_param_changed)
@@ -229,56 +231,60 @@ impl ScreencastStream {
         this.encoder = None;
     }
 
+    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> DrmFrame {
+        let data_raw = data.as_raw();
+        let fd = data_raw.fd;
+
+        let (stride, offset) = unsafe {
+            let chunk = data_raw.chunk;
+            ((*chunk).stride, (*chunk).offset)
+        };
+
+        let width = this.format.size().width;
+        let height = this.format.size().height;
+
+        let format = match this.format.format() {
+            VideoFormat::BGRx => DrmFourcc::Xrgb8888,
+            VideoFormat::RGBx => DrmFourcc::Xbgr8888,
+            _ => todo!("Implement"),
+        };
+
+        let format = DrmFormat {
+            width: width as i32,
+            height: height as i32,
+            format,
+            modifier: this.format.modifier(),
+        };
+
+        DrmFrame::new(fd, (stride * height as i32) as usize, format, &[
+            DrmPlane {
+                offset: offset as isize,
+                stride: stride as isize,
+            }
+        ])
+    }
+
     fn process_dmabuf(data: &mut Data, this: &mut ScreencastStreamData) {
-        if this.encoder.is_none() {
-            let data_raw = data.as_raw();
-            let fd = data_raw.fd;
+        let drm_frame = Self::build_drm_frame(data, this);
 
-            let (stride, offset) = unsafe {
-                let chunk = data_raw.chunk;
-
-                let stride = (*chunk).stride;
-                let offset = (*chunk).offset;
-
-                (stride, offset)
-            };
-
-            let width = this.format.size().width;
-            let height = this.format.size().height;
-
-            // Select DRM FourCC based on PipeWire format when possible
-            let format = match this.format.format() {
-                VideoFormat::BGRx => DrmFourcc::Xrgb8888,
-                VideoFormat::RGBx => DrmFourcc::Xbgr8888,
-                _ => todo!("Implement"),
-            };
-
-            let format = DrmFormat {
-                width: width as i32,
-                height: height as i32,
-                format,
-                modifier: this.format.modifier(),
-            };
-
-            let drm_frame = DrmFrame::new(fd, (stride * height as i32) as usize, format, &[
-                DrmPlane {
-                    offset: offset as isize,
-                    stride: stride as isize,
-                }
-            ]);
-
-            this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
-                height,
-                width,
-            }, drm_frame))
+        match this.encoder.as_mut() {
+            Some(encoder) => encoder.update_frame(drm_frame),
+            None => {
+                let width = this.format.size().width;
+                let height = this.format.size().height;
+                this.encoder = Some(VAAPIEncoder::new(
+                    VAAPIEncoderParams { height, width },
+                    drm_frame,
+                ));
+            }
         }
 
+        let pts = this.start_time.elapsed().as_micros() as i64;
         let encoder = this.encoder.as_mut().unwrap();
-        encoder.encode();
+        encoder.encode(pts);
 
         while let Some(data) = encoder.frame_queue.pop_front() {
-            this.fout.write_all(&data)
-                .unwrap();
+            this.fout.write_all(&data).unwrap();
         }
     }
 

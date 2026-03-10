@@ -22,7 +22,7 @@ use ffmpeg_next::{
 };
 
 use crate::video::wrapper::{
-    DrmFrame, Filter, GPUDevice, Graph, HWFrameContextBuilder, Parser, VAAPIFrame,
+    DrmFrame, Filter, GPUDevice, Graph, HWFrameContext, HWFrameContextBuilder, Parser, VAAPIFrame,
 };
 
 pub struct VAAPIEncoderParams {
@@ -38,6 +38,7 @@ pub struct VAAPIEncoder {
     source_filter: Filter,
 
     hw_frame: VAAPIFrame,
+    hw_frame_ctx: HWFrameContext,
     out_frame: *mut AVFrame,
 
     packet: *mut AVPacket,
@@ -55,8 +56,14 @@ impl Drop for VAAPIEncoder {
 }
 
 impl VAAPIEncoder {
-    pub fn encode(&mut self) {
+    pub fn update_frame(&mut self, drm_frame: DrmFrame) {
+        self.hw_frame = VAAPIFrame::new(drm_frame, self.hw_frame_ctx.clone());
+    }
+
+    pub fn encode(&mut self, pts: i64) {
         unsafe {
+            (*self.hw_frame.av_frame).pts = pts;
+
             let err = av_buffersrc_add_frame_flags(
                 self.source_filter.ctx,
                 self.hw_frame.av_frame,
@@ -173,7 +180,7 @@ impl VAAPIEncoder {
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
             video.set_time_base((*filter_output).time_base);
-            video.set_frame_rate(Some(Rational(1, 0)));
+            video.set_frame_rate(Some(Rational(0, 1)));
             video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
         }
 
@@ -196,6 +203,7 @@ impl VAAPIEncoder {
             source_filter,
             graph,
             hw_frame,
+            hw_frame_ctx,
             out_frame,
             packet,
             frame_queue: VecDeque::new(),
