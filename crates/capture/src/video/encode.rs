@@ -61,6 +61,8 @@ impl VAAPIEncoder {
     }
 
     pub fn encode(&mut self, pts: i64) {
+        println!("{pts}");
+
         unsafe {
             (*self.hw_frame.av_frame).pts = pts;
 

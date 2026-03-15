@@ -1,4 +1,8 @@
-use std::{io::{Cursor, Write}, os::fd::OwnedFd, time::Instant};
+use std::{
+    io::{Cursor, Write},
+    os::fd::OwnedFd,
+    time::Instant,
+};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -14,7 +18,7 @@ use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::format::open;
 
 use libspa::{
-    buffer::{Data, DataType},
+    buffer::{Data, DataType, meta::MetaHeader},
     param::{
         ParamType,
         format::{FormatProperties, MediaSubtype, MediaType},
@@ -22,19 +26,22 @@ use libspa::{
     },
     pod::{ChoiceValue, Pod, Property, PropertyFlags, serialize::PodSerializer},
     sys::{
-        SPA_PARAM_BUFFERS_blocks, SPA_PARAM_BUFFERS_buffers, SPA_PARAM_BUFFERS_dataType, spa_data,
+        SPA_META_Header, SPA_PARAM_BUFFERS_blocks, SPA_PARAM_BUFFERS_buffers, SPA_PARAM_BUFFERS_dataType, SPA_PARAM_META_size, SPA_PARAM_META_type, spa_data, spa_meta_header
     },
-    utils::{Choice, ChoiceEnum, ChoiceFlags, SpaTypes},
+    utils::{Choice, ChoiceEnum, ChoiceFlags, Id, SpaTypes},
 };
-use libva::{Display, VAEntrypoint, VAProfile};
 use pipewire::{
     self as pw,
+    buffer::Buffer,
     core::CoreRc,
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
 
-use crate::video::{encode::{VAAPIEncoder, VAAPIEncoderParams}, wrapper::{DrmFormat, DrmFrame, DrmPlane}};
+use crate::video::{
+    encode::{VAAPIEncoder, VAAPIEncoderParams},
+    wrapper::{DrmFormat, DrmFrame, DrmPlane},
+};
 
 async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
@@ -80,7 +87,6 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 struct ScreencastStreamData {
     encoder: Option<VAAPIEncoder>,
     format: pw::spa::param::video::VideoInfoRaw,
-    start_time: Instant,
 
     fout: std::fs::File,
 }
@@ -106,7 +112,6 @@ impl ScreencastStream {
             .add_local_listener_with_user_data(ScreencastStreamData {
                 encoder: None,
                 format: Default::default(),
-                start_time: Instant::now(),
                 fout: std::fs::File::create("/tmp/screengrab.out").unwrap(),
             })
             .param_changed(Self::on_param_changed)
@@ -160,18 +165,12 @@ impl ScreencastStream {
                     height: 4096
                 }
             ),
-            pw::spa::pod::property!(
-                pw::spa::param::format::FormatProperties::VideoFramerate,
-                Choice,
-                Range,
-                Fraction,
-                pw::spa::utils::Fraction { num: 25, denom: 1 },
-                pw::spa::utils::Fraction { num: 0, denom: 1 },
-                pw::spa::utils::Fraction {
-                    num: 1000,
-                    denom: 1
-                }
-            ),
+            pw::spa::pod::Property {
+                // we only want variable rate, thus bypassing compositor pacing
+                key: FormatProperties::VideoFramerate.as_raw(),
+                flags: PropertyFlags::empty(),
+                value: pw::spa::pod::Value::Fraction(pw::spa::utils::Fraction { num: 0, denom: 1 })
+            },
         );
 
         let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
@@ -225,10 +224,52 @@ impl ScreencastStream {
         this.format
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
+        this.encoder = None;
 
         println!("Format updated: {:#?}", this.format);
 
-        this.encoder = None;
+        // Ack the buffer type and metadata
+        let data_type_obj = pw::spa::pod::object!(
+            SpaTypes::ObjectParamBuffers,
+            ParamType::Buffers,
+            // TODO: Implement fallback to shared memory
+            Property::new(
+                SPA_PARAM_BUFFERS_dataType,
+                pw::spa::pod::Value::Choice(ChoiceValue::Int(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Flags {
+                        default: 1 << DataType::DmaBuf.as_raw(),
+                        flags: vec![
+                            1 << DataType::DmaBuf.as_raw()
+                        ],
+                    },
+                ))),
+            ),
+        );
+
+        let meta_obj = pw::spa::pod::object!(
+            SpaTypes::ObjectParamMeta,
+            ParamType::Meta,
+            Property::new(
+                SPA_PARAM_META_type,
+                pw::spa::pod::Value::Id(Id(SPA_META_Header)),
+            ),
+            Property::new(
+                SPA_PARAM_META_size,
+                pw::spa::pod::Value::Int(std::mem::size_of::<spa_meta_header>() as i32),
+            ),
+        );
+
+        let mut data_type_buff = vec![];
+        let mut meta_buff = vec![];
+
+        let mut params = [
+            make_pod(&mut data_type_buff, data_type_obj),
+            make_pod(&mut meta_buff, meta_obj),
+        ];
+
+        stream.update_params(&mut params)
+            .unwrap()
     }
 
     fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> DrmFrame {
@@ -256,15 +297,19 @@ impl ScreencastStream {
             modifier: this.format.modifier(),
         };
 
-        DrmFrame::new(fd, (stride * height as i32) as usize, format, &[
-            DrmPlane {
+        DrmFrame::new(
+            fd,
+            (stride * height as i32) as usize,
+            format,
+            &[DrmPlane {
                 offset: offset as isize,
                 stride: stride as isize,
-            }
-        ])
+            }],
+        )
     }
 
-    fn process_dmabuf(data: &mut Data, this: &mut ScreencastStreamData) {
+    fn process_dmabuf(mut buffer: Buffer, this: &mut ScreencastStreamData) {
+        let data = &mut buffer.datas_mut()[0];
         let drm_frame = Self::build_drm_frame(data, this);
 
         match this.encoder.as_mut() {
@@ -272,6 +317,7 @@ impl ScreencastStream {
             None => {
                 let width = this.format.size().width;
                 let height = this.format.size().height;
+
                 this.encoder = Some(VAAPIEncoder::new(
                     VAAPIEncoderParams { height, width },
                     drm_frame,
@@ -279,17 +325,31 @@ impl ScreencastStream {
             }
         }
 
-        let pts = this.start_time.elapsed().as_micros() as i64;
-        let encoder = this.encoder.as_mut().unwrap();
-        encoder.encode(pts);
+        // `seq` advances on each frame, `pts` advances on 
+        // buffer update
+        if let Some(header) = buffer.find_meta::<MetaHeader>() {
+            let encoder = this.encoder.as_mut().unwrap();
+            encoder.encode(header.seq() as i64);
 
-        while let Some(data) = encoder.frame_queue.pop_front() {
-            this.fout.write_all(&data).unwrap();
+            while let Some(data) = encoder.frame_queue.pop_front() {
+                this.fout.write_all(&data).unwrap();
+            }
         }
     }
 
     fn on_process(stream: &Stream, this: &mut ScreencastStreamData) {
-        let Some(mut buffer) = stream.dequeue_buffer() else {
+        let mut buffer = None;
+
+        // Drain the queue, always grab the most recent buffer
+        loop {
+            let Some(value) = stream.dequeue_buffer() else {
+                break;
+            };
+
+            buffer = Some(value);
+        }
+
+        let Some(mut buffer) = buffer else {
             return;
         };
 
@@ -301,7 +361,7 @@ impl ScreencastStream {
         let data = &mut datas[0];
         match data.type_() {
             DataType::DmaBuf => {
-                Self::process_dmabuf(data, this);
+                Self::process_dmabuf(buffer, this);
             }
             DataType::MemFd => {
                 panic!("Fallback to shared memory is not yet supported");
