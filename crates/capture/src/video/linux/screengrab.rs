@@ -1,8 +1,4 @@
-use std::{
-    io::{Cursor, Write},
-    os::fd::OwnedFd,
-    time::Instant,
-};
+use std::{io::Cursor, os::fd::OwnedFd};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -39,6 +35,7 @@ use pipewire::{
 };
 
 use crate::video::{
+    decode::{VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
     wrapper::{DrmFormat, DrmFrame, DrmPlane},
 };
@@ -86,9 +83,8 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 
 struct ScreencastStreamData {
     encoder: Option<VAAPIEncoder>,
+    decoder: Option<VAAPIDecoder>,
     format: pw::spa::param::video::VideoInfoRaw,
-
-    fout: std::fs::File,
 }
 
 struct ScreencastStream {
@@ -111,8 +107,8 @@ impl ScreencastStream {
         let listener = stream
             .add_local_listener_with_user_data(ScreencastStreamData {
                 encoder: None,
+                decoder: None,
                 format: Default::default(),
-                fout: std::fs::File::create("/tmp/screengrab.out").unwrap(),
             })
             .param_changed(Self::on_param_changed)
             .process(Self::on_process)
@@ -225,6 +221,7 @@ impl ScreencastStream {
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
         this.encoder = None;
+        this.decoder = None;
 
         println!("Format updated: {:#?}", this.format);
 
@@ -325,14 +322,28 @@ impl ScreencastStream {
             }
         }
 
-        // `seq` advances on each frame, `pts` advances on 
+        // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
+            let width = this.format.size().width;
+            let height = this.format.size().height;
+
             let encoder = this.encoder.as_mut().unwrap();
             encoder.encode(header.seq() as i64);
 
-            while let Some(data) = encoder.frame_queue.pop_front() {
-                this.fout.write_all(&data).unwrap();
+            let decoder = this.decoder.get_or_insert_with(|| {
+                VAAPIDecoder::new(VAAPIDecoderParams { width, height })
+            });
+
+            while let Some(packet) = encoder.frame_queue.pop_front() {
+                decoder.decode(&packet);
+            }
+
+            while let Some(frame) = decoder.frame_queue.pop_front() {
+                println!(
+                    "Decoded frame: {}x{} fd={} fmt={:?} pts={}",
+                    frame.width, frame.height, frame.fd, frame.format, frame.pts,
+                );
             }
         }
     }
