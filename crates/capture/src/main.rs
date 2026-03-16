@@ -1,7 +1,4 @@
-use capture::video::{
-    encode::{VAAPIEncoderParams, VAAPIEncoder},
-    linux::screengrab::start_streaming,
-};
+use capture::video::linux::screengrab::start_streaming;
 
 #[tokio::main]
 async fn main() {

@@ -48,7 +48,7 @@ impl GPUDevice {
         self.0
     }
 
-    unsafe fn into_raw(self) -> *mut AVBufferRef {
+    pub(crate) unsafe fn into_raw(self) -> *mut AVBufferRef {
         let ptr = self.0;
         std::mem::forget(self);
 
