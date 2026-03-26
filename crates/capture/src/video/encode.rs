@@ -1,24 +1,23 @@
 use core::panic;
 use std::{
     collections::VecDeque,
-    ffi::{c_int, c_uint, c_void, CString},
+    ffi::{CString, c_int, c_uint, c_void},
     marker::PhantomData,
     ptr,
 };
 
 use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
-    codec,
-    encoder::{self, video, Encoder},
+    Rational, codec,
+    encoder::{self, Encoder, video},
     ffi::{
-        av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx,
-        av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_frame_unref,
-        av_packet_alloc, av_packet_free, av_packet_unref, avcodec_receive_packet,
-        avcodec_send_frame, AVFrame, AVPacket, AVPixelFormat, AV_BUFFERSRC_FLAG_KEEP_REF, EAGAIN,
+        AV_BUFFERSRC_FLAG_KEEP_REF, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref,
+        av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags,
+        av_frame_alloc, av_frame_free, av_frame_unref, av_packet_alloc, av_packet_free,
+        av_packet_unref, avcodec_receive_packet, avcodec_send_frame,
     },
     filter,
     format::Pixel,
-    Rational,
 };
 
 use crate::video::wrapper::{
@@ -61,8 +60,6 @@ impl VAAPIEncoder {
     }
 
     pub fn encode(&mut self, pts: i64) {
-        println!("{pts}");
-
         unsafe {
             (*self.hw_frame.av_frame).pts = pts;
 

@@ -1,17 +1,14 @@
-use std::{io::Cursor, os::fd::OwnedFd};
+use std::{io::Cursor, os::fd::OwnedFd, thread};
 
 use anyhow::Result as AResult;
 use ashpd::{
     desktop::{
         PersistMode,
-        screencast::{
-            CursorMode, Screencast, SelectSourcesOptions, SourceType, Stream as ASHPDStream,
-        },
+        screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
     },
     enumflags2::BitFlags,
 };
 use drm_fourcc::{DrmFourcc, DrmModifier};
-use ffmpeg_next::format::open;
 
 use libspa::{
     buffer::{Data, DataType, meta::MetaHeader},
@@ -22,7 +19,8 @@ use libspa::{
     },
     pod::{ChoiceValue, Pod, Property, PropertyFlags, serialize::PodSerializer},
     sys::{
-        SPA_META_Header, SPA_PARAM_BUFFERS_blocks, SPA_PARAM_BUFFERS_buffers, SPA_PARAM_BUFFERS_dataType, SPA_PARAM_META_size, SPA_PARAM_META_type, spa_data, spa_meta_header
+        SPA_META_Header, SPA_PARAM_BUFFERS_dataType, SPA_PARAM_META_size, SPA_PARAM_META_type,
+        spa_meta_header,
     },
     utils::{Choice, ChoiceEnum, ChoiceFlags, Id, SpaTypes},
 };
@@ -33,9 +31,9 @@ use pipewire::{
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
+use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
-    decode::{VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
     wrapper::{DrmFormat, DrmFrame, DrmPlane},
 };
@@ -82,8 +80,9 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 }
 
 struct ScreencastStreamData {
+    tx: Sender<FrameReady>,
+
     encoder: Option<VAAPIEncoder>,
-    decoder: Option<VAAPIDecoder>,
     format: pw::spa::param::video::VideoInfoRaw,
 }
 
@@ -93,7 +92,7 @@ struct ScreencastStream {
 }
 
 impl ScreencastStream {
-    fn new(node_id: u32, core: CoreRc) -> AResult<Self> {
+    fn new(tx: Sender<FrameReady>, node_id: u32, core: CoreRc) -> AResult<Self> {
         let stream = pw::stream::StreamRc::new(
             core.clone(),
             "hazel-screencapture",
@@ -106,8 +105,8 @@ impl ScreencastStream {
 
         let listener = stream
             .add_local_listener_with_user_data(ScreencastStreamData {
+                tx,
                 encoder: None,
-                decoder: None,
                 format: Default::default(),
             })
             .param_changed(Self::on_param_changed)
@@ -221,7 +220,6 @@ impl ScreencastStream {
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
         this.encoder = None;
-        this.decoder = None;
 
         println!("Format updated: {:#?}", this.format);
 
@@ -236,9 +234,7 @@ impl ScreencastStream {
                     ChoiceFlags::empty(),
                     ChoiceEnum::Flags {
                         default: 1 << DataType::DmaBuf.as_raw(),
-                        flags: vec![
-                            1 << DataType::DmaBuf.as_raw()
-                        ],
+                        flags: vec![1 << DataType::DmaBuf.as_raw()],
                     },
                 ))),
             ),
@@ -265,11 +261,10 @@ impl ScreencastStream {
             make_pod(&mut meta_buff, meta_obj),
         ];
 
-        stream.update_params(&mut params)
-            .unwrap()
+        stream.update_params(&mut params).unwrap()
     }
 
-    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> DrmFrame {
+    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> (DrmFrame, DrmFormat) {
         let data_raw = data.as_raw();
         let fd = data_raw.fd;
 
@@ -294,21 +289,25 @@ impl ScreencastStream {
             modifier: this.format.modifier(),
         };
 
-        DrmFrame::new(
-            fd,
-            (stride * height as i32) as usize,
+        (
+            DrmFrame::new(
+                fd,
+                (stride * height as i32) as usize,
+                format,
+                &[DrmPlane {
+                    offset: offset as isize,
+                    stride: stride as isize,
+                }],
+            ),
             format,
-            &[DrmPlane {
-                offset: offset as isize,
-                stride: stride as isize,
-            }],
         )
     }
 
     fn process_dmabuf(mut buffer: Buffer, this: &mut ScreencastStreamData) {
         let data = &mut buffer.datas_mut()[0];
-        let drm_frame = Self::build_drm_frame(data, this);
+        let (drm_frame, drm_format) = Self::build_drm_frame(data, this);
 
+        let drm_fd = drm_frame.fd;
         match this.encoder.as_mut() {
             Some(encoder) => encoder.update_frame(drm_frame),
             None => {
@@ -325,26 +324,13 @@ impl ScreencastStream {
         // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
-            let width = this.format.size().width;
-            let height = this.format.size().height;
-
             let encoder = this.encoder.as_mut().unwrap();
             encoder.encode(header.seq() as i64);
 
-            let decoder = this.decoder.get_or_insert_with(|| {
-                VAAPIDecoder::new(VAAPIDecoderParams { width, height })
+            _ = this.tx.send_blocking(FrameReady {
+                fd: drm_fd,
+                format: drm_format,
             });
-
-            while let Some(packet) = encoder.frame_queue.pop_front() {
-                decoder.decode(&packet);
-            }
-
-            while let Some(frame) = decoder.frame_queue.pop_front() {
-                println!(
-                    "Decoded frame: {}x{} fd={} fmt={:?} pts={}",
-                    frame.width, frame.height, frame.fd, frame.format, frame.pts,
-                );
-            }
         }
     }
 
@@ -382,18 +368,31 @@ impl ScreencastStream {
     }
 }
 
-pub async fn start_streaming() -> AResult<()> {
+#[derive(Debug)]
+pub struct FrameReady {
+    pub fd: i64,
+    pub format: DrmFormat,
+}
+
+pub async fn start_streaming() -> AResult<Receiver<FrameReady>> {
     let (node_id, fd) = open_portal().await.expect("failed to open portal");
+
+    let (tx, rx) = bounded::<FrameReady>(8);
 
     pw::init();
 
-    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
-    let context = pw::context::ContextRc::new(&mainloop, None)?;
-    let core = context.connect_fd_rc(fd, None)?;
+    thread::spawn(move || {
+        let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+        let context = pw::context::ContextRc::new(&mainloop, None)?;
+        let core = context.connect_fd_rc(fd, None)?;
 
-    let stream = ScreencastStream::new(node_id, core).expect("Failed to create screencast stream");
+        let stream =
+            ScreencastStream::new(tx, node_id, core).expect("Failed to create screencast stream");
 
-    mainloop.run();
+        mainloop.run();
 
-    Ok(())
+        Ok::<_, anyhow::Error>(())
+    });
+
+    Ok(rx)
 }
