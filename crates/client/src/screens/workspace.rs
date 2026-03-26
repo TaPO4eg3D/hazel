@@ -1,3 +1,4 @@
+use capture::video::linux::screengrab::{FrameReady, start_streaming};
 use gpui::{
     AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Window, div,
     px,
@@ -23,6 +24,8 @@ pub struct WorkspaceScreen {
 
     text_card: Entity<CollapsableCardState>,
     voice_card: Entity<CollapsableCardState>,
+
+    frame: Option<FrameReady>,
 }
 
 impl WorkspaceScreen {
@@ -42,12 +45,29 @@ impl WorkspaceScreen {
         let text_card = cx.new(|_| CollapsableCardState::new());
         let voice_card = cx.new(|_| CollapsableCardState::new());
 
+        cx.spawn(async |this, cx| {
+            let rx = start_streaming().await.unwrap();
+
+            while let Ok(frame) = rx.recv().await {
+                this.update(cx, move |this, cx| {
+                    this.frame = Some(frame);
+                    cx.notify();
+                })
+                .unwrap();
+            }
+
+            panic!("Unexpected end of the stream");
+        })
+        .detach();
+
         Self {
             chat,
             streaming,
 
             text_card,
             voice_card,
+
+            frame: None,
         }
     }
 }

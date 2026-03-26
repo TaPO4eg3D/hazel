@@ -1,22 +1,22 @@
 use std::{
-    ffi::{c_int, c_uint, c_void, CString},
+    ffi::{CString, c_int, c_uint, c_void},
     ptr,
 };
 
 use drm_fourcc::DrmFourcc;
 use ffmpeg_next::{
-    ffi::{
-        av_buffer_create, av_buffer_default_free, av_buffer_ref, av_buffer_unref,
-        av_buffersrc_parameters_alloc, av_buffersrc_parameters_set, av_frame_alloc, av_frame_free,
-        av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc, av_hwframe_ctx_init, av_hwframe_map,
-        av_malloc, av_mallocz, av_opt_set_array, av_strdup, avfilter_get_by_name,
-        avfilter_graph_alloc, avfilter_graph_alloc_filter, avfilter_graph_config,
-        avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str, avfilter_inout_alloc,
-        avfilter_inout_free, AVBufferRef, AVBufferSrcParameters, AVDRMFrameDescriptor, AVFilter,
-        AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame, AVHWFramesContext, AVOptionType,
-        AVPixelFormat, AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN,
-    },
     Rational,
+    ffi::{
+        AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters,
+        AVDRMFrameDescriptor, AVFilter, AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame,
+        AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_create, av_buffer_default_free,
+        av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
+        av_frame_alloc, av_frame_free, av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc,
+        av_hwframe_ctx_init, av_hwframe_map, av_malloc, av_mallocz, av_opt_set_array, av_strdup,
+        avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
+        avfilter_graph_config, avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str,
+        avfilter_inout_alloc, avfilter_inout_free,
+    },
 };
 
 pub(crate) struct GPUDevice(*mut AVBufferRef);
@@ -342,11 +342,7 @@ impl<'a> BufferSinkFilterBuilder {
                 formats.as_ptr() as *const c_void,
             );
 
-            if err < 0 {
-                None
-            } else {
-                Some(self)
-            }
+            if err < 0 { None } else { Some(self) }
         }
     }
 }
@@ -366,11 +362,7 @@ impl Graph {
         unsafe {
             let ptr = avfilter_graph_alloc();
 
-            if ptr.is_null() {
-                None
-            } else {
-                Some(Self(ptr))
-            }
+            if ptr.is_null() { None } else { Some(Self(ptr)) }
         }
     }
 
@@ -378,11 +370,7 @@ impl Graph {
         unsafe {
             let err = avfilter_graph_config(self.0, ptr::null_mut());
 
-            if err < 0 {
-                None
-            } else {
-                Some(())
-            }
+            if err < 0 { None } else { Some(()) }
         }
     }
 
@@ -543,7 +531,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct DrmFormat {
     pub width: i32,
     pub height: i32,
@@ -558,8 +546,8 @@ pub struct DrmPlane {
     pub stride: isize,
 }
 
-pub struct DrmFrame {
-    fd: i64,
+pub(crate) struct DrmFrame {
+    pub(crate) fd: i64,
     size: usize,
 
     av_desc: *mut AVDRMFrameDescriptor,

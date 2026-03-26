@@ -1163,6 +1163,7 @@ dependencies = [
  "pipewire",
  "ringbuf",
  "rnnoise-sys",
+ "smol",
  "streaming_common",
  "thread-priority",
  "tokio",
