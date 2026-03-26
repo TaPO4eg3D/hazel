@@ -18,18 +18,18 @@ crossbeam = { workspace = true }
 ringbuf = { workspace = true }
 
 # UI
-gpui = { git = "https://github.com/zed-industries/zed", features = [
+gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [
     "wayland",
     "windows-manifest",
     "x11",
 ] }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features=[
+gpui_platform = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui_platform", features=[
     "font-kit",
     "wayland",
     "x11"
 ] }
 
-gpui-component = { git = "https://github.com/TaPO4eg3D/gpui-component.git" }
+gpui-component = { path = "/home/tapo4eg3d/AUR/gpui-component/crates/ui" }
 
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"
