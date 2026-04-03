@@ -8,7 +8,7 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
-use drm_fourcc::{DrmFourcc, DrmModifier};
+use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 
 use libspa::{
     buffer::{Data, DataType, meta::MetaHeader},
@@ -31,11 +31,13 @@ use pipewire::{
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
+use smallvec::SmallVec;
 use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
+    decode::{VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
-    wrapper::{DrmFormat, DrmFrame, DrmPlane},
+    wrapper::{DrmFrame, DrmInfo, DrmPlane},
 };
 
 async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
@@ -83,6 +85,8 @@ struct ScreencastStreamData {
     tx: Sender<FrameReady>,
 
     encoder: Option<VAAPIEncoder>,
+    decoder: Option<VAAPIDecoder>,
+
     format: pw::spa::param::video::VideoInfoRaw,
 }
 
@@ -107,6 +111,7 @@ impl ScreencastStream {
             .add_local_listener_with_user_data(ScreencastStreamData {
                 tx,
                 encoder: None,
+                decoder: None,
                 format: Default::default(),
             })
             .param_changed(Self::on_param_changed)
@@ -126,10 +131,10 @@ impl ScreencastStream {
                 Id,
                 VideoFormat::RGB,
                 VideoFormat::RGBA,
+                VideoFormat::BGR,
+                VideoFormat::BGRA,
                 VideoFormat::RGBx,
                 VideoFormat::BGRx,
-                VideoFormat::YUY2,
-                VideoFormat::I420,
             ),
             pw::spa::pod::Property {
                 key: FormatProperties::VideoModifier.as_raw(),
@@ -220,6 +225,7 @@ impl ScreencastStream {
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
         this.encoder = None;
+        this.decoder = None;
 
         println!("Format updated: {:#?}", this.format);
 
@@ -264,7 +270,7 @@ impl ScreencastStream {
         stream.update_params(&mut params).unwrap()
     }
 
-    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> (DrmFrame, DrmFormat) {
+    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> (DrmFrame, DrmInfo) {
         let data_raw = data.as_raw();
         let fd = data_raw.fd;
 
@@ -278,34 +284,29 @@ impl ScreencastStream {
 
         let format = match this.format.format() {
             VideoFormat::BGRx => DrmFourcc::Xrgb8888,
+            VideoFormat::BGRA => DrmFourcc::Xrgb8888,
             VideoFormat::RGBx => DrmFourcc::Xbgr8888,
-            _ => todo!("Implement"),
+            format => todo!("Unimplemnted: {format:?}"),
         };
 
-        let format = DrmFormat {
+        let format = DrmInfo {
             width: width as i32,
             height: height as i32,
             format,
-            modifier: this.format.modifier(),
+            modifier: DrmModifier::try_from(this.format.modifier()).unwrap(),
+            plane_offset: offset,
+            plane_stride: stride,
         };
 
         (
-            DrmFrame::new(
-                fd,
-                (stride * height as i32) as usize,
-                format,
-                &[DrmPlane {
-                    offset: offset as isize,
-                    stride: stride as isize,
-                }],
-            ),
+            DrmFrame::new(fd, (stride * height as i32) as usize, format),
             format,
         )
     }
 
     fn process_dmabuf(mut buffer: Buffer, this: &mut ScreencastStreamData) {
         let data = &mut buffer.datas_mut()[0];
-        let (drm_frame, drm_format) = Self::build_drm_frame(data, this);
+        let (drm_frame, drm_info) = Self::build_drm_frame(data, this);
 
         let drm_fd = drm_frame.fd;
         match this.encoder.as_mut() {
@@ -318,6 +319,8 @@ impl ScreencastStream {
                     VAAPIEncoderParams { height, width },
                     drm_frame,
                 ));
+
+                this.decoder = Some(VAAPIDecoder::new(VAAPIDecoderParams { height, width }))
             }
         }
 
@@ -325,12 +328,27 @@ impl ScreencastStream {
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
             let encoder = this.encoder.as_mut().unwrap();
+            let decoder = this.decoder.as_mut().unwrap();
+
             encoder.encode(header.seq() as i64);
 
-            _ = this.tx.send_blocking(FrameReady {
-                fd: drm_fd,
-                format: drm_format,
-            });
+            while let Some(frame) = encoder.frame_queue.pop_front() {
+                decoder.decode(&frame);
+            }
+
+            while let Some(frame) = decoder.frame_queue.pop_front() {
+                _ = this.tx.send_blocking(FrameReady {
+                    fd: frame.fd,
+                    offset: frame.planes[0].offset as u32,
+                    stride: frame.planes[0].stride as i32,
+                    width: drm_info.width as u32,
+                    height: drm_info.height as u32,
+                    format: DrmFormat {
+                        code: drm_info.format,
+                        modifier: drm_info.modifier,
+                    },
+                });
+            }
         }
     }
 
@@ -368,10 +386,16 @@ impl ScreencastStream {
     }
 }
 
-#[derive(Debug)]
 pub struct FrameReady {
-    pub fd: i64,
+    pub fd: i32,
+
     pub format: DrmFormat,
+
+    pub width: u32,
+    pub height: u32,
+
+    pub offset: u32,
+    pub stride: i32,
 }
 
 pub async fn start_streaming() -> AResult<Receiver<FrameReady>> {
@@ -381,18 +405,20 @@ pub async fn start_streaming() -> AResult<Receiver<FrameReady>> {
 
     pw::init();
 
-    thread::spawn(move || {
+    _ = thread::spawn(move || {
         let mainloop = pw::main_loop::MainLoopRc::new(None)?;
         let context = pw::context::ContextRc::new(&mainloop, None)?;
         let core = context.connect_fd_rc(fd, None)?;
 
-        let stream =
+        let _stream =
             ScreencastStream::new(tx, node_id, core).expect("Failed to create screencast stream");
 
         mainloop.run();
 
         Ok::<_, anyhow::Error>(())
-    });
+    })
+    .join()
+    .unwrap();
 
     Ok(rx)
 }
