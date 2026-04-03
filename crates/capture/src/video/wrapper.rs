@@ -3,7 +3,7 @@ use std::{
     ptr,
 };
 
-use drm_fourcc::DrmFourcc;
+use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Rational,
     ffi::{
@@ -12,7 +12,7 @@ use ffmpeg_next::{
         AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_create, av_buffer_default_free,
         av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
         av_frame_alloc, av_frame_free, av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc,
-        av_hwframe_ctx_init, av_hwframe_map, av_malloc, av_mallocz, av_opt_set_array, av_strdup,
+        av_hwframe_ctx_init, av_hwframe_map, av_mallocz, av_opt_set_array, av_strdup,
         avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
         avfilter_graph_config, avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str,
         avfilter_inout_alloc, avfilter_inout_free,
@@ -532,15 +532,19 @@ impl<'a> Parser<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DrmFormat {
+pub struct DrmInfo {
     pub width: i32,
     pub height: i32,
 
     pub format: DrmFourcc,
-    pub modifier: u64,
+    pub modifier: DrmModifier,
+
+    // One plain since we're explicitly requesting RGBA
+    pub plane_offset: u32,
+    pub plane_stride: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct DrmPlane {
     pub offset: isize,
     pub stride: isize,
@@ -564,7 +568,7 @@ impl Drop for DrmFrame {
 }
 
 impl DrmFrame {
-    pub fn new(fd: i64, size: usize, format: DrmFormat, planes: &[DrmPlane]) -> Self {
+    pub fn new(fd: i64, size: usize, drm_info: DrmInfo) -> Self {
         unsafe {
             let desc = av_mallocz(std::mem::size_of::<AVDRMFrameDescriptor>())
                 as *mut AVDRMFrameDescriptor;
@@ -575,26 +579,24 @@ impl DrmFrame {
             (*desc).nb_objects = 1;
             (*desc).objects[0].fd = fd as i32;
             (*desc).objects[0].size = size;
-            (*desc).objects[0].format_modifier = format.modifier;
+            (*desc).objects[0].format_modifier = drm_info.modifier.into();
 
             (*desc).nb_layers = 1;
-            (*desc).layers[0].format = format.format as u32;
-            (*desc).layers[0].nb_planes = planes.len() as i32;
+            (*desc).layers[0].format = drm_info.format as u32;
+            (*desc).layers[0].nb_planes = 1;
 
-            for (i, plane) in planes.iter().enumerate() {
-                (*desc).layers[0].planes[i].object_index = i as i32;
-                (*desc).layers[0].planes[i].offset = plane.offset;
-                (*desc).layers[0].planes[i].pitch = plane.stride;
-            }
+            (*desc).layers[0].planes[0].object_index = 0;
+            (*desc).layers[0].planes[0].offset = drm_info.plane_offset as isize;
+            (*desc).layers[0].planes[0].pitch = drm_info.plane_stride as isize;
 
-            let mut drm_frame = unsafe { av_frame_alloc() };
+            let drm_frame = av_frame_alloc();
             if drm_frame.is_null() {
                 panic!("Unable to allocate DRMFrame");
             }
 
             (*drm_frame).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
-            (*drm_frame).width = format.width;
-            (*drm_frame).height = format.height;
+            (*drm_frame).width = drm_info.width;
+            (*drm_frame).height = drm_info.height;
             (*drm_frame).data[0] = desc as *mut u8;
             (*drm_frame).linesize[0] = std::mem::size_of::<AVDRMFrameDescriptor>() as i32;
 
@@ -636,7 +638,7 @@ impl Drop for VAAPIFrame {
 impl VAAPIFrame {
     pub fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
         unsafe {
-            let mut vaapi_frame = av_frame_alloc();
+            let vaapi_frame = av_frame_alloc();
             if vaapi_frame.is_null() {
                 panic!("Unable to allocate VAAPI Frame");
             }

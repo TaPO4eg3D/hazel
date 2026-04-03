@@ -34,6 +34,7 @@ unsafe extern "C" fn vaapi_get_format(
     }
 }
 
+#[derive(Debug)]
 pub struct DecodedFrame {
     pub fd: i32,
     pub width: i32,
@@ -198,8 +199,7 @@ impl VAAPIDecoder {
                     format,
                     modifier,
                     planes,
-                    pts: self.hw_frame.pts()
-                        .unwrap_or(-1),
+                    pts: self.hw_frame.pts().unwrap_or(-1),
                 };
 
                 av_frame_unref(self.hw_frame.as_mut_ptr());

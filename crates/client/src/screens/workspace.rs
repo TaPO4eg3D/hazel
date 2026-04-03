@@ -1,7 +1,7 @@
 use capture::video::linux::screengrab::{FrameReady, start_streaming};
 use gpui::{
-    AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Window, div,
-    px,
+    AppContext, Context, DMABuffer, Entity, IntoElement as _, ParentElement as _, Render, Styled,
+    Window, div, prelude::FluentBuilder, px, surface,
 };
 use gpui_component::{
     StyledExt,
@@ -106,7 +106,22 @@ impl Render for WorkspaceScreen {
                     .flex()
                     .justify_center()
                     .items_center()
-                    .child("CHAT IS IN PROGRESS")
+                    .when_some(self.frame.as_ref(), |this, frame| {
+                        this.v_flex().child("FRAME").child(
+                            surface(DMABuffer {
+                                fd: frame.fd,
+
+                                width: frame.width,
+                                height: frame.height,
+
+                                format: frame.format,
+
+                                plane_offset: frame.offset,
+                                plane_stride: frame.stride,
+                            })
+                            .size_full(),
+                        )
+                    })
                     .into_any_element(),
             )
     }
