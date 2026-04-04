@@ -332,23 +332,23 @@ impl ScreencastStream {
 
             encoder.encode(header.seq() as i64);
 
-            while let Some(frame) = encoder.frame_queue.pop_front() {
-                decoder.decode(&frame);
-            }
+            // while let Some(frame) = encoder.frame_queue.pop_front() {
+            //     decoder.decode(&frame);
+            // }
 
-            while let Some(frame) = decoder.frame_queue.pop_front() {
-                _ = this.tx.send_blocking(FrameReady {
-                    fd: frame.fd,
-                    offset: frame.planes[0].offset as u32,
-                    stride: frame.planes[0].stride as i32,
-                    width: drm_info.width as u32,
-                    height: drm_info.height as u32,
-                    format: DrmFormat {
-                        code: drm_info.format,
-                        modifier: drm_info.modifier,
-                    },
-                });
-            }
+            // while let Some(frame) = decoder.frame_queue.pop_front() {}
+
+            _ = this.tx.send_blocking(FrameReady {
+                fd: drm_fd as i32,
+                offset: drm_info.plane_offset,
+                stride: drm_info.plane_stride,
+                width: drm_info.width as u32,
+                height: drm_info.height as u32,
+                format: DrmFormat {
+                    code: drm_info.format,
+                    modifier: drm_info.modifier,
+                },
+            });
         }
     }
 
@@ -416,9 +416,7 @@ pub async fn start_streaming() -> AResult<Receiver<FrameReady>> {
         mainloop.run();
 
         Ok::<_, anyhow::Error>(())
-    })
-    .join()
-    .unwrap();
+    });
 
     Ok(rx)
 }
