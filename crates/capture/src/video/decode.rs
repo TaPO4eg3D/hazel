@@ -5,13 +5,14 @@ use ffmpeg_next::{
     Frame, codec, decoder,
     ffi::{
         AV_HWFRAME_MAP_DIRECT, AV_HWFRAME_MAP_READ, AVCodecContext, AVCodecParserContext,
-        AVDRMFrameDescriptor, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_frame_alloc,
-        av_frame_free, av_frame_unref, av_hwframe_map, av_packet_alloc, av_packet_free,
-        av_parser_close, av_parser_init, av_parser_parse2, avcodec_alloc_context3,
+        AVDRMFrameDescriptor, AVFrame, AVHWFramesContext, AVPacket, AVPixelFormat, EAGAIN,
+        av_frame_alloc, av_frame_free, av_frame_unref, av_hwframe_map, av_packet_alloc,
+        av_packet_free, av_parser_close, av_parser_init, av_parser_parse2, avcodec_alloc_context3,
         avcodec_find_decoder, avcodec_free_context, avcodec_open2, avcodec_receive_frame,
         avcodec_send_packet,
     },
 };
+use smallvec::SmallVec;
 
 use crate::video::wrapper::{DrmPlane, GPUDevice};
 
@@ -37,12 +38,15 @@ unsafe extern "C" fn vaapi_get_format(
 #[derive(Debug)]
 pub struct DecodedFrame {
     pub fd: i32,
+    pub pts: i64,
+
     pub width: i32,
     pub height: i32,
+
     pub format: DrmFourcc,
     pub modifier: u64,
-    pub planes: Vec<DrmPlane>,
-    pub pts: i64,
+
+    pub planes: SmallVec<[DrmPlane; 2]>,
 }
 
 pub struct VAAPIDecoderParams {
@@ -86,6 +90,7 @@ impl VAAPIDecoder {
             (*ctx).hw_device_ctx = device.clone().into_raw();
             (*ctx).width = params.width as i32;
             (*ctx).height = params.height as i32;
+            (*ctx).sw_pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
 
             (*ctx).get_format = Some(vaapi_get_format);
         }
@@ -178,22 +183,32 @@ impl VAAPIDecoder {
                 assert!(!desc.is_null(), "DRM descriptor is null");
                 assert!((*desc).nb_objects > 0, "No DRM objects");
 
-                let fd = (*desc).objects[0].fd;
-                let modifier = (*desc).objects[0].format_modifier;
-                let layer = &(*desc).layers[0];
-                let format = DrmFourcc::try_from(layer.format)
+                let objects = (*desc).objects;
+                let objects = &objects[..(*desc).nb_objects as usize];
+
+                let layers = (*desc).layers;
+                let layers = &layers[..(*desc).nb_layers as usize];
+
+                // TODO: Technically it's not correct since different
+                // layers might be on different DMA-BUFs but it should work fine???
+                let modifier = objects[0].format_modifier;
+                let format = DrmFourcc::try_from(layers[0].format)
                     .expect("Unknown DRM format from decoded frame");
 
-                let mut planes = Vec::with_capacity(layer.nb_planes as usize);
-                for i in 0..layer.nb_planes as usize {
-                    planes.push(DrmPlane {
-                        offset: layer.planes[i].offset,
-                        stride: layer.planes[i].pitch,
-                    });
+                let mut planes = SmallVec::new();
+                for layer in layers {
+                    let layer_planes = &layer.planes[..layer.nb_planes as usize];
+
+                    for plane in layer_planes {
+                        planes.push(DrmPlane {
+                            offset: plane.offset,
+                            stride: plane.pitch,
+                        });
+                    }
                 }
 
                 let decoded = DecodedFrame {
-                    fd,
+                    fd: objects[0].fd,
                     width: (*self.drm_frame.as_ptr()).width,
                     height: (*self.drm_frame.as_ptr()).height,
                     format,

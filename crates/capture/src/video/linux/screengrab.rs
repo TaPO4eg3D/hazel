@@ -35,7 +35,7 @@ use smallvec::SmallVec;
 use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
-    decode::{VAAPIDecoder, VAAPIDecoderParams},
+    decode::{DecodedFrame, VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
     wrapper::{DrmFrame, DrmInfo, DrmPlane},
 };
@@ -82,7 +82,7 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 }
 
 struct ScreencastStreamData {
-    tx: Sender<FrameReady>,
+    tx: Sender<DecodedFrame>,
 
     encoder: Option<VAAPIEncoder>,
     decoder: Option<VAAPIDecoder>,
@@ -96,7 +96,7 @@ struct ScreencastStream {
 }
 
 impl ScreencastStream {
-    fn new(tx: Sender<FrameReady>, node_id: u32, core: CoreRc) -> AResult<Self> {
+    fn new(tx: Sender<DecodedFrame>, node_id: u32, core: CoreRc) -> AResult<Self> {
         let stream = pw::stream::StreamRc::new(
             core.clone(),
             "hazel-screencapture",
@@ -332,23 +332,13 @@ impl ScreencastStream {
 
             encoder.encode(header.seq() as i64);
 
-            // while let Some(frame) = encoder.frame_queue.pop_front() {
-            //     decoder.decode(&frame);
-            // }
+            while let Some(frame) = encoder.frame_queue.pop_front() {
+                decoder.decode(&frame);
+            }
 
-            // while let Some(frame) = decoder.frame_queue.pop_front() {}
-
-            _ = this.tx.send_blocking(FrameReady {
-                fd: drm_fd as i32,
-                offset: drm_info.plane_offset,
-                stride: drm_info.plane_stride,
-                width: drm_info.width as u32,
-                height: drm_info.height as u32,
-                format: DrmFormat {
-                    code: drm_info.format,
-                    modifier: drm_info.modifier,
-                },
-            });
+            while let Some(frame) = decoder.frame_queue.pop_front() {
+                _ = this.tx.send_blocking(frame);
+            }
         }
     }
 
@@ -386,22 +376,10 @@ impl ScreencastStream {
     }
 }
 
-pub struct FrameReady {
-    pub fd: i32,
-
-    pub format: DrmFormat,
-
-    pub width: u32,
-    pub height: u32,
-
-    pub offset: u32,
-    pub stride: i32,
-}
-
-pub async fn start_streaming() -> AResult<Receiver<FrameReady>> {
+pub async fn start_streaming() -> AResult<Receiver<DecodedFrame>> {
     let (node_id, fd) = open_portal().await.expect("failed to open portal");
 
-    let (tx, rx) = bounded::<FrameReady>(8);
+    let (tx, rx) = bounded::<DecodedFrame>(8);
 
     pw::init();
 
