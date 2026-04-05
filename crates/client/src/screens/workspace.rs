@@ -1,7 +1,10 @@
-use capture::video::linux::screengrab::{FrameReady, start_streaming};
+use capture::video::{
+    decode::DecodedFrame,
+    linux::screengrab::{FrameReady, start_streaming},
+};
 use gpui::{
-    AppContext, Context, DMABuffer, Entity, IntoElement as _, ParentElement as _, Render, Styled,
-    Window, div, prelude::FluentBuilder, px, surface,
+    AppContext, Context, DMABuffer, DMABufferPlane, Entity, IntoElement as _, ParentElement as _,
+    Render, Styled, Window, div, prelude::FluentBuilder, px, surface,
 };
 use gpui_component::{
     StyledExt,
@@ -25,7 +28,7 @@ pub struct WorkspaceScreen {
     text_card: Entity<CollapsableCardState>,
     voice_card: Entity<CollapsableCardState>,
 
-    frame: Option<FrameReady>,
+    frame: Option<DecodedFrame>,
 }
 
 impl WorkspaceScreen {
@@ -107,18 +110,26 @@ impl Render for WorkspaceScreen {
                     .justify_center()
                     .items_center()
                     .when_some(self.frame.as_ref(), |this, frame| {
-                        this.v_flex().child("FRAME").child(
-                            surface(DMABuffer {
-                                fd: frame.fd,
-
-                                width: frame.width,
-                                height: frame.height,
-
-                                format: frame.format,
-
-                                plane_offset: frame.offset,
-                                plane_stride: frame.stride,
+                        let planes = frame
+                            .planes
+                            .iter()
+                            .map(|plane| DMABufferPlane {
+                                offset: plane.offset as usize,
+                                stride: plane.stride as usize,
                             })
+                            .collect::<Vec<_>>();
+
+                        this.v_flex().child("FRAME").child(
+                            surface(DMABuffer::new(
+                                frame.fd,
+                                frame.width as u32,
+                                frame.height as u32,
+                                DrmFormat {
+                                    code: frame.format,
+                                    modifier: frame.modifier,
+                                },
+                                &planes,
+                            ))
                             .size_full(),
                         )
                     })

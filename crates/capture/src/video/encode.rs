@@ -120,6 +120,7 @@ impl VAAPIEncoder {
         let hw_frame_ctx = HWFrameContextBuilder::new(&device)
             .expect("Failed to allocate memory on GPU")
             .set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
+            // TODO: We should accept this as a parameter (comes from the format negotiation)
             .set_sw_format(AVPixelFormat::AV_PIX_FMT_BGR0)
             .set_width(params.width as i32)
             .set_height(params.height as i32)

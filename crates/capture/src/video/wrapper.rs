@@ -550,11 +550,11 @@ pub struct DrmPlane {
     pub stride: isize,
 }
 
-pub(crate) struct DrmFrame {
-    pub(crate) fd: i64,
-    size: usize,
+pub struct DrmFrame {
+    pub fd: i64,
+    pub size: usize,
 
-    av_desc: *mut AVDRMFrameDescriptor,
+    _av_desc: *mut AVDRMFrameDescriptor,
     av_frame: *mut AVFrame,
 }
 
@@ -615,7 +615,7 @@ impl DrmFrame {
             Self {
                 fd,
                 size,
-                av_desc: desc,
+                _av_desc: desc,
                 av_frame: drm_frame,
             }
         }
