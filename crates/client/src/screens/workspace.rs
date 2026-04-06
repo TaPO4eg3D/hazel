@@ -1,7 +1,5 @@
-use capture::video::{
-    decode::DecodedFrame,
-    linux::screengrab::{FrameReady, start_streaming},
-};
+use capture::video::{decode::DecodedFrame, linux::screengrab::start_streaming};
+use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use gpui::{
     AppContext, Context, DMABuffer, DMABufferPlane, Entity, IntoElement as _, ParentElement as _,
     Render, Styled, Window, div, prelude::FluentBuilder, px, surface,
@@ -125,8 +123,8 @@ impl Render for WorkspaceScreen {
                                 frame.width as u32,
                                 frame.height as u32,
                                 DrmFormat {
-                                    code: frame.format,
-                                    modifier: frame.modifier,
+                                    code: DrmFourcc::Nv12,
+                                    modifier: DrmModifier::try_from(frame.modifier).unwrap(),
                                 },
                                 &planes,
                             ))

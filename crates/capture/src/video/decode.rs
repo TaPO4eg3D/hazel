@@ -61,7 +61,9 @@ pub struct VAAPIDecoder {
     parser: *mut AVCodecParserContext,
 
     hw_frame: Frame,
-    drm_frame: Frame,
+
+    drm_idx: usize,
+    drm_frames: Vec<Frame>,
 
     packet: *mut AVPacket,
 
@@ -104,13 +106,18 @@ impl VAAPIDecoder {
             let packet = av_packet_alloc();
             assert!(!packet.is_null(), "Failed to allocate packet");
 
+            let drm_frames = (0..12)
+                .into_iter()
+                .map(|_| Frame::empty())
+                .collect::<Vec<_>>();
+
             Self {
                 _device: device,
-
                 decoder,
                 parser,
                 hw_frame: Frame::empty(),
-                drm_frame: Frame::empty(),
+                drm_idx: 0,
+                drm_frames,
                 packet,
                 frame_queue: VecDeque::new(),
             }
@@ -166,12 +173,13 @@ impl VAAPIDecoder {
                 assert!(ret >= 0, "Decoder error: {ret}");
 
                 // Map VAAPI surface to DRM PRIME (zero-copy), reusing drm_frame
-                av_frame_unref(self.drm_frame.as_mut_ptr());
-                (*self.drm_frame.as_mut_ptr()).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+                let drm_frame = &mut self.drm_frames[self.drm_idx];
+
+                av_frame_unref(drm_frame.as_mut_ptr());
+                (*drm_frame.as_mut_ptr()).format = AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
 
                 let flags = AV_HWFRAME_MAP_READ as i32 | AV_HWFRAME_MAP_DIRECT as i32;
-                let err =
-                    av_hwframe_map(self.drm_frame.as_mut_ptr(), self.hw_frame.as_ptr(), flags);
+                let err = av_hwframe_map(drm_frame.as_mut_ptr(), self.hw_frame.as_ptr(), flags);
                 if err < 0 {
                     av_frame_unref(self.hw_frame.as_mut_ptr());
 
@@ -179,7 +187,7 @@ impl VAAPIDecoder {
                 }
 
                 // Extract DRM descriptor
-                let desc = (*self.drm_frame.as_mut_ptr()).data[0] as *const AVDRMFrameDescriptor;
+                let desc = (*drm_frame.as_mut_ptr()).data[0] as *const AVDRMFrameDescriptor;
                 assert!(!desc.is_null(), "DRM descriptor is null");
                 assert!((*desc).nb_objects > 0, "No DRM objects");
 
@@ -209,8 +217,8 @@ impl VAAPIDecoder {
 
                 let decoded = DecodedFrame {
                     fd: objects[0].fd,
-                    width: (*self.drm_frame.as_ptr()).width,
-                    height: (*self.drm_frame.as_ptr()).height,
+                    width: (*drm_frame.as_ptr()).width,
+                    height: (*drm_frame.as_ptr()).height,
                     format,
                     modifier,
                     planes,
@@ -219,6 +227,8 @@ impl VAAPIDecoder {
 
                 av_frame_unref(self.hw_frame.as_mut_ptr());
                 self.frame_queue.push_back(decoded);
+
+                self.drm_idx = (self.drm_idx + 1) % self.drm_frames.len();
             }
         }
     }
