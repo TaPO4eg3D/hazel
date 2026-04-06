@@ -3541,6 +3541,7 @@ dependencies = [
  "clap 4.6.0",
  "client_macros",
  "crossbeam",
+ "drm-fourcc",
  "gpui",
  "gpui-component",
  "gpui_platform",

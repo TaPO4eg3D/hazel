@@ -379,7 +379,7 @@ impl ScreencastStream {
 pub async fn start_streaming() -> AResult<Receiver<DecodedFrame>> {
     let (node_id, fd) = open_portal().await.expect("failed to open portal");
 
-    let (tx, rx) = bounded::<DecodedFrame>(8);
+    let (tx, rx) = bounded::<DecodedFrame>(1);
 
     pw::init();
 
