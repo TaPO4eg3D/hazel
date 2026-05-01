@@ -1,12 +1,13 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
-    ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled,
-    Window, div, ease_in_out, prelude::FluentBuilder, px, relative, rgb, white,
+    Anchor, Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement,
+    MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, relative, rgb,
+    white,
 };
 use gpui_component::{
-    ActiveTheme, Anchor, ElementExt, Icon, Sizable, Size, StyledExt,
+    ActiveTheme, ElementExt, Icon, Sizable, Size, StyledExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     label::Label,
