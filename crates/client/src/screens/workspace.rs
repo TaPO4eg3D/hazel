@@ -2,7 +2,7 @@ use capture::video::{decode::DecodedFrame, linux::screengrab::start_streaming};
 use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use gpui::{
     AppContext, Context, DMABuffer, DMABufferPlane, Entity, IntoElement as _, ParentElement as _,
-    Render, Styled, Window, div, prelude::FluentBuilder, px, surface,
+    Render, Styled, Subscription, Task, Window, div, prelude::FluentBuilder, px, surface,
 };
 use gpui_component::{
     StyledExt,
@@ -11,6 +11,7 @@ use gpui_component::{
 };
 
 use crate::components::{
+    call_room::CallRoom,
     chat_state::ChatState,
     collapsable_card::CollapsableCardState,
     left_sidebar::{
@@ -27,6 +28,7 @@ pub struct WorkspaceScreen {
     voice_card: Entity<CollapsableCardState>,
 
     frame: Option<DecodedFrame>,
+    _streaming_task: Option<Task<()>>,
 }
 
 impl WorkspaceScreen {
@@ -46,21 +48,6 @@ impl WorkspaceScreen {
         let text_card = cx.new(|_| CollapsableCardState::new());
         let voice_card = cx.new(|_| CollapsableCardState::new());
 
-        cx.spawn(async |this, cx| {
-            let rx = start_streaming().await.unwrap();
-
-            while let Ok(frame) = rx.recv().await {
-                this.update(cx, move |this, cx| {
-                    this.frame = Some(frame);
-                    cx.notify();
-                })
-                .unwrap();
-            }
-
-            panic!("Unexpected end of the stream");
-        })
-        .detach();
-
         Self {
             chat,
             streaming,
@@ -69,6 +56,7 @@ impl WorkspaceScreen {
             voice_card,
 
             frame: None,
+            _streaming_task: None,
         }
     }
 }
@@ -103,35 +91,40 @@ impl Render for WorkspaceScreen {
             )
             .child(
                 div()
+                    .v_flex()
                     .size_full()
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .when_some(self.frame.as_ref(), |this, frame| {
-                        let planes = frame
-                            .planes
-                            .iter()
-                            .map(|plane| DMABufferPlane {
-                                offset: plane.offset as usize,
-                                stride: plane.stride as usize,
-                            })
-                            .collect::<Vec<_>>();
-
-                        this.v_flex().child("FRAME").child(
-                            surface(DMABuffer::new(
-                                frame.fd,
-                                frame.width as u32,
-                                frame.height as u32,
-                                DrmFormat {
-                                    code: DrmFourcc::Nv12,
-                                    modifier: DrmModifier::try_from(frame.modifier).unwrap(),
-                                },
-                                &planes,
-                            ))
-                            .size_full(),
-                        )
-                    })
+                    .child(CallRoom::new())
                     .into_any_element(),
+                // div()
+                //     .size_full()
+                //     .flex()
+                //     .justify_center()
+                //     .items_center()
+                //     .when_some(self.frame.as_ref(), |this, frame| {
+                //         let planes = frame
+                //             .planes
+                //             .iter()
+                //             .map(|plane| DMABufferPlane {
+                //                 offset: plane.offset as usize,
+                //                 stride: plane.stride as usize,
+                //             })
+                //             .collect::<Vec<_>>();
+
+                //         this.v_flex().child("FRAME").child(
+                //             surface(DMABuffer::new(
+                //                 frame.fd,
+                //                 frame.width as u32,
+                //                 frame.height as u32,
+                //                 DrmFormat {
+                //                     code: DrmFourcc::Nv12,
+                //                     modifier: DrmModifier::try_from(frame.modifier).unwrap(),
+                //                 },
+                //                 &planes,
+                //             ))
+                //             .size_full(),
+                //         )
+                //     })
+                //     .into_any_element(),
             )
     }
 }
