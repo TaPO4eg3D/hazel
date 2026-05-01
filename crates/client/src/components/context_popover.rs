@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, App, Corner, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
+    Anchor, AnyElement, App, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
     InspectorElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window, anchored, deferred,
     div, px,
@@ -81,7 +81,7 @@ pub struct ContextMenu<E: ParentElement + Styled + Sized> {
     content: Option<Rc<dyn Fn(ContextMenuItem, &mut Window, &mut App) -> ContextMenuItem>>,
     // This is not in use, just for style refinement forwarding.
     _ignore_style: StyleRefinement,
-    anchor: Corner,
+    anchor: Anchor,
 }
 
 impl<E: ParentElement + Styled> ContextMenu<E> {
@@ -92,7 +92,7 @@ impl<E: ParentElement + Styled> ContextMenu<E> {
             element: Some(element),
             on_toggle: None,
             content: None,
-            anchor: Corner::TopLeft,
+            anchor: Anchor::TopLeft,
             _ignore_style: StyleRefinement::default(),
         }
     }
@@ -339,5 +339,14 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
                 });
             },
         );
+    }
+}
+
+#[derive(IntoElement)]
+struct CtxPopoverButton {}
+
+impl RenderOnce for CtxPopoverButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
     }
 }
