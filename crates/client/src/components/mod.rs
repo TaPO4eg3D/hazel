@@ -1,6 +1,7 @@
 use gpui::{App, Window};
 
 pub mod animation;
+pub mod call_room;
 pub mod chat_state;
 pub mod collapsable_card;
 pub mod context_popover;

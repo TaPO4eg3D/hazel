@@ -61,6 +61,7 @@ pub enum IconName {
     Headphones,
     HeadphoneOff,
     Cast,
+    ScreenShare,
     Hash,
     MessageCircleOff,
     MessageCircle,
