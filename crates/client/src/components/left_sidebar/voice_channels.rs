@@ -7,6 +7,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme, Icon, Sizable, Size, StyledExt,
+    button::Button,
     label::Label,
     slider::{Slider, SliderState},
 };
@@ -17,7 +18,7 @@ use crate::{
     components::{
         animation::HoverAnimationExt,
         collapsable_card::{CollapsableCard, CollapsableCardState},
-        context_popover::ContextPopover as _,
+        context_popover::{ContextPopover as _, CtxPopoverButton},
         streaming_state::{StreamingState, VoiceChannel, VoiceChannelMember},
     },
 };
@@ -154,15 +155,22 @@ impl RenderOnce for VoiceMemberComponent {
                     .when(*is_selected.read(cx), |this| this.bg(secondary)),
             );
 
-        if !is_me {
+        // TODO: Revert condition after testing
+        if is_me {
             element
-                .context_menu(format!("context-voice-{}", self.member.id.value), {
+                .context_popover(format!("context-voice-{}", self.member.id.value), {
                     let output_volume = self.member.output_volume.clone();
 
                     move |this, _, _cx| {
                         this.v_flex()
                             .w_48()
-                            .px_2()
+                            .p_2()
+                            .gap_2()
+                            .child(
+                                CtxPopoverButton::new("watch-stream")
+                                    .label("Watch stream")
+                                    .icon(IconName::ScreenShare),
+                            )
                             .child(VolumeSlider::new(output_volume.clone()))
                     }
                 })
