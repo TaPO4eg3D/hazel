@@ -3,10 +3,12 @@ use std::{cell::RefCell, rc::Rc};
 use gpui::{
     Anchor, AnyElement, App, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
     InspectorElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, RenderOnce, StyleRefinement, Styled, Window, anchored, deferred,
-    div, px,
+    ParentElement, Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    anchored, deferred, div, prelude::FluentBuilder, px,
 };
-use gpui_component::StyledExt;
+use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, label::Label};
+
+use crate::assets::IconName;
 
 /// A extension trait for adding a context menu to an element.
 pub trait ContextPopover: ParentElement + Styled {
@@ -14,7 +16,7 @@ pub trait ContextPopover: ParentElement + Styled {
     ///
     /// This will changed the element to be `relative` positioned, and add a child `ContextMenu` element.
     /// Because the `ContextMenu` element is positioned `absolute`, it will not affect the layout of the parent element.
-    fn context_menu(
+    fn context_popover(
         self,
         id: impl Into<ElementId>,
         f: impl Fn(ContextMenuItem, &mut Window, &mut App) -> ContextMenuItem + 'static,
@@ -343,10 +345,47 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
 }
 
 #[derive(IntoElement)]
-struct CtxPopoverButton {}
+pub struct CtxPopoverButton {
+    id: ElementId,
+    label: Option<SharedString>,
+    icon: Option<IconName>,
+}
+
+impl CtxPopoverButton {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            label: None,
+            icon: None,
+        }
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn icon(mut self, icon: IconName) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
 
 impl RenderOnce for CtxPopoverButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
+            .id(self.id)
+            .p_2()
+            .flex()
+            .items_center()
+            .hover(|this| this.bg(cx.theme().secondary))
+            .rounded(cx.theme().radius)
+            .gap_2()
+            .when_some(self.icon, |this, icon| {
+                this.child(Icon::new(icon).with_size(Size::Small))
+            })
+            .when_some(self.label, |this, label| {
+                this.child(Label::new(label).text_sm())
+            })
     }
 }
