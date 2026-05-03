@@ -371,6 +371,14 @@ impl Streaming {
         });
     }
 
+    pub fn disconnect<C: AppContext>(cx: &C) {
+        cx.read_global(|stream: &GlobalStreaming, _| {
+            let mut state = stream.stream_addr.lock().unwrap();
+
+            *state = None;
+        });
+    }
+
     pub fn add_voice_member<C: AppContext>(cx: &C, shared: Weak<AudioStreamingClientSharedState>) {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let shared = shared.upgrade().unwrap();

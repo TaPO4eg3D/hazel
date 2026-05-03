@@ -121,7 +121,20 @@ impl RenderOnce for VoiceMemberComponent {
                             .py_2()
                             .px_3()
                             .child(Icon::new(IconName::User).mr_2().with_size(Size::Medium))
-                            .child(Label::new(self.member.name.clone()).mt(px(0.5)))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(Label::new(self.member.name.clone()).mt(px(0.5)))
+                                    .when(self.member.is_streaming, |this| {
+                                        this.child(
+                                            Icon::new(IconName::ScreenShare)
+                                                .text_color(cx.theme().info)
+                                                .with_size(Size::XSmall),
+                                        )
+                                    }),
+                            )
                             // Status icons
                             .child(
                                 div()
@@ -155,8 +168,7 @@ impl RenderOnce for VoiceMemberComponent {
                     .when(*is_selected.read(cx), |this| this.bg(secondary)),
             );
 
-        // TODO: Revert condition after testing
-        if is_me {
+        if !is_me {
             element
                 .context_popover(format!("context-voice-{}", self.member.id.value), {
                     let output_volume = self.member.output_volume.clone();
@@ -166,11 +178,13 @@ impl RenderOnce for VoiceMemberComponent {
                             .w_48()
                             .p_2()
                             .gap_2()
-                            .child(
-                                CtxPopoverButton::new("watch-stream")
-                                    .label("Watch stream")
-                                    .icon(IconName::ScreenShare),
-                            )
+                            .when(self.member.is_streaming, |this| {
+                                this.child(
+                                    CtxPopoverButton::new("watch-stream")
+                                        .label("Watch stream")
+                                        .icon(IconName::ScreenShare),
+                                )
+                            })
                             .child(VolumeSlider::new(output_volume.clone()))
                     }
                 })

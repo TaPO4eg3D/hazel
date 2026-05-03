@@ -1,30 +1,34 @@
-use gpui::{IntoElement, ParentElement, RenderOnce, Styled, div};
+use gpui::{Entity, IntoElement, ParentElement, RenderOnce, Styled, div, prelude::FluentBuilder};
 use gpui_component::{
-    ActiveTheme, Colorize, Icon, Sizable, Size, StyledExt as _,
+    ActiveTheme, Colorize, Disableable, Icon, Sizable, Size, StyledExt as _,
     button::{Button, ButtonVariants},
     label::Label,
 };
 
-use crate::assets::IconName;
+use crate::{assets::IconName, components::streaming_state::StreamingState};
 
 #[derive(IntoElement)]
-pub struct CallRoom {}
+pub struct CallRoom {
+    streaming: Entity<StreamingState>,
+}
 
 impl CallRoom {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(streaming: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming: streaming.clone(),
+        }
     }
 }
 
 impl RenderOnce for CallRoom {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl gpui::IntoElement {
         div()
             .p_3()
             .v_flex()
             .gap_4()
             .size_full()
             .child(ScreenSpace::new())
-            .child(ControlPanel::new())
+            .child(ControlPanel::new(&self.streaming))
     }
 }
 
@@ -38,7 +42,7 @@ impl ScreenSpace {
 }
 
 impl RenderOnce for ScreenSpace {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         div()
             .v_flex()
             .items_center()
@@ -84,16 +88,24 @@ impl RenderOnce for ScreenSpace {
 }
 
 #[derive(IntoElement)]
-struct ControlPanel {}
+struct ControlPanel {
+    streaming: Entity<StreamingState>,
+}
 
 impl ControlPanel {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(streaming: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming: streaming.clone(),
+        }
     }
 }
 
 impl RenderOnce for ControlPanel {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let can_stream = self
+            .streaming
+            .read_with(cx, |state, _| state.get_active_channel().is_some());
+
         div()
             .p_4()
             .flex()
@@ -108,6 +120,10 @@ impl RenderOnce for ControlPanel {
                     .label("Share screen")
                     .max_w_64()
                     .w_full()
+                    .when(!can_stream, |this| {
+                        this.disabled(!can_stream)
+                            .tooltip("Join a voice channel first")
+                    })
                     .primary(),
             )
             .child(
