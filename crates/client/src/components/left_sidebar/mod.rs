@@ -284,7 +284,16 @@ impl RenderOnce for ControlPanel {
                                 .ml_auto()
                                 .cursor_pointer()
                                 .icon(IconName::PhoneOff)
-                                .ghost(),
+                                .ghost()
+                                .on_click({
+                                    let state = self.streaming_state.clone();
+
+                                    move |_, _, cx| {
+                                        state.update(cx, |this, cx| {
+                                            this.leave_voice_channel(cx);
+                                        });
+                                    }
+                                }),
                         )
                     }),
             )

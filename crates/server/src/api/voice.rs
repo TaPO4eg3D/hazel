@@ -173,11 +173,17 @@ impl RPCHandle for LeaveVoiceChannel {
                 .expect("We checked auth above")
         };
 
+        // Cleanup user state
         {
             let mut state = connection_state.write().unwrap();
 
             state.active_voice_channel = None;
             state.active_stream = None;
+        }
+
+        // Cleanup channel state
+        if let Some(mut users) = app_state.channels.voice_channels.get_mut(&active_channel) {
+            users.retain(|user| user.id != current_user_id);
         }
 
         for value in app_state.connected_clients.iter() {

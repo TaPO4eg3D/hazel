@@ -14,8 +14,8 @@ use rpc::{
         common::RPCMethod as _,
         markers::{UserId, VoiceChannelId},
         voice::{
-            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, UpdateVoiceUserState,
-            VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceUserState,
+            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, LeaveVoiceChannel,
+            UpdateVoiceUserState, VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceUserState,
         },
     },
 };
@@ -70,7 +70,7 @@ impl VoiceChannelMember {
             is_muted: false,
             is_mic_off: false,
             is_sound_off: false,
-            is_streaming: false,
+            is_streaming: true,
             is_talking: false,
             output_volume,
             shared: None,
@@ -378,6 +378,27 @@ impl StreamingState {
                 this.sync_server_state(cx);
             })
             .ok();
+        })
+        .detach();
+    }
+
+    pub fn leave_voice_channel(&mut self, cx: &mut Context<Self>) {
+        let Some(channel) = self.get_active_channel_mut() else {
+            return;
+        };
+
+        let Some(user_id) = ConnectionManger::get_user_id(cx) else {
+            return;
+        };
+
+        channel.is_active = false;
+        channel.members.retain(|member| member.id != user_id);
+
+        Streaming::disconnect(cx);
+
+        cx.spawn(async |_, cx| {
+            let connection = ConnectionManger::get(cx);
+            let _ = LeaveVoiceChannel::execute(&connection, &Empty {}).await;
         })
         .detach();
     }

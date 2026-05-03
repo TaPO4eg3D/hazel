@@ -93,7 +93,7 @@ impl Render for WorkspaceScreen {
                 div()
                     .v_flex()
                     .size_full()
-                    .child(CallRoom::new())
+                    .child(CallRoom::new(&self.streaming))
                     .into_any_element(),
                 // div()
                 //     .size_full()
