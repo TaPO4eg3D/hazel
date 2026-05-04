@@ -3,6 +3,9 @@ name = "hazel_client"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+profiling = ["tracy-client/enable"]
+
 [dependencies]
 rpc = { workspace = true }
 client_macros = { workspace = true }
@@ -16,6 +19,7 @@ bytes = { workspace = true }
 atomic_float = { workspace = true }
 crossbeam = { workspace = true }
 ringbuf = { workspace = true }
+tracy-client = { workspace = true }
 
 # UI
 gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [

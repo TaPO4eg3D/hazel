@@ -6,7 +6,7 @@ members = [
     "crates/client_macros",
     "crates/server",
     "crates/client",
-    "crates/capture", 
+    "crates/capture",
     "crates/streaming_common",
 ]
 
@@ -29,6 +29,20 @@ bytes = "1.11.0"
 crossbeam = "0.8.4"
 atomic_float = "1.1.0"
 ringbuf = "0.4.8"
+
+# Quite a sophisticated profiler. Disabled by default (`enable` feature)
+[workspace.dependencies.tracy-client]
+version = "0.18.4"
+default-features = false
+features = [
+    "system-tracing",
+    "context-switch-tracing",
+    "sampling",
+    "code-transfer",
+    "broadcast",
+    "callstack-inlines",
+    "crash-handler"
+]
 
 [workspace.dependencies.tokio]
 version = "1.49.0"
