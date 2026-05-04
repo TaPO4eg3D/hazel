@@ -8,9 +8,7 @@ use std::{
 
 use ringbuf::HeapCons;
 
-use crate::audio::{
-    AudioLoopCommand, PlatformLoopController, encode::AudioEncoder,
-};
+use crate::audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder};
 
 #[derive(Clone)]
 pub struct CaptureController {
@@ -29,7 +27,7 @@ impl CaptureController {
 }
 
 pub(crate) type Notifier = Arc<(Mutex<bool>, Condvar)>;
-pub struct Capture {
+pub struct AudioCapture {
     pub encoder: AudioEncoder,
     pub is_enabled: Arc<AtomicBool>,
     pub samples_buffer: HeapCons<f32>,
@@ -43,7 +41,7 @@ pub enum WaitResult {
     Timeout,
 }
 
-impl Capture {
+impl AudioCapture {
     pub(crate) fn new(
         notifier: Notifier,
         samples_buffer: HeapCons<f32>,

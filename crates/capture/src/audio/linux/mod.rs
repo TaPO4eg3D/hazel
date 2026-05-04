@@ -10,7 +10,7 @@ use ringbuf::{HeapRb, traits::*};
 
 use crate::audio::{
     AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
-    capture::Capture,
+    capture::AudioCapture,
     linux::{capture::CaptureStream, playback::PlaybackStream},
     playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
 };
@@ -21,14 +21,14 @@ pub mod playback;
 pub(crate) fn init(
     packet_input: PlaybackPacketInput,
     packet_output: PlaybackPacketOutput,
-) -> (Capture, Playback, DeviceRegistry) {
+) -> (AudioCapture, Playback, DeviceRegistry) {
     let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
     let capture_notifier = Arc::new((Mutex::new(false), Condvar::new()));
-    let capture = Capture::new(
+    let capture = AudioCapture::new(
         capture_notifier.clone(),
         capture_consumer,
         pw_sender.clone(),

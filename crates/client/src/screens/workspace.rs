@@ -45,8 +45,8 @@ impl WorkspaceScreen {
         let chat = cx.new(|cx| ChatState::new(window, cx));
         let streaming = cx.new(StreamingState::new);
 
-        let text_card = cx.new(|_| CollapsableCardState::new());
-        let voice_card = cx.new(|_| CollapsableCardState::new());
+        let text_card = cx.new(|_| CollapsableCardState::new(true));
+        let voice_card = cx.new(|_| CollapsableCardState::new(false));
 
         Self {
             chat,

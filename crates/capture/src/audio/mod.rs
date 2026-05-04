@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use crate::audio::capture::Capture;
+use crate::audio::capture::AudioCapture;
 use crate::audio::playback::{Playback, init_packet_processing};
 
 #[cfg(target_os = "linux")]
@@ -277,7 +277,7 @@ pub enum AudioLoopCommand {
     SetActiveOutputDevice(AudioDevice),
 }
 
-pub fn init(debug: bool) -> (Capture, Playback, DeviceRegistry) {
+pub fn init(debug: bool) -> (AudioCapture, Playback, DeviceRegistry) {
     let (packet_input, packet_output) = init_packet_processing(debug);
 
     if debug {

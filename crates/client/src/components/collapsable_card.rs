@@ -15,20 +15,18 @@ pub struct CollapsableCardState {
 }
 
 impl CollapsableCardState {
-    pub fn new() -> Self {
-        Self {
-            is_collapsed: false,
-        }
+    pub fn new(is_collapsed: bool) -> Self {
+        Self { is_collapsed }
     }
 
-    pub fn toggle(&mut self, _cx: &mut Context<Self>) {
+    pub fn toggle(&mut self) {
         self.is_collapsed = !self.is_collapsed;
     }
 }
 
 impl Default for CollapsableCardState {
     fn default() -> Self {
-        Self::new()
+        Self::new(false)
     }
 }
 
@@ -96,8 +94,8 @@ impl RenderOnce for CollapsableCard {
                             })
                             .ghost()
                             .on_click(move |_, _window, cx| {
-                                self.state.update(cx, |this, cx| {
-                                    this.toggle(cx);
+                                self.state.update(cx, |this, _cx| {
+                                    this.toggle();
                                 });
                             }),
                     ),
