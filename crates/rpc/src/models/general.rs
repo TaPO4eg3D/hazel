@@ -14,4 +14,3 @@ pub struct UserConnectionUpdate {
     pub user_id: UserId,
     pub message: UserConnectionUpdateMessage,
 }
-

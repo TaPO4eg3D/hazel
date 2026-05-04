@@ -1,8 +1,7 @@
-use capture::video::{decode::DecodedFrame, linux::screengrab::start_streaming};
-use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
+use capture::video::decode::DecodedFrame;
 use gpui::{
-    AppContext, Context, DMABuffer, DMABufferPlane, Entity, IntoElement as _, ParentElement as _,
-    Render, Styled, Subscription, Task, Window, div, prelude::FluentBuilder, px, surface,
+    AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Task,
+    Window, div, px,
 };
 use gpui_component::{
     StyledExt,

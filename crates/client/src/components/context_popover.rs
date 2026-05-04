@@ -372,7 +372,7 @@ impl CtxPopoverButton {
 }
 
 impl RenderOnce for CtxPopoverButton {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .id(self.id)
             .p_2()

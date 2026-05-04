@@ -24,10 +24,8 @@ pub(crate) struct AudioDecoder {
 impl AudioDecoder {
     #[allow(clippy::new_without_default)]
     pub(crate) fn new() -> Self {
-        let decoder = opus::Decoder::new(
-            DEFAULT_RATE,
-            opus::Channels::Stereo,
-        ).expect("Failed to initialize decoder");
+        let decoder = opus::Decoder::new(DEFAULT_RATE, opus::Channels::Stereo)
+            .expect("Failed to initialize decoder");
 
         Self {
             decoder,
@@ -38,12 +36,10 @@ impl AudioDecoder {
     }
 
     fn decode_inner(&mut self, input: &[u8], fec: bool) {
-        if let Ok(n) = self.decoder.decode_float(
-            input,
-            &mut self.output_buffer[..],
-            fec,
-        ) {
-
+        if let Ok(n) = self
+            .decoder
+            .decode_float(input, &mut self.output_buffer[..], fec)
+        {
             self.output_buffer
                 .iter()
                 .take(n * 2) // n is per frame, we're stereo
@@ -56,23 +52,14 @@ impl AudioDecoder {
     }
 
     pub(crate) fn ask_plc(&mut self) {
-        self.decode_inner(
-            &[],
-            false,
-        );
+        self.decode_inner(&[], false);
     }
 
     pub(crate) fn decode_fec(&mut self, packet: EncodedAudioPacket) {
-        self.decode_inner(
-            packet.as_slice(),
-            true
-        );
+        self.decode_inner(packet.as_slice(), true);
     }
 
     pub(crate) fn decode(&mut self, packet: EncodedAudioPacket) {
-        self.decode_inner(
-            packet.as_slice(),
-            false
-        );
+        self.decode_inner(packet.as_slice(), false);
     }
 }

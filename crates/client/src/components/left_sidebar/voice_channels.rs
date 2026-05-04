@@ -7,7 +7,6 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme, Icon, Sizable, Size, StyledExt,
-    button::Button,
     label::Label,
     slider::{Slider, SliderState},
 };

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct VoiceChannel {
     pub name: String,
     #[serde(default)]
-    pub max_participants: u32
+    pub max_participants: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

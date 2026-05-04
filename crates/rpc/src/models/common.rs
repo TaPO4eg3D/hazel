@@ -3,10 +3,7 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{
-    client::Connection,
-    server::RpcWriter,
-};
+use crate::{client::Connection, server::RpcWriter};
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError<T: Debug> {
@@ -55,10 +52,6 @@ pub trait RPCNotification: Serialize + DeserializeOwned {
     where
         Self: Sized,
     {
-        writer.write(
-            Self::key().into(),
-            self,
-            None,
-        ).await
+        writer.write(Self::key().into(), self, None).await
     }
 }

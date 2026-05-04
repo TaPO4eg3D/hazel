@@ -42,8 +42,7 @@ impl AudioEncoder {
         // are lost between all the client in the connected channel.
         // ...and what's next? We can spin up several encoders
         // to serve different range of packet losses
-        encoder.set_packet_loss_perc(10)
-            .unwrap();
+        encoder.set_packet_loss_perc(10).unwrap();
 
         Self {
             encoder,

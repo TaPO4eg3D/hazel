@@ -159,8 +159,7 @@ impl CaptureStream {
                 | pw::stream::StreamFlags::RT_PROCESS,
             &mut params,
         )?;
-        capture_stream.set_active(false)
-            .unwrap();
+        capture_stream.set_active(false).unwrap();
 
         Ok(Self {
             stream: capture_stream,

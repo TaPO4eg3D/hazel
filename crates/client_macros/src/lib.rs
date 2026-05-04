@@ -1,7 +1,7 @@
+use heck::ToKebabCase;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, LitStr};
-use heck::ToKebabCase;
+use syn::{Data, DeriveInput, LitStr, parse_macro_input};
 
 /// Generates proper SVG loading based on Enum variant name.
 /// This is done by automatically implementing [IconNamed](https://longbridge.github.io/gpui-component/docs/components/icon#build-you-own-iconname) trait from `gpui-components`

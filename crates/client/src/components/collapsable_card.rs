@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, Styled as _, div, prelude::FluentBuilder,
+    AnyElement, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    RenderOnce, SharedString, Styled as _, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     StyledExt as _,

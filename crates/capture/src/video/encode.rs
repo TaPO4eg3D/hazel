@@ -1,23 +1,15 @@
 use core::panic;
-use std::{
-    collections::VecDeque,
-    ffi::{CString, c_int, c_uint, c_void},
-    marker::PhantomData,
-    ptr,
-};
+use std::collections::VecDeque;
 
-use drm_fourcc::{DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Rational, codec,
-    encoder::{self, Encoder, video},
+    encoder::{self},
     ffi::{
         AV_BUFFERSRC_FLAG_KEEP_REF, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref,
         av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags,
         av_frame_alloc, av_frame_free, av_frame_unref, av_packet_alloc, av_packet_free,
         av_packet_unref, avcodec_receive_packet, avcodec_send_frame,
     },
-    filter,
-    format::Pixel,
 };
 
 use crate::video::wrapper::{
@@ -31,7 +23,7 @@ pub struct VAAPIEncoderParams {
 
 pub struct VAAPIEncoder {
     encoder: codec::encoder::video::Encoder,
-    graph: Graph,
+    _graph: Graph,
 
     sink_filter: Filter,
     source_filter: Filter,
@@ -201,7 +193,7 @@ impl VAAPIEncoder {
             encoder,
             sink_filter,
             source_filter,
-            graph,
+            _graph: graph,
             hw_frame,
             hw_frame_ctx,
             out_frame,
