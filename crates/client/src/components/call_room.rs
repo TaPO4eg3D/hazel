@@ -1,6 +1,6 @@
 use gpui::{Entity, IntoElement, ParentElement, RenderOnce, Styled, div, prelude::FluentBuilder};
 use gpui_component::{
-    ActiveTheme, Colorize, Disableable, Icon, Sizable, Size, StyledExt as _,
+    ActiveTheme, Disableable, Icon, Sizable, Size, StyledExt as _,
     button::{Button, ButtonVariants},
     label::Label,
 };

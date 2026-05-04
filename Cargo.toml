@@ -29,6 +29,7 @@ bytes = "1.11.0"
 crossbeam = "0.8.4"
 atomic_float = "1.1.0"
 ringbuf = "0.4.8"
+smol = "2.0.2"
 
 # Quite a sophisticated profiler. Disabled by default (`enable` feature)
 [workspace.dependencies.tracy-client]

@@ -19,31 +19,30 @@ pub struct ChatState {
 }
 
 impl ChatState {
-    pub fn new(
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let input_state = cx.new(|cx| {
-            InputState::new(window, cx)
-        });
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let input_state = cx.new(|cx| InputState::new(window, cx));
 
         Self {
             _input_state: input_state,
-            text_channels: (0..4).map(|i| {
-                TextChannel {
+            text_channels: (0..4)
+                .map(|i| TextChannel {
                     id: i,
                     name: format!("Text channel {i}").into(),
                     is_active: i == 0,
                     is_muted: false,
                     unread_messages: i as usize,
-                }
-            }).collect(),
+                })
+                .collect(),
         }
     }
 }
 
 impl Render for ChatState {
-    fn render(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
         div()
     }
 }

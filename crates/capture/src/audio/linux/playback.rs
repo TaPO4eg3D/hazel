@@ -79,9 +79,7 @@ impl PlaybackStream {
         position[1] = libspa::sys::SPA_AUDIO_CHANNEL_FR;
         audio_info.set_position(position);
 
-        let user_data = PlaybackStreamData {
-            packet_output,
-        };
+        let user_data = PlaybackStreamData { packet_output };
 
         let listener = playback_stream
             .add_local_listener_with_user_data(user_data)

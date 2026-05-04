@@ -3,12 +3,12 @@ use std::{io::Cursor, os::fd::OwnedFd, thread};
 use anyhow::Result as AResult;
 use ashpd::{
     desktop::{
-        PersistMode,
+        PersistMode, Session,
         screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
     },
     enumflags2::BitFlags,
 };
-use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
+use drm_fourcc::{DrmFourcc, DrmModifier};
 
 use libspa::{
     buffer::{Data, DataType, meta::MetaHeader},
@@ -31,16 +31,15 @@ use pipewire::{
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
-use smallvec::SmallVec;
 use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
     decode::{DecodedFrame, VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
-    wrapper::{DrmFrame, DrmInfo, DrmPlane},
+    wrapper::{DrmFrame, DrmInfo},
 };
 
-async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
+async fn open_portal() -> ashpd::Result<(Session<Screencast>, u32, OwnedFd)> {
     let proxy = Screencast::new().await?;
     let session = proxy.create_session(Default::default()).await?;
 
@@ -69,7 +68,7 @@ async fn open_portal() -> ashpd::Result<(u32, OwnedFd)> {
         .open_pipe_wire_remote(&session, Default::default())
         .await?;
 
-    Ok((stream.pipe_wire_node_id(), fd))
+    Ok((session, stream.pipe_wire_node_id(), fd))
 }
 
 fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
@@ -376,8 +375,18 @@ impl ScreencastStream {
     }
 }
 
+pub struct ScreenCastHandle {
+    _session: Session<Screencast>,
+}
+
+impl ScreenCastHandle {
+    pub async fn close(self) -> AResult<()> {
+        self._session.close().await.map_err(anyhow::Error::from)
+    }
+}
+
 pub async fn start_streaming() -> AResult<Receiver<DecodedFrame>> {
-    let (node_id, fd) = open_portal().await.expect("failed to open portal");
+    let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
 
     let (tx, rx) = bounded::<DecodedFrame>(1);
 

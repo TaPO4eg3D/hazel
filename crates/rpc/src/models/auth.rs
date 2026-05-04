@@ -14,8 +14,7 @@ pub struct LoginPayload {
     pub session_key: SessionKey,
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Error, Debug)]
+#[derive(Serialize, Deserialize, Error, Debug)]
 pub enum LoginError {
     #[error("Session Key is malformed")]
     InvalidSesssionKey,
@@ -46,8 +45,7 @@ pub struct SessionKeyBody {
 
 impl SessionKeyBody {
     fn create_mac(&self, key: &[u8]) -> HmacSha256 {
-        let mut mac = HmacSha256::new_from_slice(key)
-            .expect("HMAC can take key of any size");
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
 
         let mut payload = Vec::<u8>::new();
 
@@ -76,15 +74,9 @@ impl SessionKey {
             expires_at: timestamp,
         };
 
-        let sign = body.create_mac(key)
-            .finalize()
-            .into_bytes()
-            .to_vec();
+        let sign = body.create_mac(key).finalize().into_bytes().to_vec();
 
-        Self {
-            body,
-            sign,
-        }
+        Self { body, sign }
     }
 
     pub fn is_expired(&self) -> bool {
@@ -98,7 +90,7 @@ impl SessionKey {
                 );
 
                 return true;
-            },
+            }
         };
 
         expires_at <= now
@@ -111,15 +103,13 @@ impl SessionKey {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum GetSessionKeyResponse {
     ExistingUser(SessionKey),
     NewUser(SessionKey),
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Error, Debug)]
+#[derive(Serialize, Deserialize, Error, Debug)]
 pub enum GetSessionKeyError {
     #[error("User with this login already exists")]
     UserAlreadyExists,
@@ -132,8 +122,7 @@ pub struct GetSessionKey {
     error: GetSessionKeyError,
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Error, Debug)]
+#[derive(Serialize, Deserialize, Error, Debug)]
 pub enum GetCurrentUserError {
     #[error("Server Error")]
     ServerError,
@@ -144,7 +133,6 @@ pub struct UserInfo {
     pub id: UserId,
     pub username: String,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GetUserPayload {

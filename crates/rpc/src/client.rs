@@ -21,7 +21,10 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{common::{parse_rpc_method, parse_uuid, process_payload}, models::common::RPCNotification};
+use crate::{
+    common::{parse_rpc_method, parse_uuid, process_payload},
+    models::common::RPCNotification,
+};
 
 use anyhow::Result as AResult;
 
@@ -295,7 +298,7 @@ impl Connection {
 
     pub fn subscribe<Out>(&self) -> Subscription<Out>
     where
-        Out: RPCNotification
+        Out: RPCNotification,
     {
         let key_map = Arc::downgrade(&self.key_map);
         let (sender, subscription) = Subscription::new(Out::key(), key_map);

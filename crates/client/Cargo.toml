@@ -20,6 +20,7 @@ atomic_float = { workspace = true }
 crossbeam = { workspace = true }
 ringbuf = { workspace = true }
 tracy-client = { workspace = true }
+smol = { workspace = true }
 
 # UI
 gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [
@@ -38,7 +39,6 @@ gpui-component = { path = "/home/tapo4eg3d/AUR/gpui-component/crates/ui" }
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"
 
-smol = "2.0.2"
 tracing = "0.1.44"
 clap = { version = "4.5.60", features = ["derive"] }
 atomic = { version = "0.6.1", default-features = false }

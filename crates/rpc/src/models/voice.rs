@@ -2,7 +2,10 @@ use rpc_macros::{RPCNotification, rpc_method};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{common::Empty, models::markers::{UserId, VoiceChannelId}};
+use crate::{
+    common::Empty,
+    models::markers::{UserId, VoiceChannelId},
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VoiceChannelMember {
@@ -18,7 +21,7 @@ pub struct VoiceChannel {
     pub id: VoiceChannelId,
     pub name: String,
 
-    pub members: Vec<VoiceChannelMember>
+    pub members: Vec<VoiceChannelMember>,
 }
 
 #[derive(Serialize, Deserialize, Debug, RPCNotification)]
@@ -69,11 +72,10 @@ pub struct UpdateVoiceUserState {
 pub enum VoiceChannelUpdateMessage {
     UserConnected(UserId),
     UserDisconnected(UserId),
-    UserStateUpdated((UserId, VoiceUserState))
+    UserStateUpdated((UserId, VoiceUserState)),
 }
 
-#[derive(Serialize, Deserialize)]
-#[derive(Error, Debug)]
+#[derive(Serialize, Deserialize, Error, Debug)]
 pub enum GetVoiceChannelsError {
     #[error("Unauthorized access")]
     Unauthorized,

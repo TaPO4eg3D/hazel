@@ -6,8 +6,8 @@ use std::rc::Rc;
 use clap::Parser;
 
 use gpui::*;
-use gpui_platform::application;
 use gpui_component::{Root, Theme, ThemeRegistry, WindowExt};
+use gpui_platform::application;
 
 use anyhow::Result as AResult;
 use rpc::{

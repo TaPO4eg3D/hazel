@@ -34,19 +34,27 @@ pub fn rpc_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     } else {
-        return Error::new_spanned(input, "Fields must be named").to_compile_error().into();
+        return Error::new_spanned(input, "Fields must be named")
+            .to_compile_error()
+            .into();
     }
 
     let Some(request_type) = request_type else {
-        return Error::new_spanned(input, "Missing request field").to_compile_error().into();
+        return Error::new_spanned(input, "Missing request field")
+            .to_compile_error()
+            .into();
     };
 
     let Some(response_type) = response_type else {
-        return Error::new_spanned(input, "Missing response field").to_compile_error().into();
+        return Error::new_spanned(input, "Missing response field")
+            .to_compile_error()
+            .into();
     };
 
     let Some(error_type) = error_type else {
-        return Error::new_spanned(input, "Missing error field").to_compile_error().into();
+        return Error::new_spanned(input, "Missing error field")
+            .to_compile_error()
+            .into();
     };
 
     let expanded = quote! {

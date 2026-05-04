@@ -23,7 +23,7 @@ impl EncodedAudioPacket {
             .zip(out_data.iter_mut())
             .for_each(|(sample, out)| *out = *sample);
 
-        EncodedAudioPacket { 
+        EncodedAudioPacket {
             marker: false,
             seq: 0,
             items: in_data.len() as u16,
@@ -41,12 +41,11 @@ impl EncodedAudioPacket {
     pub fn as_slice(&self) -> &[u8] {
         &self.data[..self.items as usize]
     }
-    
+
     pub fn as_slice_mut(&mut self) -> &[u8] {
         &mut self.data[..self.items as usize]
     }
 }
-
 
 impl EncodedAudioPacket {
     pub fn to_bytes(&self, buf: &mut BytesMut) {
@@ -67,7 +66,12 @@ impl EncodedAudioPacket {
             bytes.copy_to_slice(&mut data[..items as usize]);
         }
 
-        Self { marker, seq, data, items }
+        Self {
+            marker,
+            seq,
+            data,
+            items,
+        }
     }
 }
 
@@ -117,7 +121,7 @@ impl UDPPacket {
             UDPPacketType::Voice(data) => {
                 data.to_bytes(buf);
             }
-            UDPPacketType::Ping => {},
+            UDPPacketType::Ping => {}
             _ => todo!(),
         }
     }
