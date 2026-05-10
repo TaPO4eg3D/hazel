@@ -28,8 +28,23 @@ rmp-serde = "1.3.1"
 bytes = "1.11.0"
 crossbeam = "0.8.4"
 atomic_float = "1.1.0"
-ringbuf = "0.4.8"
+ringbuf = "0.5"
 smol = "2.0.2"
+
+# UI
+gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [
+    "wayland",
+    "windows-manifest",
+    "x11",
+] }
+gpui_platform = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui_platform", features=[
+    "font-kit",
+    "wayland",
+    "x11"
+] }
+
+gpui-component = { path = "/home/tapo4eg3d/AUR/gpui-component/crates/ui" }
+
 
 # Quite a sophisticated profiler. Disabled by default (`enable` feature)
 [workspace.dependencies.tracy-client]

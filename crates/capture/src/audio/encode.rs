@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use streaming_common::{DATA_BUFF_SIZE, EncodedAudioPacket};
+use streaming_common::{AUDIO_BUFF_SIZE, EncodedAudioPacket};
 
 use crate::audio::{DEFAULT_BIT_RATE, DEFAULT_RATE, VecDequeExt as _};
 
@@ -15,7 +15,7 @@ pub struct AudioEncoder {
 
     /// Buffer where encoder outputs the result. Reused for every
     /// encoder pass
-    output_buffer: [u8; DATA_BUFF_SIZE],
+    output_buffer: [u8; AUDIO_BUFF_SIZE],
     input_buffer: [f32; INPUT_BUFFER_SIZE],
 
     /// Opus requires a specific number of samples to
@@ -50,7 +50,7 @@ impl AudioEncoder {
             packet_queue: VecDeque::new(),
 
             input_buffer: [0.; INPUT_BUFFER_SIZE],
-            output_buffer: [0; DATA_BUFF_SIZE],
+            output_buffer: [0; AUDIO_BUFF_SIZE],
         }
     }
 

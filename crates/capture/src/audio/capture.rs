@@ -8,7 +8,10 @@ use std::{
 
 use ringbuf::HeapCons;
 
-use crate::audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder};
+use crate::{
+    CaptureNotifier,
+    audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder},
+};
 
 #[derive(Clone)]
 pub struct CaptureController {
@@ -26,52 +29,21 @@ impl CaptureController {
     }
 }
 
-pub(crate) type Notifier = Arc<(Mutex<bool>, Condvar)>;
 pub struct AudioCapture {
     pub encoder: AudioEncoder,
     pub is_enabled: Arc<AtomicBool>,
     pub samples_buffer: HeapCons<f32>,
 
-    notifier: Notifier,
     platform_loop_controller: PlatformLoopController,
 }
 
-pub enum WaitResult {
-    Ready,
-    Timeout,
-}
-
 impl AudioCapture {
-    pub(crate) fn new(
-        notifier: Notifier,
-        samples_buffer: HeapCons<f32>,
-        controller: PlatformLoopController,
-    ) -> Self {
+    pub(crate) fn new(samples_buffer: HeapCons<f32>, controller: PlatformLoopController) -> Self {
         Self {
             is_enabled: Arc::new(AtomicBool::new(false)),
             samples_buffer,
             platform_loop_controller: controller,
             encoder: AudioEncoder::new(),
-            notifier,
-        }
-    }
-
-    pub fn wait(&self, timeout: Duration) -> WaitResult {
-        let mut ready = self.notifier.0.lock().unwrap();
-
-        loop {
-            let result = self.notifier.1.wait_timeout(ready, timeout).unwrap();
-
-            ready = result.0;
-            if result.1.timed_out() {
-                return WaitResult::Timeout;
-            }
-
-            if *ready {
-                *ready = false;
-
-                return WaitResult::Ready;
-            }
         }
     }
 

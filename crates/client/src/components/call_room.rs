@@ -27,17 +27,21 @@ impl RenderOnce for CallRoom {
             .v_flex()
             .gap_4()
             .size_full()
-            .child(ScreenSpace::new())
+            .child(ScreenSpace::new(&self.streaming))
             .child(ControlPanel::new(&self.streaming))
     }
 }
 
 #[derive(IntoElement)]
-struct ScreenSpace {}
+struct ScreenSpace {
+    streaming: Entity<StreamingState>,
+}
 
 impl ScreenSpace {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(streaming: &Entity<StreamingState>) -> Self {
+        Self {
+            streaming: streaming.clone(),
+        }
     }
 }
 

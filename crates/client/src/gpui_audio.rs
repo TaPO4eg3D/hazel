@@ -10,13 +10,16 @@ use std::{
 
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
-use capture::audio::{
-    self, DEFAULT_BIT_RATE, DeviceRegistry,
-    capture::{AudioCapture, CaptureController, WaitResult},
-    noise::RNNoiseState,
-    playback::{
-        AudioStreamingClientSharedState, PlaybackController, PlaybackOutputState,
-        PlaybackPacketCommand, PlaybackPacketInput,
+use capture::{
+    CaptureNotifier, WaitResult,
+    audio::{
+        self, DEFAULT_BIT_RATE, DeviceRegistry,
+        capture::{AudioCapture, CaptureController},
+        noise::RNNoiseState,
+        playback::{
+            AudioStreamingClientSharedState, PlaybackController, PlaybackOutputState,
+            PlaybackPacketCommand, PlaybackPacketInput,
+        },
     },
 };
 use crossbeam::channel;
@@ -64,17 +67,20 @@ struct AudioStreamingState {
     last_vad: Instant,
 
     denoiser_state: DenoiserState,
+    capture: AudioCapture,
 
     shared: Arc<AudioStreamingSharedState>,
 }
 
 impl AudioStreamingState {
-    fn new(shared: Arc<AudioStreamingSharedState>) -> Self {
+    fn new(shared: Arc<AudioStreamingSharedState>, capture: AudioCapture) -> Self {
         Self {
             seq: 0,
 
             transmitting: false,
             last_vad: Instant::now(),
+
+            capture,
 
             shared,
             denoiser_state: DenoiserState::Disabled,
@@ -113,10 +119,10 @@ impl DenoiserState {
 
 struct PacketSender {
     buf: BytesMut,
-    screen: ScreenStreamingData,
+    notifier: CaptureNotifier,
 
     audio: AudioStreamingState,
-    audio_capture: AudioCapture,
+    screen: ScreenStreamingData,
 
     /// Last time we've send a packet (of any kind)
     last_send: Instant,
@@ -129,19 +135,20 @@ impl PacketSender {
     fn new(
         addr: Addr,
         socket: Arc<UdpSocket>,
-        audio_shared: Arc<AudioStreamingSharedState>,
-        capture: AudioCapture,
+        audio_state: AudioStreamingState,
+        notifier: CaptureNotifier,
     ) -> Self {
         Self {
             buf: BytesMut::new(),
             last_send: Instant::now(),
 
-            audio: AudioStreamingState::new(audio_shared),
+            notifier,
+
+            audio: audio_state,
             screen: ScreenStreamingData::new(),
 
             addr,
             socket,
-            audio_capture: capture,
         }
     }
 
@@ -226,9 +233,11 @@ impl PacketSender {
         let mut input_buffer = [0_f32; DEFAULT_BIT_RATE];
 
         let mut count = self
-            .audio_capture
+            .audio
+            .capture
             .samples_buffer
             .pop_slice(&mut input_buffer);
+
         if count > 0 {
             count = self.apply_denoiser(&mut input_buffer[..count]);
 
@@ -244,10 +253,10 @@ impl PacketSender {
 
             if !self.is_silence() {
                 self.audio.transmitting = true;
-                self.audio_capture.encoder.encode(&input_buffer[..count]);
+                self.audio.capture.encoder.encode(&input_buffer[..count]);
             } else if self.audio.transmitting {
                 self.audio.transmitting = false;
-                self.audio_capture.encoder.reset();
+                self.audio.capture.encoder.reset();
 
                 self.send_audio_marker();
             }
@@ -256,21 +265,23 @@ impl PacketSender {
 
     fn run(mut self) {
         loop {
-            let result = self.audio_capture.wait(Duration::from_millis(80));
-            let is_enabled = self.audio_capture.is_enabled.load(Ordering::Relaxed);
+            let result = self.notifier.wait(Duration::from_millis(80));
 
-            if matches!(result, WaitResult::Ready) {
+            if let WaitResult::Ready(state) = result
+                && state.is_audio_ready
+            {
                 self.process_audio_samples();
             }
 
+            let is_enabled = self.audio.capture.is_enabled.load(Ordering::Relaxed);
             if self.audio.transmitting && (matches!(result, WaitResult::Timeout) || !is_enabled) {
                 self.audio.transmitting = false;
-                self.audio_capture.encoder.reset();
+                self.audio.capture.encoder.reset();
 
                 self.send_audio_marker();
             }
 
-            while let Some(mut packet) = self.audio_capture.encoder.pop_packet() {
+            while let Some(mut packet) = self.audio.capture.encoder.pop_packet() {
                 if self.audio.transmitting
                     && let Some((user_id, addr)) = *self.addr.lock().unwrap()
                 {
@@ -422,8 +433,10 @@ impl Streaming {
 pub fn init(cx: &mut App, debug: bool) {
     let stream_addr: Addr = Arc::new(Mutex::new(None));
 
+    let notifier = CaptureNotifier::new();
+
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (capture, mut playback, device_registry) = audio::init(debug);
+    let (capture, mut playback, device_registry) = audio::init(debug, notifier.clone());
 
     let audio_shared_state = Arc::new(AudioStreamingSharedState::new());
 
@@ -439,10 +452,15 @@ pub fn init(cx: &mut App, debug: bool) {
         .spawn({
             let addr = stream_addr.clone();
             let socket = socket.clone();
-            let state = audio_shared_state.clone();
+            let shared = audio_shared_state.clone();
 
             move || {
-                let sender = PacketSender::new(addr, socket, state, capture);
+                let sender = PacketSender::new(
+                    addr,
+                    socket,
+                    AudioStreamingState::new(shared, capture),
+                    notifier,
+                );
 
                 sender.run();
             }

@@ -13,12 +13,12 @@ use pipewire::{
 };
 use ringbuf::{HeapProd, traits::Producer};
 
-use crate::audio::{DEFAULT_RATE, capture::Notifier};
+use crate::{CaptureNotifier, audio::DEFAULT_RATE};
 
 /// This data is shared across all Pipewire events
 struct CaptureStreamData {
     format: AudioInfoRaw,
-    notifier: Notifier,
+    notifier: CaptureNotifier,
 
     /// Producer of captured samples
     samples_producer: HeapProd<f32>,
@@ -89,17 +89,13 @@ impl CaptureStream {
             };
 
             this.samples_producer.push_slice(captured_samples);
-
-            let mut ready = this.notifier.0.lock().unwrap();
-            *ready = true;
-
-            this.notifier.1.notify_all();
+            this.notifier.notify_audio();
         }
     }
 
     pub(crate) fn new(
         core: pw::core::CoreRc,
-        notifier: Notifier,
+        notifier: CaptureNotifier,
         samples_producer: HeapProd<f32>,
     ) -> AResult<Self> {
         let capture_stream = pw::stream::StreamRc::new(
