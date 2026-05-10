@@ -8,11 +8,14 @@ use std::{
 use pipewire::{self as pw, types::ObjectType};
 use ringbuf::{HeapRb, traits::*};
 
-use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
-    capture::AudioCapture,
-    linux::{capture::CaptureStream, playback::PlaybackStream},
-    playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
+use crate::{
+    CaptureNotifier,
+    audio::{
+        AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
+        capture::AudioCapture,
+        linux::{capture::CaptureStream, playback::PlaybackStream},
+        playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
+    },
 };
 
 pub mod capture;
@@ -21,18 +24,14 @@ pub mod playback;
 pub(crate) fn init(
     packet_input: PlaybackPacketInput,
     packet_output: PlaybackPacketOutput,
+    notifier: CaptureNotifier,
 ) -> (AudioCapture, Playback, DeviceRegistry) {
     let ring = HeapRb::new((DEFAULT_RATE * 4) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
     let (pw_sender, pw_receiver) = pw::channel::channel::<AudioLoopCommand>();
 
-    let capture_notifier = Arc::new((Mutex::new(false), Condvar::new()));
-    let capture = AudioCapture::new(
-        capture_notifier.clone(),
-        capture_consumer,
-        pw_sender.clone(),
-    );
+    let capture = AudioCapture::new(capture_consumer, pw_sender.clone());
 
     let playback = Playback {
         controller: PlaybackController::new(pw_sender.clone()),
@@ -52,7 +51,7 @@ pub(crate) fn init(
             let core = context.connect_rc(None)?;
 
             let registry = core.get_registry_rc()?;
-            let capture = CaptureStream::new(core.clone(), capture_notifier, capture_producer)?;
+            let capture = CaptureStream::new(core.clone(), notifier, capture_producer)?;
             let capture_stream = capture.stream.clone();
 
             let playback = PlaybackStream::new(core.clone(), packet_output)?;

@@ -375,20 +375,27 @@ impl ScreencastStream {
     }
 }
 
-pub struct ScreenCastHandle {
-    _session: Session<Screencast>,
+pub struct ScreenCastHandle<T> {
+    pw_tx: pipewire::channel::Sender<()>,
+    session: Session<Screencast>,
+
+    frame_rx: Receiver<T>,
 }
 
-impl ScreenCastHandle {
+impl<T> ScreenCastHandle<T> {
     pub async fn close(self) -> AResult<()> {
-        self._session.close().await.map_err(anyhow::Error::from)
+        self.session.close().await.map_err(anyhow::Error::from)?;
+        let _ = self.pw_tx.send(());
+
+        Ok(())
     }
 }
 
-pub async fn start_streaming() -> AResult<Receiver<DecodedFrame>> {
-    let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
+pub async fn start_screencast() -> AResult<(())> {
+    let (session, node_id, fd) = open_portal().await.expect("failed to open portal");
 
-    let (tx, rx) = bounded::<DecodedFrame>(1);
+    let (pw_tx, pw_rx) = pipewire::channel::channel::<()>();
+    let (encoded_frame_tx, encoded_frame_rx) = bounded::<DecodedFrame>(1);
 
     pw::init();
 
@@ -397,13 +404,27 @@ pub async fn start_streaming() -> AResult<Receiver<DecodedFrame>> {
         let context = pw::context::ContextRc::new(&mainloop, None)?;
         let core = context.connect_fd_rc(fd, None)?;
 
-        let _stream =
-            ScreencastStream::new(tx, node_id, core).expect("Failed to create screencast stream");
+        let _stream = ScreencastStream::new(encoded_frame_tx, node_id, core)
+            .expect("Failed to create screencast stream");
+
+        let _attached = pw_rx.attach(mainloop.loop_(), {
+            let mainloop = mainloop.clone();
+
+            move |_| {
+                mainloop.quit();
+            }
+        });
 
         mainloop.run();
 
         Ok::<_, anyhow::Error>(())
     });
 
-    Ok(rx)
+    Ok(())
+
+    // Ok(ScreenCastHandle {
+    //     session,
+    //     pw_tx,
+    //     encoded_frame_rx,
+    // })
 }

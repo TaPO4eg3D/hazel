@@ -4,7 +4,10 @@ use std::{
 };
 
 use atomic_enum::atomic_enum;
-use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
+use capture::{
+    audio::{AudioDevice, playback::AudioStreamingClientSharedState},
+    video::linux::screengrab::{ScreenCastHandle, start_screencast},
+};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Subscription, WeakEntity, Window};
 use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
 use rpc::{
@@ -592,6 +595,22 @@ impl StreamingState {
                 })
                 .ok();
             }
+        })
+        .detach();
+    }
+
+    pub fn start_screencast(&mut self, cx: Context<Self>) {
+        cx.spawn(async |this, cx| {
+            let Ok(handle) = start_screencast().await else {
+                todo!("Handle screencast failing");
+            };
+
+            this.update(cx, move |this, cx| {
+                // this.screencast_handle = Some(handle);
+
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }

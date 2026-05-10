@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-pub const DATA_BUFF_SIZE: usize = 1024;
+pub const AUDIO_BUFF_SIZE: usize = 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct EncodedAudioPacket {
@@ -8,16 +8,20 @@ pub struct EncodedAudioPacket {
     pub seq: u64,
 
     pub items: u16,
-    pub data: [u8; DATA_BUFF_SIZE],
+    pub data: [u8; AUDIO_BUFF_SIZE],
+}
+
+pub struct EncodedVideoFrame {
+    pub seq: u64,
 }
 
 impl EncodedAudioPacket {
     pub fn new(in_data: &[u8]) -> Self {
-        if in_data.len() > DATA_BUFF_SIZE {
+        if in_data.len() > AUDIO_BUFF_SIZE {
             panic!("Input is too large");
         }
 
-        let mut out_data = [0_u8; DATA_BUFF_SIZE];
+        let mut out_data = [0_u8; AUDIO_BUFF_SIZE];
         in_data
             .iter()
             .zip(out_data.iter_mut())
@@ -61,7 +65,7 @@ impl EncodedAudioPacket {
         let seq = bytes.get_u64_le();
         let items = bytes.get_u16_le();
 
-        let mut data = [0_u8; DATA_BUFF_SIZE];
+        let mut data = [0_u8; AUDIO_BUFF_SIZE];
         if items > 0 {
             bytes.copy_to_slice(&mut data[..items as usize]);
         }

@@ -8,33 +8,25 @@ profiling = ["tracy-client/enable"]
 
 [dependencies]
 rpc = { workspace = true }
+capture = { workspace = true }
+streaming_common = { workspace = true }
 client_macros = { workspace = true }
+
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+gpui-component = { workspace = true }
+
+smol = { workspace = true }
 tokio = { workspace = true }
+
 anyhow = { workspace = true }
 rmp-serde = { workspace = true }
 sea-orm = { workspace = true }
-capture = { workspace = true }
-streaming_common = { workspace = true }
 bytes = { workspace = true }
 atomic_float = { workspace = true }
 crossbeam = { workspace = true }
 ringbuf = { workspace = true }
 tracy-client = { workspace = true }
-smol = { workspace = true }
-
-# UI
-gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [
-    "wayland",
-    "windows-manifest",
-    "x11",
-] }
-gpui_platform = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui_platform", features=[
-    "font-kit",
-    "wayland",
-    "x11"
-] }
-
-gpui-component = { path = "/home/tapo4eg3d/AUR/gpui-component/crates/ui" }
 
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"

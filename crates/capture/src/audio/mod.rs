@@ -1,13 +1,13 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     task::{Poll, Waker},
     thread::{self},
     time::Duration,
 };
 
-use crate::audio::capture::AudioCapture;
 use crate::audio::playback::{Playback, init_packet_processing};
+use crate::{CaptureNotifier, audio::capture::AudioCapture};
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -65,7 +65,7 @@ impl<T: Clone + Copy> VecDequeExt<T> for VecDeque<T> {
 
 #[derive(Clone)]
 pub struct DeviceRegistry {
-    inner: Arc<RwLock<DeviceRegistryInner>>,
+    inner: Arc<Mutex<DeviceRegistryInner>>,
 }
 
 pub struct DeviceSubscription {
@@ -93,7 +93,7 @@ impl Future for RecvFuture {
         self.as_mut().first = false;
 
         let waker = cx.waker().clone();
-        let mut registry = self.registry.inner.write().unwrap();
+        let mut registry = self.registry.inner.lock().unwrap();
         registry.tasks.push(waker);
 
         Poll::Pending
@@ -116,7 +116,7 @@ impl DeviceSubscription {
 impl DeviceRegistry {
     pub fn new(controller: PlatformLoopController) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(DeviceRegistryInner::new(controller))),
+            inner: Arc::new(Mutex::new(DeviceRegistryInner::new(controller))),
         }
     }
 
@@ -128,19 +128,19 @@ impl DeviceRegistry {
     }
 
     pub fn get_input_devices(&self) -> Vec<AudioDevice> {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         registry.input.clone()
     }
 
     pub fn get_output_devices(&self) -> Vec<AudioDevice> {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         registry.output.clone()
     }
 
     pub fn set_active_input(&self, device: &AudioDevice) {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         _ = registry
             .platform_loop_controller
@@ -148,7 +148,7 @@ impl DeviceRegistry {
     }
 
     pub fn set_active_output(&self, device: &AudioDevice) {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         _ = registry
             .platform_loop_controller
@@ -156,14 +156,14 @@ impl DeviceRegistry {
     }
 
     pub(crate) fn add_input(&self, device: AudioDevice) {
-        let mut registry = self.inner.write().unwrap();
+        let mut registry = self.inner.lock().unwrap();
         registry.input.push(device);
 
         registry.notify();
     }
 
     pub(crate) fn add_output(&self, device: AudioDevice) {
-        let mut registry = self.inner.write().unwrap();
+        let mut registry = self.inner.lock().unwrap();
         registry.output.push(device);
 
         registry.notify();
@@ -171,7 +171,7 @@ impl DeviceRegistry {
 
     #[cfg(target_os = "linux")]
     pub(crate) fn find_by_node_id(&self, id: u32) -> Option<String> {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         registry
             .input
@@ -182,7 +182,7 @@ impl DeviceRegistry {
     }
 
     pub(crate) fn mark_active_input(&self, id: &str) {
-        let mut registry = self.inner.write().unwrap();
+        let mut registry = self.inner.lock().unwrap();
 
         registry
             .input
@@ -193,7 +193,7 @@ impl DeviceRegistry {
     }
 
     pub(crate) fn mark_active_output(&self, id: &str) {
-        let mut registry = self.inner.write().unwrap();
+        let mut registry = self.inner.lock().unwrap();
 
         registry
             .output
@@ -204,14 +204,14 @@ impl DeviceRegistry {
     }
 
     pub(crate) fn device_exists(&self, id: &str) -> bool {
-        let registry = self.inner.read().unwrap();
+        let registry = self.inner.lock().unwrap();
 
         registry.input.iter().any(|item| item.id == id)
             || registry.output.iter().any(|item| item.id == id)
     }
 
     pub(crate) fn remove_device(&self, id: &str) {
-        let mut registry = self.inner.write().unwrap();
+        let mut registry = self.inner.lock().unwrap();
 
         if registry.input.iter().any(|item| item.id == id)
             || registry.output.iter().any(|item| item.id == id)
@@ -277,7 +277,7 @@ pub enum AudioLoopCommand {
     SetActiveOutputDevice(AudioDevice),
 }
 
-pub fn init(debug: bool) -> (AudioCapture, Playback, DeviceRegistry) {
+pub fn init(debug: bool, notifier: CaptureNotifier) -> (AudioCapture, Playback, DeviceRegistry) {
     let (packet_input, packet_output) = init_packet_processing(debug);
 
     if debug {
@@ -307,7 +307,7 @@ pub fn init(debug: bool) -> (AudioCapture, Playback, DeviceRegistry) {
     }
 
     #[cfg(target_os = "linux")]
-    let (capture, playback, device_registry) = linux::init(packet_input, packet_output);
+    let (capture, playback, device_registry) = linux::init(packet_input, packet_output, notifier);
     #[cfg(target_os = "windows")]
     let (capture, playback, device_registry) = windows::init(packet_input, packet_output);
 
