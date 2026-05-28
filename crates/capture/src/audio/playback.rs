@@ -243,7 +243,7 @@ impl JitterBuffer {
             };
 
             // Return if we failed to decode anything, mixer
-            // will take care of filling missing bits with zeroes
+            // will take care of it filling missing bits with zeroes
             if !self.decode() {
                 break;
             }
@@ -266,7 +266,7 @@ pub struct AudioStreamingClientState {
     active: bool,
 }
 
-// Shared state with UI to control volume, mute, etc.
+/// Shared state between UI and the audio thread
 pub struct AudioStreamingClientSharedState {
     pub user_id: i32,
     pub is_talking: AtomicBool,
@@ -389,11 +389,6 @@ impl PlaybackPacketOutput {
         self.active_clients.retain(|_, state| state.active);
     }
 }
-
-/// Used to enqueue raw audio samples
-/// for a playback
-pub struct PlaybackSamplesInput {}
-pub struct PlaybackSamplesOutput {}
 
 #[derive(Clone)]
 pub struct PlaybackOutputState {

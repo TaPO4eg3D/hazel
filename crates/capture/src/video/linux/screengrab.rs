@@ -10,6 +10,10 @@ use ashpd::{
 };
 use drm_fourcc::{DrmFourcc, DrmModifier};
 
+// TODO: Both should be configurable
+const DEFAULT_FRAMERATE: u32 = 60;
+const DEFAULT_BITRATE: u32 = 40 * 1000_u32.pow(2);
+
 use libspa::{
     buffer::{Data, DataType, meta::MetaHeader},
     param::{
@@ -297,6 +301,8 @@ impl ScreencastStream {
             plane_stride: stride,
         };
 
+        // TODO: Pipewire cycles a set of DMA-bufs, in theory we can cache
+        // it using the file descriptor
         (
             DrmFrame::new(fd, (stride * height as i32) as usize, format),
             format,
@@ -315,7 +321,12 @@ impl ScreencastStream {
                 let height = this.format.size().height;
 
                 this.encoder = Some(VAAPIEncoder::new(
-                    VAAPIEncoderParams { height, width },
+                    VAAPIEncoderParams {
+                        height,
+                        width,
+                        framerate: DEFAULT_FRAMERATE,
+                        bitrate: DEFAULT_BITRATE,
+                    },
                     drm_frame,
                 ));
 
