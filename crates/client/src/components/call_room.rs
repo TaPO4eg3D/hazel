@@ -5,7 +5,7 @@ use gpui_component::{
     label::Label,
 };
 
-use crate::{assets::IconName, components::streaming_state::StreamingState};
+use crate::{assets::IconName, components::streaming_state::StreamingState, gpui_audio::Streaming};
 
 #[derive(IntoElement)]
 pub struct CallRoom {
@@ -105,7 +105,7 @@ impl ControlPanel {
 }
 
 impl RenderOnce for ControlPanel {
-    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         let can_stream = self
             .streaming
             .read_with(cx, |state, _| state.get_active_channel().is_some());
@@ -127,6 +127,14 @@ impl RenderOnce for ControlPanel {
                     .when(!can_stream, |this| {
                         this.disabled(!can_stream)
                             .tooltip("Join a voice channel first")
+                    })
+                    .when(can_stream, |this| {
+                        this.on_click(window.listener_for(&self.streaming, |_, _, _, cx| {
+                            cx.spawn(async |state, cx| {
+                                Streaming::start_screencast(cx).await;
+                            })
+                            .detach();
+                        }))
                     })
                     .primary(),
             )

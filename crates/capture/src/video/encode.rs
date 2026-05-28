@@ -12,6 +12,10 @@ use ffmpeg_next::{
         avcodec_send_frame,
     },
 };
+use ringbuf::{
+    HeapCons, HeapProd,
+    traits::{Consumer, Producer},
+};
 
 use crate::video::wrapper::{
     DrmFrame, Filter, GPUDevice, Graph, HWFrameContext, HWFrameContextBuilder, Parser, VAAPIFrame,
@@ -23,6 +27,11 @@ pub struct VAAPIEncoderParams {
 
     pub bitrate: u32,
     pub framerate: u32,
+
+    pub empty_frame_queue: HeapCons<Vec<u8>>,
+    pub ready_frame_queue: HeapProd<Vec<u8>>,
+
+    pub drm_frame: DrmFrame,
 }
 
 pub struct VAAPIEncoder {
@@ -38,7 +47,8 @@ pub struct VAAPIEncoder {
 
     packet: *mut AVPacket,
 
-    pub frame_queue: VecDeque<Vec<u8>>,
+    pub empty_frame_queue: HeapCons<Vec<u8>>,
+    pub ready_frame_queue: HeapProd<Vec<u8>>,
 }
 
 impl Drop for VAAPIEncoder {
@@ -91,11 +101,22 @@ impl VAAPIEncoder {
                     break;
                 }
 
+                let Some(mut frame) = self.empty_frame_queue.try_pop() else {
+                    log::debug!("Can't claim an empty frame!");
+
+                    continue;
+                };
+
+                frame.clear();
+
                 (*self.packet).stream_index = 0;
                 let buf =
                     std::slice::from_raw_parts((*self.packet).data, (*self.packet).size as usize);
 
-                self.frame_queue.push_back(buf.to_vec());
+                frame.extend_from_slice(buf);
+                if self.ready_frame_queue.try_push(frame).is_err() {
+                    log::debug!("No space for the encoded frame!");
+                }
 
                 // Unref the packet to release the encoded bitstream buffer.
                 av_packet_unref(self.packet);
@@ -103,14 +124,24 @@ impl VAAPIEncoder {
         }
     }
 
-    pub fn new(params: VAAPIEncoderParams, drm_frame: DrmFrame) -> Self {
+    pub fn new(
+        VAAPIEncoderParams {
+            height,
+            width,
+            bitrate,
+            framerate,
+            empty_frame_queue,
+            ready_frame_queue,
+            drm_frame,
+        }: VAAPIEncoderParams,
+    ) -> Self {
         let codec = encoder::find_by_name("h264_vaapi").expect("Failed to find Video Codec");
         let mut video = codec::Context::new_with_codec(codec)
             .encoder()
             .video()
             .expect("Failed to alloc codec context");
 
-        let time_base = Rational(1, params.framerate as i32);
+        let time_base = Rational(1, framerate as i32);
 
         let device = GPUDevice::new().expect("Failed to open GPU Device");
         let hw_frame_ctx = HWFrameContextBuilder::new(&device)
@@ -118,8 +149,8 @@ impl VAAPIEncoder {
             .set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
             // TODO: We should accept this as a parameter (comes from the format negotiation)
             .set_sw_format(AVPixelFormat::AV_PIX_FMT_BGR0)
-            .set_width(params.width as i32)
-            .set_height(params.height as i32)
+            .set_width(width as i32)
+            .set_height(height as i32)
             .set_initial_pool_size(20)
             .build()
             .expect("Failed to build HWFrameContext");
@@ -129,8 +160,8 @@ impl VAAPIEncoder {
             .create_buffer_filter("Source", |this| {
                 this.set_format(AVPixelFormat::AV_PIX_FMT_VAAPI)
                     .set_hw_frame_ctx(hw_frame_ctx.clone())
-                    .set_width(params.width as i32)
-                    .set_height(params.height as i32)
+                    .set_width(width as i32)
+                    .set_height(height as i32)
                     .set_time_base(time_base)
                     .set_aspect_ratio(Rational(1, 1))
             })
@@ -176,11 +207,11 @@ impl VAAPIEncoder {
             (*video_ctx).max_b_frames = 0;
 
             // Effectively CBR
-            (*video_ctx).bit_rate = params.bitrate as i64;
-            (*video_ctx).rc_max_rate = params.bitrate as i64;
-            (*video_ctx).rc_min_rate = params.bitrate as i64;
+            (*video_ctx).bit_rate = bitrate as i64;
+            (*video_ctx).rc_max_rate = bitrate as i64;
+            (*video_ctx).rc_min_rate = bitrate as i64;
 
-            (*video_ctx).rc_buffer_size = (params.bitrate / params.framerate) as i32;
+            (*video_ctx).rc_buffer_size = (bitrate / framerate) as i32;
 
             (*video_ctx).pix_fmt =
                 std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);
@@ -190,7 +221,7 @@ impl VAAPIEncoder {
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
             video.set_time_base((*filter_output).time_base);
-            video.set_frame_rate(Some(Rational(params.framerate as i32, 1)));
+            video.set_frame_rate(Some(Rational(framerate as i32, 1)));
             video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
         }
 
@@ -223,7 +254,8 @@ impl VAAPIEncoder {
             hw_frame_ctx,
             out_frame,
             packet,
-            frame_queue: VecDeque::new(),
+            empty_frame_queue,
+            ready_frame_queue,
         }
     }
 }
