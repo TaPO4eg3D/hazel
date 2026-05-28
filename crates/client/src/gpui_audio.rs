@@ -31,8 +31,9 @@ use streaming_common::{EncodedAudioPacket, UDPPacket, UDPPacketType};
 
 use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
 
-type Addr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
+type UDPAddr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 
+/// Shared state beteween UI and Packet Sender
 struct AudioStreamingSharedState {
     transmit_volume: AtomicF32,
     volume_modifier: AtomicF32,
@@ -127,13 +128,13 @@ struct PacketSender {
     /// Last time we've send a packet (of any kind)
     last_send: Instant,
 
-    addr: Addr,
+    addr: UDPAddr,
     socket: Arc<UdpSocket>,
 }
 
 impl PacketSender {
     fn new(
-        addr: Addr,
+        addr: UDPAddr,
         socket: Arc<UdpSocket>,
         audio_state: AudioStreamingState,
         notifier: CaptureNotifier,
@@ -263,14 +264,18 @@ impl PacketSender {
         }
     }
 
+    fn process_screen_frame(&mut self) {}
+
     fn run(mut self) {
         loop {
             let result = self.notifier.wait(Duration::from_millis(80));
 
-            if let WaitResult::Ready(state) = result
-                && state.is_audio_ready
-            {
-                self.process_audio_samples();
+            if let WaitResult::Ready(state) = result {
+                if state.is_audio_ready {
+                    self.process_audio_samples();
+                }
+
+                if state.is_screen_ready {}
             }
 
             let is_enabled = self.audio.capture.is_enabled.load(Ordering::Relaxed);
@@ -339,16 +344,17 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 }
 
 struct GlobalStreaming {
-    capture: CaptureController,
-    playback: PlaybackController,
+    stream_addr: UDPAddr,
 
-    packet_tx: channel::Sender<PlaybackPacketCommand>,
-    packet_output_state: PlaybackOutputState,
+    audio_capture: CaptureController,
+    audio_playback: PlaybackController,
 
-    device_registry: DeviceRegistry,
+    audio_packet_command_tx: channel::Sender<PlaybackPacketCommand>,
+    audio_playback_output_state: PlaybackOutputState,
 
-    stream_addr: Addr,
-
+    /// Registry to query devices for audio I/O
+    audio_device_registry: DeviceRegistry,
+    /// Shared state beteween UI and Packet Sender
     audio_shared_state: Arc<AudioStreamingSharedState>,
 }
 
@@ -384,22 +390,22 @@ impl Streaming {
     pub fn set_output_volume_modifier<C: AppContext>(cx: &C, value: f32) {
         cx.read_global(|stream: &GlobalStreaming, _| {
             stream
-                .packet_output_state
+                .audio_playback_output_state
                 .volume
                 .store(value, Ordering::Relaxed);
         })
     }
 
     pub fn get_playback<C: AppContext>(cx: &C) -> PlaybackController {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.playback.clone())
+        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_playback.clone())
     }
 
     pub fn get_device_registry<C: AppContext>(cx: &mut C) -> DeviceRegistry {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.device_registry.clone())
+        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_device_registry.clone())
     }
 
     pub fn get_capture<C: AppContext>(cx: &C) -> CaptureController {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.capture.clone())
+        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_capture.clone())
     }
 
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
@@ -422,30 +428,33 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let shared = shared.upgrade().unwrap();
 
-            _ = stream.packet_tx.send(PlaybackPacketCommand::AddClient((
-                shared.user_id,
-                Arc::downgrade(&shared),
-            )));
+            _ = stream
+                .audio_packet_command_tx
+                .send(PlaybackPacketCommand::AddClient((
+                    shared.user_id,
+                    Arc::downgrade(&shared),
+                )));
         });
     }
 }
 
 pub fn init(cx: &mut App, debug: bool) {
-    let stream_addr: Addr = Arc::new(Mutex::new(None));
+    let stream_addr: UDPAddr = Arc::new(Mutex::new(None));
 
-    let notifier = CaptureNotifier::new();
+    let capture_notifier = CaptureNotifier::new();
 
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (capture, mut playback, device_registry) = audio::init(debug, notifier.clone());
+    let (audio_capture, mut audio_playback, audio_device_registry) =
+        audio::init(debug, capture_notifier.clone());
 
     let audio_shared_state = Arc::new(AudioStreamingSharedState::new());
 
-    let packet_input = playback.packet_input.take().unwrap();
+    let audio_packet_input = audio_playback.packet_input.take().unwrap();
 
-    let packet_tx = packet_input.command_sender.clone();
-    let packet_output_state = packet_input.output_state.clone();
+    let audio_packet_tx = audio_packet_input.command_sender.clone();
+    let audio_packet_output_state = audio_packet_input.output_state.clone();
 
-    let capture_controller = capture.get_controller();
+    let audio_capture_controller = audio_capture.get_controller();
 
     thread::Builder::new()
         .name("udp-sender".into())
@@ -458,8 +467,8 @@ pub fn init(cx: &mut App, debug: bool) {
                 let sender = PacketSender::new(
                     addr,
                     socket,
-                    AudioStreamingState::new(shared, capture),
-                    notifier,
+                    AudioStreamingState::new(shared, audio_capture),
+                    capture_notifier,
                 );
 
                 sender.run();
@@ -473,18 +482,18 @@ pub fn init(cx: &mut App, debug: bool) {
             let socket = socket.clone();
 
             move || {
-                spawn_receiver(socket, packet_input);
+                spawn_receiver(socket, audio_packet_input);
             }
         })
         .unwrap();
 
     cx.set_global(GlobalStreaming {
-        capture: capture_controller,
-        playback: playback.controller,
-        packet_tx,
-        packet_output_state,
+        audio_capture: audio_capture_controller,
+        audio_playback: audio_playback.controller,
+        audio_packet_command_tx: audio_packet_tx,
+        audio_playback_output_state: audio_packet_output_state,
         audio_shared_state,
         stream_addr,
-        device_registry,
+        audio_device_registry,
     });
 }

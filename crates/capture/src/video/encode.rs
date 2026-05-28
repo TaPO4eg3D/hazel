@@ -2,13 +2,14 @@ use core::panic;
 use std::collections::VecDeque;
 
 use ffmpeg_next::{
-    Rational, codec,
+    Dictionary, Rational, codec,
     encoder::{self},
     ffi::{
-        AV_BUFFERSRC_FLAG_KEEP_REF, AVFrame, AVPacket, AVPixelFormat, EAGAIN, av_buffer_ref,
-        av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx, av_buffersrc_add_frame_flags,
-        av_frame_alloc, av_frame_free, av_frame_unref, av_packet_alloc, av_packet_free,
-        av_packet_unref, avcodec_receive_packet, avcodec_send_frame,
+        AV_BUFFERSRC_FLAG_KEEP_REF, AV_CODEC_FLAG_CLOSED_GOP, AVFrame, AVPacket, AVPixelFormat,
+        EAGAIN, av_buffer_ref, av_buffersink_get_frame, av_buffersink_get_hw_frames_ctx,
+        av_buffersrc_add_frame_flags, av_frame_alloc, av_frame_free, av_frame_unref,
+        av_packet_alloc, av_packet_free, av_packet_unref, avcodec_receive_packet,
+        avcodec_send_frame,
     },
 };
 
@@ -19,6 +20,9 @@ use crate::video::wrapper::{
 pub struct VAAPIEncoderParams {
     pub height: u32,
     pub width: u32,
+
+    pub bitrate: u32,
+    pub framerate: u32,
 }
 
 pub struct VAAPIEncoder {
@@ -106,7 +110,7 @@ impl VAAPIEncoder {
             .video()
             .expect("Failed to alloc codec context");
 
-        let time_base = Rational(1, 1000000);
+        let time_base = Rational(1, params.framerate as i32);
 
         let device = GPUDevice::new().expect("Failed to open GPU Device");
         let hw_frame_ctx = HWFrameContextBuilder::new(&device)
@@ -161,18 +165,32 @@ impl VAAPIEncoder {
         unsafe {
             // The (input of the) sink is the output of the whole filter.
             let filter_output = *(*sink_filter.ctx).inputs;
+            let video_ctx = video.as_mut_ptr();
 
             video.set_width((*filter_output).w as u32);
             video.set_height((*filter_output).h as u32);
 
-            (*video.as_mut_ptr()).pix_fmt =
+            // Make keyframes self-contained
+            (*video_ctx).flags = AV_CODEC_FLAG_CLOSED_GOP as i32;
+            // B-Frames require buffering, disabling them
+            (*video_ctx).max_b_frames = 0;
+
+            // Effectively CBR
+            (*video_ctx).bit_rate = params.bitrate as i64;
+            (*video_ctx).rc_max_rate = params.bitrate as i64;
+            (*video_ctx).rc_min_rate = params.bitrate as i64;
+
+            (*video_ctx).rc_buffer_size = (params.bitrate / params.framerate) as i32;
+
+            (*video_ctx).pix_fmt =
                 std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);
+
             // NOTE: Encoder drop will unref this
-            (*video.as_mut_ptr()).hw_frames_ctx =
+            (*video_ctx).hw_frames_ctx =
                 av_buffer_ref(av_buffersink_get_hw_frames_ctx(sink_filter.ctx));
 
             video.set_time_base((*filter_output).time_base);
-            video.set_frame_rate(Some(Rational(0, 1)));
+            video.set_frame_rate(Some(Rational(params.framerate as i32, 1)));
             video.set_aspect_ratio((*filter_output).sample_aspect_ratio);
         }
 
@@ -187,7 +205,14 @@ impl VAAPIEncoder {
         }
 
         let hw_frame = VAAPIFrame::new(drm_frame, hw_frame_ctx.clone());
-        let encoder = video.open().expect("Failed to open the codec");
+
+        let mut encoder_options = Dictionary::new();
+        // Disable internal buffering in GPU
+        encoder_options.set("async_depth", "1");
+
+        let encoder = video
+            .open_with(encoder_options)
+            .expect("Failed to open the codec");
 
         Self {
             encoder,
