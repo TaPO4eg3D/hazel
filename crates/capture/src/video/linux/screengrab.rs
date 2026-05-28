@@ -1,4 +1,10 @@
-use std::{io::Cursor, os::fd::OwnedFd, thread};
+use std::{
+    io::Cursor,
+    os::fd::OwnedFd,
+    sync::{Arc, Mutex},
+    task::{Poll, Waker},
+    thread,
+};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -8,12 +14,14 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
-use drm_fourcc::{DrmFourcc, DrmModifier};
+use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
+use smallvec::smallvec;
 
 // TODO: Both should be configurable
 const DEFAULT_FRAMERATE: u32 = 60;
 const DEFAULT_BITRATE: u32 = 40 * 1000_u32.pow(2);
 
+use gpui::{DMABuffer, DMABufferPlane};
 use libspa::{
     buffer::{Data, DataType, meta::MetaHeader},
     param::{
@@ -35,6 +43,8 @@ use pipewire::{
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
+use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Split};
+use smallvec::SmallVec;
 use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
@@ -85,12 +95,14 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 }
 
 struct ScreencastStreamData {
-    tx: Sender<DecodedFrame>,
-
     encoder: Option<VAAPIEncoder>,
-    decoder: Option<VAAPIDecoder>,
 
     format: pw::spa::param::video::VideoInfoRaw,
+
+    preview_tx: FrameSender<gpui::DMABuffer>,
+
+    empty_frame_queue: Option<HeapCons<Vec<u8>>>,
+    ready_frame_queue: Option<HeapProd<Vec<u8>>>,
 }
 
 struct ScreencastStream {
@@ -98,8 +110,26 @@ struct ScreencastStream {
     _listener: StreamListener<ScreencastStreamData>,
 }
 
+struct ScreencastStreamParams {
+    core: CoreRc,
+    node_id: u32,
+
+    preview_tx: FrameSender<gpui::DMABuffer>,
+
+    empty_frame_queue: HeapCons<Vec<u8>>,
+    ready_frame_queue: HeapProd<Vec<u8>>,
+}
+
 impl ScreencastStream {
-    fn new(tx: Sender<DecodedFrame>, node_id: u32, core: CoreRc) -> AResult<Self> {
+    fn new(
+        ScreencastStreamParams {
+            node_id,
+            core,
+            preview_tx,
+            empty_frame_queue,
+            ready_frame_queue,
+        }: ScreencastStreamParams,
+    ) -> AResult<Self> {
         let stream = pw::stream::StreamRc::new(
             core.clone(),
             "hazel-screencapture",
@@ -112,10 +142,12 @@ impl ScreencastStream {
 
         let listener = stream
             .add_local_listener_with_user_data(ScreencastStreamData {
-                tx,
+                preview_tx,
+
                 encoder: None,
-                decoder: None,
                 format: Default::default(),
+                empty_frame_queue: Some(empty_frame_queue),
+                ready_frame_queue: Some(ready_frame_queue),
             })
             .param_changed(Self::on_param_changed)
             .process(Self::on_process)
@@ -228,7 +260,6 @@ impl ScreencastStream {
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
         this.encoder = None;
-        this.decoder = None;
 
         println!("Format updated: {:#?}", this.format);
 
@@ -320,35 +351,40 @@ impl ScreencastStream {
                 let width = this.format.size().width;
                 let height = this.format.size().height;
 
-                this.encoder = Some(VAAPIEncoder::new(
-                    VAAPIEncoderParams {
-                        height,
-                        width,
-                        framerate: DEFAULT_FRAMERATE,
-                        bitrate: DEFAULT_BITRATE,
-                    },
+                this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
+                    height,
+                    width,
                     drm_frame,
-                ));
 
-                this.decoder = Some(VAAPIDecoder::new(VAAPIDecoderParams { height, width }))
+                    framerate: DEFAULT_FRAMERATE,
+                    bitrate: DEFAULT_BITRATE,
+
+                    empty_frame_queue: this.empty_frame_queue.take().unwrap(),
+                    ready_frame_queue: this.ready_frame_queue.take().unwrap(),
+                }));
             }
         }
+
+        this.preview_tx.send(DMABuffer {
+            fd: drm_fd as i32,
+            width: drm_info.width as u32,
+            height: drm_info.height as u32,
+            format: DrmFormat {
+                code: drm_info.format,
+                modifier: drm_info.modifier,
+            },
+            planes: smallvec![DMABufferPlane {
+                offset: drm_info.plane_offset as usize,
+                stride: drm_info.plane_stride as usize,
+            }],
+        });
 
         // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
             let encoder = this.encoder.as_mut().unwrap();
-            let decoder = this.decoder.as_mut().unwrap();
 
             encoder.encode(header.seq() as i64);
-
-            while let Some(frame) = encoder.frame_queue.pop_front() {
-                decoder.decode(&frame);
-            }
-
-            while let Some(frame) = decoder.frame_queue.pop_front() {
-                _ = this.tx.send_blocking(frame);
-            }
         }
     }
 
@@ -386,27 +422,111 @@ impl ScreencastStream {
     }
 }
 
-pub struct ScreenCastHandle<T> {
-    pw_tx: pipewire::channel::Sender<()>,
-    session: Session<Screencast>,
+struct FrameChannelInner<T> {
+    frame: Option<T>,
+    waker: Option<Waker>,
 
-    frame_rx: Receiver<T>,
+    closed: bool,
 }
 
-impl<T> ScreenCastHandle<T> {
-    pub async fn close(self) -> AResult<()> {
-        self.session.close().await.map_err(anyhow::Error::from)?;
-        let _ = self.pw_tx.send(());
+struct FrameSender<T> {
+    inner: Arc<Mutex<FrameChannelInner<T>>>,
+}
 
-        Ok(())
+impl<T> Drop for FrameSender<T> {
+    fn drop(&mut self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.closed = true;
     }
 }
 
-pub async fn start_screencast() -> AResult<(())> {
-    let (session, node_id, fd) = open_portal().await.expect("failed to open portal");
+impl<T> FrameSender<T> {
+    fn send(&self, frame: T) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.frame = Some(frame);
+
+        if let Some(waker) = inner.waker.take() {
+            waker.wake();
+        }
+    }
+}
+
+struct FrameRecvFuture<T> {
+    inner: Arc<Mutex<FrameChannelInner<T>>>,
+}
+
+impl<T> Future for FrameRecvFuture<T> {
+    type Output = Option<T>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return Poll::Ready(None);
+        }
+
+        if inner.frame.is_none() {
+            inner.waker = Some(cx.waker().clone());
+
+            return Poll::Pending;
+        }
+
+        return Poll::Ready(inner.frame.take());
+    }
+}
+
+pub struct FrameRecv<T> {
+    inner: Arc<Mutex<FrameChannelInner<T>>>,
+}
+
+impl<T> FrameRecv<T> {
+    pub fn recv(&self) -> impl Future {
+        FrameRecvFuture {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
+    let inner = Arc::new(Mutex::new(FrameChannelInner {
+        frame: None,
+        waker: None,
+
+        closed: false,
+    }));
+
+    (
+        FrameSender {
+            inner: inner.clone(),
+        },
+        FrameRecv {
+            inner: inner.clone(),
+        },
+    )
+}
+
+pub type ScreencastPreview = FrameRecv<gpui::DMABuffer>;
+
+pub struct StartedScreencast {
+    pw_tx: pipewire::channel::Sender<()>,
+
+    empty_frame_queue: HeapProd<Vec<u8>>,
+    ready_frame_queue: HeapCons<Vec<u8>>,
+}
+
+pub async fn start_screencast() -> AResult<(StartedScreencast, ScreencastPreview)> {
+    let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
 
     let (pw_tx, pw_rx) = pipewire::channel::channel::<()>();
-    let (encoded_frame_tx, encoded_frame_rx) = bounded::<DecodedFrame>(1);
+    let (preview_tx, preview_rx) = frame_channel();
+
+    let ring = HeapRb::new(4);
+    let (empty_frame_queue_prod, emtpy_frame_queue_cons) = ring.split();
+
+    let ring = HeapRb::new(4);
+    let (ready_frame_queue_prod, ready_frame_queue_cons) = ring.split();
 
     pw::init();
 
@@ -415,8 +535,14 @@ pub async fn start_screencast() -> AResult<(())> {
         let context = pw::context::ContextRc::new(&mainloop, None)?;
         let core = context.connect_fd_rc(fd, None)?;
 
-        let _stream = ScreencastStream::new(encoded_frame_tx, node_id, core)
-            .expect("Failed to create screencast stream");
+        let _stream = ScreencastStream::new(ScreencastStreamParams {
+            core,
+            node_id,
+            preview_tx,
+            empty_frame_queue: emtpy_frame_queue_cons,
+            ready_frame_queue: ready_frame_queue_prod,
+        })
+        .expect("Failed to create screencast stream");
 
         let _attached = pw_rx.attach(mainloop.loop_(), {
             let mainloop = mainloop.clone();
@@ -431,11 +557,12 @@ pub async fn start_screencast() -> AResult<(())> {
         Ok::<_, anyhow::Error>(())
     });
 
-    Ok(())
-
-    // Ok(ScreenCastHandle {
-    //     session,
-    //     pw_tx,
-    //     encoded_frame_rx,
-    // })
+    Ok((
+        StartedScreencast {
+            pw_tx,
+            empty_frame_queue: empty_frame_queue_prod,
+            ready_frame_queue: ready_frame_queue_cons,
+        },
+        preview_rx,
+    ))
 }

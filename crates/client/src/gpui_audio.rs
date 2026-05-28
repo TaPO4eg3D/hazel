@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Result as AResult;
+
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::{
@@ -21,9 +23,10 @@ use capture::{
             PlaybackPacketCommand, PlaybackPacketInput,
         },
     },
+    video::linux::screengrab::{ScreencastPreview, StartedScreencast},
 };
 use crossbeam::channel;
-use gpui::{App, AppContext, Global};
+use gpui::{App, AppContext, AsyncApp, Global};
 
 use ringbuf::traits::Consumer as _;
 use rpc::models::markers::UserId;
@@ -346,6 +349,8 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 struct GlobalStreaming {
     stream_addr: UDPAddr,
 
+    active_screencast: Option<StartedScreencast>,
+
     audio_capture: CaptureController,
     audio_playback: PlaybackController,
 
@@ -414,6 +419,18 @@ impl Streaming {
 
             *state = Some((user_id, addr));
         });
+    }
+
+    pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
+        let (cast, preview) = capture::video::linux::screengrab::start_screencast()
+            .await
+            .ok()?;
+
+        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
+            stream.active_screencast = Some(cast);
+        });
+
+        Some(preview)
     }
 
     pub fn disconnect<C: AppContext>(cx: &C) {
@@ -488,6 +505,7 @@ pub fn init(cx: &mut App, debug: bool) {
         .unwrap();
 
     cx.set_global(GlobalStreaming {
+        active_screencast: None,
         audio_capture: audio_capture_controller,
         audio_playback: audio_playback.controller,
         audio_packet_command_tx: audio_packet_tx,

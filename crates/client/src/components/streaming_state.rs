@@ -6,7 +6,7 @@ use std::{
 use atomic_enum::atomic_enum;
 use capture::{
     audio::{AudioDevice, playback::AudioStreamingClientSharedState},
-    video::linux::screengrab::{ScreenCastHandle, start_screencast},
+    video::linux::screengrab::{ScreencastPreview, start_screencast},
 };
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Subscription, WeakEntity, Window};
 use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
@@ -163,6 +163,7 @@ impl NoiseReductionAlgorithm {
 
 pub struct StreamingState {
     pub voice_channels: Vec<VoiceChannel>,
+    pub screencast_preview: Option<ScreencastPreview>,
 
     pub capture_volume: Entity<SliderState>,
     pub playback_volume: Entity<SliderState>,
@@ -179,6 +180,8 @@ pub struct StreamingState {
 impl StreamingState {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = Self {
+            screencast_preview: None,
+
             voice_channels: vec![],
 
             capture_volume: cx.new(|_| {
