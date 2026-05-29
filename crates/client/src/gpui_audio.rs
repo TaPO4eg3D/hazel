@@ -28,7 +28,7 @@ use gpui::{App, AppContext, AsyncApp, Global};
 
 use ringbuf::traits::Consumer as _;
 use rpc::models::markers::UserId;
-use streaming_common::{EncodedAudioPacket, UDPPacket, UDPPacketType};
+use streaming_common::{EncodedAudioPacket, Ping, UDPPacket, UDPPayloadType, to_udp_packet_bytes};
 
 use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
 
@@ -163,12 +163,7 @@ impl PacketSender {
             let mut packet = EncodedAudioPacket::marker();
             packet.seq = self.audio.seq;
 
-            let udp_packet = UDPPacket {
-                user_id: user_id.value,
-                payload: UDPPacketType::Voice(packet),
-            };
-
-            udp_packet.to_bytes(&mut self.buf);
+            to_udp_packet_bytes(&mut self.buf, user_id.value, &packet);
 
             self.audio.seq += 1;
             self.last_send = Instant::now();
@@ -182,12 +177,7 @@ impl PacketSender {
         if let Some((user_id, addr)) = *self.addr.lock().unwrap() {
             self.buf.clear();
 
-            let udp_packet = UDPPacket {
-                user_id: user_id.value,
-                payload: UDPPacketType::Ping,
-            };
-
-            udp_packet.to_bytes(&mut self.buf);
+            to_udp_packet_bytes(&mut self.buf, user_id.value, &Ping);
 
             self.last_send = Instant::now();
             _ = self.socket.send_to(&self.buf, addr);
@@ -294,12 +284,7 @@ impl PacketSender {
                     self.buf.clear();
 
                     packet.seq = self.audio.seq;
-                    let udp_packet = UDPPacket {
-                        user_id: user_id.value,
-                        payload: UDPPacketType::Voice(packet),
-                    };
-
-                    udp_packet.to_bytes(&mut self.buf);
+                    to_udp_packet_bytes(&mut self.buf, user_id.value, &packet);
 
                     self.audio.seq += 1;
                     self.last_send = Instant::now();
@@ -321,11 +306,14 @@ impl PacketSender {
 }
 
 fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput) {
-    let mut buf = BytesMut::with_capacity(4800 * 2);
+    // Around 8 MByte to handle both high-quality audio and video at 4k
+    const BUF_SIZE: usize = 8 * 1024_usize.pow(2);
+
+    let mut buf = BytesMut::with_capacity(BUF_SIZE);
 
     loop {
         buf.clear();
-        buf.resize(4800 * 2, 0);
+        buf.resize(BUF_SIZE, 0);
 
         if let Ok(len) = socket.recv(&mut buf[..]) {
             buf.truncate(len);
@@ -335,8 +323,11 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 
             let user_id = packet.user_id;
             match packet.payload {
-                UDPPacketType::Voice(packet) => {
-                    packet_input.send(user_id, Instant::now(), packet);
+                UDPPayloadType::Audio(audio_bytes) => {
+                    let mut audio_packet = EncodedAudioPacket::default();
+                    audio_bytes.parse(&mut audio_packet);
+
+                    packet_input.send(user_id, Instant::now(), audio_packet);
                 }
                 _ => todo!(),
             }

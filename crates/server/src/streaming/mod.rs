@@ -4,7 +4,7 @@ use rpc::models::markers::{Id, User};
 use tokio::net::UdpSocket;
 
 use crate::AppState;
-use streaming_common::{UDPPacket, UDPPacketType};
+use streaming_common::{UDPPacket, UDPPayloadType};
 
 pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
     let sock = UdpSocket::bind(udp_addr).await.unwrap();
@@ -25,17 +25,11 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         buf.truncate(bytes_read);
 
         // To parse data but keep original bytes intact
-        let buf = buf.split().freeze();
-        let packet = {
-            let mut buf = buf.clone();
-
-            // TODO: We don't need to parse the whole packet
-            // only user_id and type would be enough
-            UDPPacket::parse(&mut buf)
-        };
+        let mut buf = buf.split().freeze();
+        let packet = UDPPacket::parse(&mut buf);
 
         // No need to process, the client wants to maintain UDP connection
-        if matches!(packet.payload, UDPPacketType::Ping) {
+        if matches!(packet.payload, UDPPayloadType::Ping(_)) {
             continue;
         }
 
