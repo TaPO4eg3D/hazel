@@ -121,9 +121,12 @@ impl ControlPanel {
 
 impl RenderOnce for ControlPanel {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
-        let can_stream = self
-            .streaming
-            .read_with(cx, |state, _| state.get_active_channel().is_some());
+        let (can_stream, is_streaming) = self.streaming.read_with(cx, |state, _| {
+            (
+                state.get_active_channel().is_some(),
+                state.preview_frame.is_some(),
+            )
+        });
 
         div()
             .p_4()
@@ -133,37 +136,61 @@ impl RenderOnce for ControlPanel {
             .border_1()
             .w_full()
             .border_color(cx.theme().secondary)
-            .child(
-                Button::new("start-streaming")
-                    .icon(IconName::ScreenShare)
-                    .label("Share screen")
-                    .max_w_64()
-                    .w_full()
-                    .when(!can_stream, |this| {
-                        this.disabled(!can_stream)
-                            .tooltip("Join a voice channel first")
-                    })
-                    .when(can_stream, |this| {
-                        this.on_click(window.listener_for(&self.streaming, |_, _, _, cx| {
-                            cx.spawn(async |state, cx| {
-                                if let Some(preview) = Streaming::start_screencast(cx).await {
-                                    state
-                                        .update(cx, move |this, cx| {
-                                            this.set_screencast_preview(preview, cx);
-                                        })
-                                        .ok();
-                                }
+            .when_else(
+                is_streaming,
+                |this| {
+                    this.child(
+                        Button::new("stop-streaming")
+                            .icon(IconName::ScreenShare)
+                            .label("Stop streaming")
+                            .max_w_64()
+                            .w_full()
+                            .danger(),
+                    )
+                },
+                |this| {
+                    this.child(
+                        Button::new("start-streaming")
+                            .icon(IconName::ScreenShare)
+                            .label("Share screen")
+                            .max_w_64()
+                            .w_full()
+                            .when(!can_stream, |this| {
+                                this.disabled(!can_stream)
+                                    .tooltip("Join a voice channel first")
                             })
-                            .detach();
-                        }))
-                    })
-                    .primary(),
+                            .when(can_stream, |this| {
+                                this.on_click(window.listener_for(
+                                    &self.streaming,
+                                    |_, _, _, cx| {
+                                        cx.spawn(async |state, cx| {
+                                            if let Some(preview) =
+                                                Streaming::start_screencast(cx).await
+                                            {
+                                                state
+                                                    .update(cx, move |this, cx| {
+                                                        this.set_screencast_preview(preview, cx);
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .detach();
+                                    },
+                                ))
+                            })
+                            .primary(),
+                    )
+                },
             )
             .child(
-                Label::new("Screen share is currently off")
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .ml_auto(),
+                Label::new(if is_streaming {
+                    "Your screen preview is playing"
+                } else {
+                    "No stream is playing"
+                })
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .ml_auto(),
             )
     }
 }
