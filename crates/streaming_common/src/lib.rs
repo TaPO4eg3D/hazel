@@ -1,5 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub const AUDIO_BUFF_SIZE: usize = 1024;
@@ -70,12 +68,6 @@ impl EncodedAudioPacket {
     }
 }
 
-pub struct EncodedVideoFrame {
-    pub seq: u64,
-    pub items: u16,
-    pub data: Vec<u8>,
-}
-
 impl IntoUDPPayload for EncodedAudioPacket {
     const TAG: u8 = 0;
 
@@ -121,8 +113,37 @@ impl<'a> EncodedAudioBytes<'a> {
     }
 }
 
+pub struct EncodedVideoFrame {
+    pub seq: u64,
+    pub data: Vec<u8>,
+}
+
+impl IntoUDPPayload for EncodedVideoFrame {
+    const TAG: u8 = 1;
+
+    fn to_bytes(&self, buf: &mut BytesMut) {
+        buf.put_u64_le(self.seq);
+        buf.put_u32_le(self.data.len() as u32);
+
+        buf.put(&self.data[..]);
+    }
+}
+
 #[derive(Debug)]
 pub struct EncodedVideoBytes<'a>(&'a mut Bytes);
+
+impl<'a> EncodedVideoBytes<'a> {
+    pub fn parse(self, packet: &mut EncodedVideoFrame) {
+        let bytes = self.0;
+
+        packet.seq = bytes.get_u64_le();
+        let len = bytes.get_u32_le() as usize;
+
+        if len > 0 {
+            bytes.copy_to_slice(&mut packet.data[..len]);
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum UDPPayloadType<'a> {
@@ -136,7 +157,7 @@ impl<'a> UDPPayloadType<'a> {
     pub fn from_byte(ty: u8, bytes: &'a mut Bytes) -> Self {
         match ty {
             EncodedAudioPacket::TAG => UDPPayloadType::Audio(EncodedAudioBytes(bytes)),
-            1 => UDPPayloadType::Video(EncodedVideoBytes(bytes)),
+            EncodedVideoFrame::TAG => UDPPayloadType::Video(EncodedVideoBytes(bytes)),
             Ping::TAG => UDPPayloadType::Ping(Ping),
             Pong::TAG => UDPPayloadType::Pong(Pong),
             _ => unreachable!(),

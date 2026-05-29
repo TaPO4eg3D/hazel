@@ -43,11 +43,17 @@ use pipewire::{
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
-use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Split};
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Producer, Split},
+};
 
-use crate::video::{
-    encode::{VAAPIEncoder, VAAPIEncoderParams},
-    wrapper::{DrmFrame, DrmInfo},
+use crate::{
+    CaptureNotifier,
+    video::{
+        encode::{VAAPIEncoder, VAAPIEncoderParams},
+        wrapper::{DrmFrame, DrmInfo},
+    },
 };
 
 async fn open_portal() -> ashpd::Result<(Session<Screencast>, u32, OwnedFd)> {
@@ -94,6 +100,7 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 struct ScreencastStreamData {
     encoder: Option<VAAPIEncoder>,
 
+    notifier: CaptureNotifier,
     format: pw::spa::param::video::VideoInfoRaw,
 
     preview_tx: FrameSender<gpui::DMABuffer>,
@@ -111,6 +118,8 @@ struct ScreencastStreamParams {
     core: CoreRc,
     node_id: u32,
 
+    notifier: CaptureNotifier,
+
     preview_tx: FrameSender<gpui::DMABuffer>,
 
     empty_frame_queue: HeapCons<Vec<u8>>,
@@ -122,6 +131,7 @@ impl ScreencastStream {
         ScreencastStreamParams {
             node_id,
             core,
+            notifier,
             preview_tx,
             empty_frame_queue,
             ready_frame_queue,
@@ -140,6 +150,8 @@ impl ScreencastStream {
         let listener = stream
             .add_local_listener_with_user_data(ScreencastStreamData {
                 preview_tx,
+
+                notifier,
 
                 encoder: None,
                 format: Default::default(),
@@ -382,6 +394,8 @@ impl ScreencastStream {
             let encoder = this.encoder.as_mut().unwrap();
 
             encoder.encode(header.seq() as i64);
+
+            this.notifier.notify_screen();
         }
     }
 
@@ -514,17 +528,35 @@ pub struct StartedScreencast {
     ready_frame_queue: HeapCons<Vec<u8>>,
 }
 
-pub async fn start_screencast() -> AResult<(StartedScreencast, ScreencastPreview)> {
+impl StartedScreencast {
+    pub fn push_emtpy_frame(&mut self, frame: Vec<u8>) {
+        if self.empty_frame_queue.try_push(frame).is_err() {
+            todo!("handle the case");
+        }
+    }
+
+    pub fn get_ready_frame(&mut self) -> Option<Vec<u8>> {
+        self.ready_frame_queue.try_pop()
+    }
+}
+
+pub async fn start_screencast(
+    notifier: CaptureNotifier,
+) -> AResult<(StartedScreencast, ScreencastPreview)> {
     let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
 
     let (pw_tx, pw_rx) = pipewire::channel::channel::<()>();
     let (preview_tx, preview_rx) = frame_channel();
 
     let ring = HeapRb::new(4);
-    let (empty_frame_queue_prod, emtpy_frame_queue_cons) = ring.split();
+    let (mut empty_frame_queue_prod, emtpy_frame_queue_cons) = ring.split();
 
     let ring = HeapRb::new(4);
     let (ready_frame_queue_prod, ready_frame_queue_cons) = ring.split();
+
+    for _ in 0..4 {
+        _ = empty_frame_queue_prod.try_push(vec![]);
+    }
 
     pw::init();
 
@@ -537,6 +569,7 @@ pub async fn start_screencast() -> AResult<(StartedScreencast, ScreencastPreview
             core,
             node_id,
             preview_tx,
+            notifier,
             empty_frame_queue: emtpy_frame_queue_cons,
             ready_frame_queue: ready_frame_queue_prod,
         })
