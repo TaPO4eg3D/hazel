@@ -46,8 +46,8 @@ pub struct VAAPIEncoder {
 
     packet: *mut AVPacket,
 
-    pub empty_frame_queue: HeapCons<Vec<u8>>,
-    pub ready_frame_queue: HeapProd<Vec<u8>>,
+    pub(crate) empty_frame_queue: HeapCons<Vec<u8>>,
+    pub(crate) ready_frame_queue: HeapProd<Vec<u8>>,
 }
 
 impl Drop for VAAPIEncoder {

@@ -28,7 +28,9 @@ use gpui::{App, AppContext, AsyncApp, Global};
 
 use ringbuf::traits::Consumer as _;
 use rpc::models::markers::UserId;
-use streaming_common::{EncodedAudioPacket, Ping, UDPPacket, UDPPayloadType, to_udp_packet_bytes};
+use streaming_common::{
+    EncodedAudioPacket, EncodedVideoFrame, Ping, UDPPacket, UDPPayloadType, to_udp_packet_bytes,
+};
 
 use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
 
@@ -54,11 +56,16 @@ impl AudioStreamingSharedState {
     }
 }
 
-struct ScreenStreamingData {}
+type SharedStartedScreencast = Arc<Mutex<Option<StartedScreencast>>>;
+
+struct ScreenStreamingData {
+    seq: u64,
+    screencast: SharedStartedScreencast,
+}
 
 impl ScreenStreamingData {
-    fn new() -> Self {
-        Self {}
+    fn new(screencast: SharedStartedScreencast) -> Self {
+        Self { seq: 0, screencast }
     }
 }
 
@@ -138,6 +145,7 @@ impl PacketSender {
         addr: UDPAddr,
         socket: Arc<UdpSocket>,
         audio_state: AudioStreamingState,
+        screen_state: ScreenStreamingData,
         notifier: CaptureNotifier,
     ) -> Self {
         Self {
@@ -147,7 +155,7 @@ impl PacketSender {
             notifier,
 
             audio: audio_state,
-            screen: ScreenStreamingData::new(),
+            screen: screen_state,
 
             addr,
             socket,
@@ -255,7 +263,35 @@ impl PacketSender {
         }
     }
 
-    fn process_screen_frame(&mut self) {}
+    fn process_video_frame(&mut self) {
+        let Some((user_id, addr)) = *self.addr.lock().unwrap() else {
+            return;
+        };
+
+        let mut screencast = self.screen.screencast.lock().unwrap();
+        let Some(screencast) = screencast.as_mut() else {
+            return;
+        };
+
+        let Some(frame) = screencast.get_ready_frame() else {
+            return;
+        };
+
+        let packet = EncodedVideoFrame {
+            seq: self.screen.seq,
+            data: frame,
+        };
+
+        self.buf.clear();
+        to_udp_packet_bytes(&mut self.buf, user_id.value, &packet);
+
+        if let Err(err) = self.socket.send_to(&self.buf, addr) {
+            println!("{err:?}");
+        }
+
+        self.screen.seq += 1;
+        screencast.push_emtpy_frame(packet.data);
+    }
 
     fn run(mut self) {
         loop {
@@ -266,7 +302,9 @@ impl PacketSender {
                     self.process_audio_samples();
                 }
 
-                if state.is_screen_ready {}
+                if state.is_screen_ready {
+                    self.process_video_frame();
+                }
             }
 
             let is_enabled = self.audio.capture.is_enabled.load(Ordering::Relaxed);
@@ -329,6 +367,9 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 
                     packet_input.send(user_id, Instant::now(), audio_packet);
                 }
+                UDPPayloadType::Video(video_bytes) => {
+                    println!("got video!");
+                }
                 _ => todo!(),
             }
         }
@@ -338,7 +379,8 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 struct GlobalStreaming {
     stream_addr: UDPAddr,
 
-    active_screencast: Option<StartedScreencast>,
+    capture_notifier: CaptureNotifier,
+    active_screencast: SharedStartedScreencast,
 
     audio_capture: CaptureController,
     audio_playback: PlaybackController,
@@ -411,12 +453,16 @@ impl Streaming {
     }
 
     pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
-        let (cast, preview) = capture::video::linux::screengrab::start_screencast()
+        let notifier =
+            cx.read_global(|stream: &GlobalStreaming, cx| stream.capture_notifier.clone());
+
+        let (cast, preview) = capture::video::linux::screengrab::start_screencast(notifier)
             .await
             .ok()?;
 
         cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
-            stream.active_screencast = Some(cast);
+            let mut active_screencast = stream.active_screencast.lock().unwrap();
+            *active_screencast = Some(cast);
         });
 
         Some(preview)
@@ -462,18 +508,23 @@ pub fn init(cx: &mut App, debug: bool) {
 
     let audio_capture_controller = audio_capture.get_controller();
 
+    let active_screencast = Arc::new(Mutex::new(None));
+
     thread::Builder::new()
         .name("udp-sender".into())
         .spawn({
             let addr = stream_addr.clone();
             let socket = socket.clone();
             let shared = audio_shared_state.clone();
+            let active_screencast = active_screencast.clone();
+            let capture_notifier = capture_notifier.clone();
 
             move || {
                 let sender = PacketSender::new(
                     addr,
                     socket,
                     AudioStreamingState::new(shared, audio_capture),
+                    ScreenStreamingData::new(active_screencast),
                     capture_notifier,
                 );
 
@@ -494,7 +545,8 @@ pub fn init(cx: &mut App, debug: bool) {
         .unwrap();
 
     cx.set_global(GlobalStreaming {
-        active_screencast: None,
+        active_screencast,
+        capture_notifier,
         audio_capture: audio_capture_controller,
         audio_playback: audio_playback.controller,
         audio_packet_command_tx: audio_packet_tx,

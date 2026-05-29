@@ -14,8 +14,11 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
     let mut buf = BytesMut::with_capacity(4800 * 4);
 
     loop {
+        // Around 8 MByte to handle both high-quality audio and video at 4k
+        const BUF_SIZE: usize = 8 * 1024_usize.pow(2);
+
         buf.clear();
-        buf.resize(4800 * 4, 0);
+        buf.resize(BUF_SIZE, 0);
 
         let (bytes_read, addr) = sock.recv_from(&mut buf).await?;
 
@@ -25,12 +28,18 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         buf.truncate(bytes_read);
 
         // To parse data but keep original bytes intact
-        let mut buf = buf.split().freeze();
-        let packet = UDPPacket::parse(&mut buf);
+        let buf = buf.split().freeze();
+
+        let mut _buf = buf.clone();
+        let packet = UDPPacket::parse(&mut _buf);
 
         // No need to process, the client wants to maintain UDP connection
         if matches!(packet.payload, UDPPayloadType::Ping(_)) {
             continue;
+        }
+
+        if matches!(packet.payload, UDPPayloadType::Video(_)) {
+            println!("video!");
         }
 
         let current_user_id = Id::<User>::new(packet.user_id);
