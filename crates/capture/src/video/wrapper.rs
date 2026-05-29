@@ -622,6 +622,7 @@ impl DrmFrame {
     }
 }
 
+#[allow(dead_code)]
 pub struct VAAPIFrame {
     pub(crate) av_frame: *mut AVFrame,
     drm_frame: DrmFrame,

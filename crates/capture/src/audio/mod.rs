@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
     task::{Poll, Waker},
     thread::{self},
     time::Duration,

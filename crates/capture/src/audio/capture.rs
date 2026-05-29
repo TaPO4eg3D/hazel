@@ -1,17 +1,11 @@
-use std::{
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use ringbuf::HeapCons;
 
-use crate::{
-    CaptureNotifier,
-    audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder},
-};
+use crate::audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder};
 
 #[derive(Clone)]
 pub struct CaptureController {

@@ -1,4 +1,6 @@
-use gpui::{Entity, IntoElement, ParentElement, RenderOnce, Styled, div, prelude::FluentBuilder};
+use gpui::{
+    Entity, IntoElement, ParentElement, RenderOnce, Styled, div, prelude::FluentBuilder, surface,
+};
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, Size, StyledExt as _,
     button::{Button, ButtonVariants},
@@ -47,47 +49,60 @@ impl ScreenSpace {
 
 impl RenderOnce for ScreenSpace {
     fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        let state = self.streaming.read(cx);
+
         div()
             .v_flex()
-            .items_center()
-            .justify_center()
             .rounded_xl()
             .border_1()
             .size_full()
             .border_color(cx.theme().secondary)
-            .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .size_16()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(cx.theme().muted_foreground)
-                    .child(
-                        Icon::new(IconName::ScreenShare)
-                            .with_size(Size::Large)
+            .when_some(state.preview_frame.as_ref(), |this, frame| {
+                this.child(surface(frame.clone()).size_full())
+            })
+            // No stream placeholder
+            .when_none(&state.preview_frame, |this| {
+                this.child(
+                    div()
+                        .v_flex()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .flex()
+                                .justify_center()
+                                .items_center()
+                                .size_16()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(cx.theme().muted_foreground)
+                                .child(
+                                    Icon::new(IconName::ScreenShare)
+                                        .with_size(Size::Large)
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .bg(cx.theme().secondary),
+                        )
+                        .child(
+                            Label::new("Stream is not selected")
+                                .mt_4()
+                                .text_base()
+                                .font_semibold(),
+                        )
+                        .child(
+                            Label::new(
+                                "Only one stream can be selected at a time. \
+                            Right click on a member and select \"Watch stream\" option",
+                            )
+                            .mt_2()
+                            .max_w_112()
+                            .text_center()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground),
-                    )
-                    .bg(cx.theme().secondary),
-            )
-            .child(
-                Label::new("Stream is not selected")
-                    .mt_4()
-                    .text_base()
-                    .font_semibold(),
-            )
-            .child(
-                Label::new(
-                    "Only one stream can be selected at a time. \
-                    Right click on a member and select \"Watch stream\" option",
+                        ),
                 )
-                .mt_2()
-                .max_w_112()
-                .text_center()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground),
-            )
+            })
     }
 }
 
@@ -131,7 +146,13 @@ impl RenderOnce for ControlPanel {
                     .when(can_stream, |this| {
                         this.on_click(window.listener_for(&self.streaming, |_, _, _, cx| {
                             cx.spawn(async |state, cx| {
-                                Streaming::start_screencast(cx).await;
+                                if let Some(preview) = Streaming::start_screencast(cx).await {
+                                    state
+                                        .update(cx, move |this, cx| {
+                                            this.set_screencast_preview(preview, cx);
+                                        })
+                                        .ok();
+                                }
                             })
                             .detach();
                         }))

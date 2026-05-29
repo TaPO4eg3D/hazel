@@ -6,9 +6,12 @@ use std::{
 use atomic_enum::atomic_enum;
 use capture::{
     audio::{AudioDevice, playback::AudioStreamingClientSharedState},
-    video::linux::screengrab::{ScreencastPreview, start_screencast},
+    video::linux::screengrab::ScreencastPreview,
 };
-use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Subscription, WeakEntity, Window};
+use gpui::{
+    AppContext, AsyncApp, Context, DMABuffer, Entity, SharedString, Subscription, Task, WeakEntity,
+    Window,
+};
 use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
 use rpc::{
     common::Empty,
@@ -163,7 +166,6 @@ impl NoiseReductionAlgorithm {
 
 pub struct StreamingState {
     pub voice_channels: Vec<VoiceChannel>,
-    pub screencast_preview: Option<ScreencastPreview>,
 
     pub capture_volume: Entity<SliderState>,
     pub playback_volume: Entity<SliderState>,
@@ -175,12 +177,16 @@ pub struct StreamingState {
     pub output_devices: Vec<AudioDevice>,
 
     noise_reduction: NoiseReductionAlgorithm,
+
+    screencast_preview_task: Option<Task<()>>,
+    pub preview_frame: Option<DMABuffer>,
 }
 
 impl StreamingState {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = Self {
-            screencast_preview: None,
+            screencast_preview_task: None,
+            preview_frame: None,
 
             voice_channels: vec![],
 
@@ -602,19 +608,16 @@ impl StreamingState {
         .detach();
     }
 
-    pub fn start_screencast(&mut self, cx: Context<Self>) {
-        cx.spawn(async |this, cx| {
-            let Ok(handle) = start_screencast().await else {
-                todo!("Handle screencast failing");
-            };
+    pub fn set_screencast_preview(&mut self, preview: ScreencastPreview, cx: &mut Context<Self>) {
+        self.screencast_preview_task = Some(cx.spawn(async move |this, cx| {
+            while let Some(frame) = preview.recv().await {
+                this.update(cx, |this, cx| {
+                    this.preview_frame = Some(frame);
 
-            this.update(cx, move |this, cx| {
-                // this.screencast_handle = Some(handle);
-
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+                    cx.notify();
+                })
+                .ok();
+            }
+        }));
     }
 }

@@ -65,6 +65,7 @@ impl CaptureNotifier {
         self.inner.condvar.notify_one();
     }
 
+    #[allow(dead_code)]
     pub(crate) fn notify_screen(&self) {
         let mut state = self.inner.state.lock().unwrap();
         state.is_screen_ready = true;
