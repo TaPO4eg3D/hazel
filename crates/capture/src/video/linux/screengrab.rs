@@ -44,11 +44,8 @@ use pipewire::{
     stream::{Stream, StreamListener, StreamRc},
 };
 use ringbuf::{HeapCons, HeapProd, HeapRb, traits::Split};
-use smallvec::SmallVec;
-use smol::channel::{Receiver, Sender, bounded};
 
 use crate::video::{
-    decode::{DecodedFrame, VAAPIDecoder, VAAPIDecoderParams},
     encode::{VAAPIEncoder, VAAPIEncoderParams},
     wrapper::{DrmFrame, DrmInfo},
 };
@@ -451,7 +448,7 @@ impl<T> FrameSender<T> {
     }
 }
 
-struct FrameRecvFuture<T> {
+pub struct FrameRecvFuture<T> {
     inner: Arc<Mutex<FrameChannelInner<T>>>,
 }
 
@@ -482,7 +479,7 @@ pub struct FrameRecv<T> {
 }
 
 impl<T> FrameRecv<T> {
-    pub fn recv(&self) -> impl Future {
+    pub fn recv(&self) -> FrameRecvFuture<T> {
         FrameRecvFuture {
             inner: self.inner.clone(),
         }
@@ -509,6 +506,7 @@ fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
 
 pub type ScreencastPreview = FrameRecv<gpui::DMABuffer>;
 
+#[allow(dead_code)]
 pub struct StartedScreencast {
     pw_tx: pipewire::channel::Sender<()>,
 

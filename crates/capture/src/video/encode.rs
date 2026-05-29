@@ -1,5 +1,4 @@
 use core::panic;
-use std::collections::VecDeque;
 
 use ffmpeg_next::{
     Dictionary, Rational, codec,

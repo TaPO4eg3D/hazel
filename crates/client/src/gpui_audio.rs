@@ -8,8 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result as AResult;
-
 use atomic_float::AtomicF32;
 use bytes::{Bytes, BytesMut};
 use capture::{
