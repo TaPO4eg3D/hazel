@@ -77,10 +77,14 @@ impl RenderOnce for VoiceMemberComponent {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let current_user = ConnectionManger::get_user_id(cx);
 
-        let (is_capture_disabled, is_playback_disabled) = {
+        let (is_capture_disabled, is_playback_disabled, has_preview) = {
             let state = self.streaming_state.read(cx);
 
-            (!state.is_capture_enabled, !state.is_playback_enabled)
+            (
+                !state.is_capture_enabled,
+                !state.is_playback_enabled,
+                state.preview_frame.is_some(),
+            )
         };
 
         let secondary = cx.theme().secondary;
@@ -90,13 +94,19 @@ impl RenderOnce for VoiceMemberComponent {
         let is_mic_off = if is_me {
             is_capture_disabled
         } else {
-            self.member.is_mic_off
+            self.member.state.is_mic_off
         };
 
         let is_sound_off = if is_me {
             is_playback_disabled
         } else {
-            self.member.is_sound_off
+            self.member.state.is_sound_off
+        };
+
+        let is_streaming = if is_me {
+            has_preview
+        } else {
+            self.member.state.is_streaming
         };
 
         // `is_talking` is special and managed internally
@@ -126,7 +136,7 @@ impl RenderOnce for VoiceMemberComponent {
                                     .items_center()
                                     .gap_2()
                                     .child(Label::new(self.member.name.clone()).mt(px(0.5)))
-                                    .when(self.member.is_streaming, |this| {
+                                    .when(is_streaming, |this| {
                                         this.child(
                                             Icon::new(IconName::ScreenShare)
                                                 .text_color(cx.theme().info)
@@ -177,7 +187,7 @@ impl RenderOnce for VoiceMemberComponent {
                             .w_48()
                             .p_2()
                             .gap_2()
-                            .when(self.member.is_streaming, |this| {
+                            .when(self.member.state.is_streaming, |this| {
                                 this.child(
                                     CtxPopoverButton::new("watch-stream")
                                         .label("Watch stream")

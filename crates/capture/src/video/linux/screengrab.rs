@@ -19,7 +19,7 @@ use smallvec::smallvec;
 
 // TODO: Both should be configurable
 const DEFAULT_FRAMERATE: u32 = 60;
-const DEFAULT_BITRATE: u32 = 40 * 1000_u32.pow(2);
+const DEFAULT_BITRATE: u32 = 10 * 1000_u32.pow(2);
 
 use gpui::{DMABuffer, DMABufferPlane};
 use libspa::{

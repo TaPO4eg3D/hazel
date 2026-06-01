@@ -10,7 +10,7 @@ use rpc::{
         common::RPCNotification,
         general::{UserConnectionUpdate, UserConnectionUpdateMessage},
         markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
-        voice::{VoiceChannelUpdate, VoiceChannelUpdateMessage},
+        voice::{VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState},
     },
     server::{RpcRouter, RpcWriter, serve},
 };
@@ -32,20 +32,16 @@ mod streaming;
 
 pub type GlobalRouter = RpcRouter<AppState, ConnectionState>;
 
-pub struct VoiceUser {
+pub struct VoiceChannelUser {
     id: UserId,
-
-    is_muted: bool,
-    is_sound_off: bool,
+    state: VoiceChannelUserState,
 }
 
-impl VoiceUser {
+impl VoiceChannelUser {
     pub fn new(id: UserId) -> Self {
         Self {
             id,
-
-            is_muted: false,
-            is_sound_off: false,
+            state: VoiceChannelUserState::default(),
         }
     }
 }
@@ -53,7 +49,7 @@ impl VoiceUser {
 /// This state holds connected users to respective channels
 pub struct ChannelsState {
     pub text_channels: DashMap<TextChannelId, Vec<UserId>>,
-    pub voice_channels: DashMap<VoiceChannelId, Vec<VoiceUser>>,
+    pub voice_channels: DashMap<VoiceChannelId, Vec<VoiceChannelUser>>,
 }
 
 impl ChannelsState {

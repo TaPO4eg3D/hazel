@@ -21,7 +21,8 @@ use rpc::{
         markers::{UserId, VoiceChannelId},
         voice::{
             GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, LeaveVoiceChannel,
-            UpdateVoiceUserState, VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceUserState,
+            UpdateVoiceChannelUserState, VoiceChannelUpdate, VoiceChannelUpdateMessage,
+            VoiceChannelUserState,
         },
     },
 };
@@ -49,10 +50,7 @@ pub struct VoiceChannelMember {
     pub id: UserId,
     pub name: SharedString,
 
-    pub is_muted: bool,
-    pub is_mic_off: bool,
-    pub is_sound_off: bool,
-    pub is_streaming: bool,
+    pub state: VoiceChannelUserState,
     pub is_talking: bool,
 
     pub output_volume: Entity<SliderState>,
@@ -61,7 +59,12 @@ pub struct VoiceChannelMember {
 }
 
 impl VoiceChannelMember {
-    pub fn new(id: UserId, name: SharedString, cx: &mut Context<StreamingState>) -> Self {
+    pub fn new(
+        id: UserId,
+        name: SharedString,
+        state: VoiceChannelUserState,
+        cx: &mut Context<StreamingState>,
+    ) -> Self {
         let output_volume = cx.new(|_cx| {
             SliderState::new()
                 .min(0.)
@@ -73,14 +76,10 @@ impl VoiceChannelMember {
         VoiceChannelMember {
             id,
             name,
-            is_muted: false,
-            is_mic_off: false,
-            is_sound_off: false,
-            is_streaming: true,
+            state,
             is_talking: false,
             output_volume,
             shared: None,
-            // _volume_subscription: subscription,
         }
     }
 
@@ -280,20 +279,25 @@ impl StreamingState {
         cx.spawn(async move |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let Some((is_sound_off, is_mic_off)) = this
+            let Some((is_sound_off, is_mic_off, is_streaming)) = this
                 .read_with(cx, |this, _cx| {
-                    (!this.is_playback_enabled, !this.is_capture_enabled)
+                    (
+                        !this.is_playback_enabled,
+                        !this.is_capture_enabled,
+                        this.preview_frame.is_some(),
+                    )
                 })
                 .ok()
             else {
                 return;
             };
 
-            let _response = UpdateVoiceUserState::execute(
+            let _response = UpdateVoiceChannelUserState::execute(
                 &connection,
-                &VoiceUserState {
+                &VoiceChannelUserState {
                     is_sound_off,
                     is_mic_off,
+                    is_streaming,
                 },
             )
             .await;
@@ -435,7 +439,9 @@ impl StreamingState {
                     members: channel
                         .members
                         .into_iter()
-                        .map(|member| VoiceChannelMember::new(member.id, member.name.into(), cx))
+                        .map(|member| {
+                            VoiceChannelMember::new(member.id, member.name.into(), member.state, cx)
+                        })
                         .collect(),
                 })
                 .collect();
@@ -506,8 +512,12 @@ impl StreamingState {
                                 return;
                             };
 
-                            let mut member =
-                                VoiceChannelMember::new(user.id, user.username.into(), cx);
+                            let mut member = VoiceChannelMember::new(
+                                user.id,
+                                user.username.into(),
+                                VoiceChannelUserState::default(),
+                                cx,
+                            );
 
                             if channel.is_active {
                                 member.register(cx);
@@ -540,8 +550,7 @@ impl StreamingState {
                             if let Some(user) =
                                 channel.members.iter_mut().find(|user| user.id == user_id)
                             {
-                                user.is_mic_off = state.is_mic_off;
-                                user.is_sound_off = state.is_sound_off;
+                                user.state = state;
 
                                 cx.notify();
                             }
@@ -613,6 +622,7 @@ impl StreamingState {
             while let Some(frame) = preview.recv().await {
                 this.update(cx, |this, cx| {
                     this.preview_frame = Some(frame);
+                    this.sync_server_state(cx);
 
                     cx.notify();
                 })

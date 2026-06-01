@@ -1,13 +1,10 @@
-use std::time::Duration;
-
 use gpui::{
-    Anchor, Animation, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement,
-    MouseDownEvent, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, div, ease_in_out, prelude::FluentBuilder, px, relative, rgb,
-    white,
+    Anchor, App, Bounds, ElementId, Entity, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, div, prelude::FluentBuilder, relative, rgb, white,
 };
 use gpui_component::{
-    ActiveTheme, ElementExt, Icon, Sizable, Size, StyledExt,
+    ActiveTheme, ElementExt, Icon, StyledExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     label::Label,
@@ -16,209 +13,13 @@ use gpui_component::{
 };
 
 use crate::{
-    ConnectionManger,
     assets::IconName,
-    components::{
-        animation::HoverAnimationExt,
-        streaming_state::{NoiseReductionAlgorithm, StreamingState},
-    },
+    components::streaming_state::{NoiseReductionAlgorithm, StreamingState},
     gpui_audio::Streaming,
 };
 
 pub mod text_channels;
 pub mod voice_channels;
-
-type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;
-
-#[derive(IntoElement)]
-pub struct VoiceChannelsComponent {
-    streaming_state: Entity<StreamingState>,
-
-    is_collapsed: bool,
-    on_toggle_click: Option<EventCallback<bool>>,
-}
-
-impl VoiceChannelsComponent {
-    pub fn new(streaming_state: &Entity<StreamingState>) -> Self {
-        Self {
-            streaming_state: streaming_state.clone(),
-
-            is_collapsed: false,
-            on_toggle_click: None,
-        }
-    }
-
-    pub fn is_collapsed(mut self, value: bool) -> Self {
-        self.is_collapsed = value;
-
-        self
-    }
-
-    pub fn on_toggle_click(
-        mut self,
-        on_toggle_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_toggle_click = Some(Box::new(on_toggle_click));
-
-        self
-    }
-}
-
-impl RenderOnce for VoiceChannelsComponent {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let voice_channels = { self.streaming_state.read(cx).voice_channels.clone() };
-
-        let secondary = cx.theme().secondary;
-
-        let current_user = ConnectionManger::get_user_id(cx);
-        let (is_mic_off, is_sound_off) = {
-            let state = self.streaming_state.read(cx);
-
-            (!state.is_capture_enabled, !state.is_playback_enabled)
-        };
-
-        let channels = voice_channels.iter().map(|channel| {
-            let muted = cx.theme().muted;
-
-            let members = channel.members.iter().map(|member| {
-                let is_me = current_user.is_some_and(|id| member.id == id);
-
-                div().id(ElementId::Integer(member.id.value as u64)).child(
-                    div()
-                        .rounded_lg()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .py_2()
-                                .px_3()
-                                .child(Icon::new(IconName::User).mr_2().with_size(Size::Medium))
-                                .child(Label::new(member.name.clone()).mt(px(0.5)))
-                                // Status icons
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_1()
-                                        .ml_auto()
-                                        .when(member.is_mic_off || is_me && is_mic_off, |this| {
-                                            this.child(
-                                                Icon::new(IconName::MicOff)
-                                                    .text_color(cx.theme().danger)
-                                                    .with_size(Size::XSmall),
-                                            )
-                                        })
-                                        .when(
-                                            member.is_sound_off || is_me && is_sound_off,
-                                            |this| {
-                                                this.child(
-                                                    Icon::new(IconName::HeadphoneOff)
-                                                        .text_color(cx.theme().danger)
-                                                        .with_size(Size::XSmall),
-                                                )
-                                            },
-                                        )
-                                        // `is_talking` is special since it's managed internally
-                                        .when(member.is_talking, |this| {
-                                            this.child(
-                                                div().size_2().rounded_full().bg(rgb(0x00C950)),
-                                            )
-                                        }),
-                                ),
-                        )
-                        .with_hover_animation(
-                            "hover-bg",
-                            Animation::new(Duration::from_millis(200)).with_easing(ease_in_out),
-                            move |this, delta| this.bg(secondary.opacity(delta)),
-                        ),
-                )
-            });
-
-            let channel_id = channel.id;
-            let is_active = channel.is_active;
-
-            div()
-                .id(ElementId::Integer(channel.id.value as u64))
-                .v_flex()
-                // Clickable channel title
-                .child(
-                    div()
-                        .id("channel-title")
-                        .child(
-                            div()
-                                .rounded_lg()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .py_2()
-                                        .px_3()
-                                        .child(
-                                            Icon::new(IconName::VolumeFull)
-                                                .mr_2()
-                                                .with_size(Size::Medium),
-                                        )
-                                        .child(Label::new(channel.name.clone()).mt(px(0.5))),
-                                )
-                                .with_hover_animation(
-                                    "hover-bg",
-                                    Animation::new(Duration::from_millis(200))
-                                        .with_easing(ease_in_out),
-                                    move |this, delta| {
-                                        if is_active {
-                                            this.bg(muted.opacity(1. - delta.min(0.2)))
-                                        } else {
-                                            this.bg(secondary.opacity(delta))
-                                        }
-                                    },
-                                ),
-                        )
-                        .on_click(window.listener_for(
-                            &self.streaming_state,
-                            move |state, _, window, cx| {
-                                state.join_voice_channel(&channel_id, window, cx);
-                            },
-                        )),
-                )
-                // Members of the channel
-                .child(div().id("members").mt_1().ml_4().children(members))
-        });
-
-        div()
-            .id("voice-channels")
-            .p_3()
-            .w_full()
-            .v_flex()
-            .child(
-                div()
-                    .mb_2()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .child(Label::new("Voice channels").text_sm().font_semibold())
-                    .child(
-                        Button::new("collapse")
-                            .ml_auto()
-                            .cursor_pointer()
-                            .icon({
-                                if self.is_collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                }
-                            })
-                            .ghost()
-                            .when_some(self.on_toggle_click, |this, on_toggle_click| {
-                                this.on_click(move |_, window, cx| {
-                                    on_toggle_click(&!self.is_collapsed, window, cx);
-                                })
-                            }),
-                    ),
-            )
-            .when(!self.is_collapsed, |this| {
-                this.child(div().v_flex().children(channels))
-            })
-    }
-}
 
 #[derive(IntoElement)]
 pub struct ControlPanel {
