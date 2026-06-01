@@ -38,10 +38,6 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
             continue;
         }
 
-        if matches!(packet.payload, UDPPayloadType::Video(_)) {
-            println!("video!");
-        }
-
         let current_user_id = Id::<User>::new(packet.user_id);
 
         let (voice_channel, addr_differs) = match state.connected_clients.get(&current_user_id) {

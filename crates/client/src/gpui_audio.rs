@@ -285,8 +285,8 @@ impl PacketSender {
         self.buf.clear();
         to_udp_packet_bytes(&mut self.buf, user_id.value, &packet);
 
-        if let Err(err) = self.socket.send_to(&self.buf, addr) {
-            println!("{err:?}");
+        if let Err(_err) = self.socket.send_to(&self.buf, addr) {
+            // println!("{err:?}");
         }
 
         self.screen.seq += 1;
@@ -367,9 +367,7 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
 
                     packet_input.send(user_id, Instant::now(), audio_packet);
                 }
-                UDPPayloadType::Video(video_bytes) => {
-                    println!("got video!");
-                }
+                UDPPayloadType::Video(_video_bytes) => {}
                 _ => todo!(),
             }
         }
@@ -454,7 +452,7 @@ impl Streaming {
 
     pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
         let notifier =
-            cx.read_global(|stream: &GlobalStreaming, cx| stream.capture_notifier.clone());
+            cx.read_global(|stream: &GlobalStreaming, _cx| stream.capture_notifier.clone());
 
         let (cast, preview) = capture::video::linux::screengrab::start_screencast(notifier)
             .await

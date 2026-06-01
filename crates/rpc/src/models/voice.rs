@@ -12,8 +12,7 @@ pub struct VoiceChannelMember {
     pub id: UserId,
     pub name: String,
 
-    pub is_muted: bool,
-    pub is_sound_off: bool,
+    pub state: VoiceChannelUserState,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -55,15 +54,16 @@ pub struct LeaveVoiceChannel {
     error: (),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub struct VoiceUserState {
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+pub struct VoiceChannelUserState {
     pub is_mic_off: bool,
     pub is_sound_off: bool,
+    pub is_streaming: bool,
 }
 
 #[rpc_method]
-pub struct UpdateVoiceUserState {
-    request: VoiceUserState,
+pub struct UpdateVoiceChannelUserState {
+    request: VoiceChannelUserState,
     response: (),
     error: (),
 }
@@ -72,7 +72,7 @@ pub struct UpdateVoiceUserState {
 pub enum VoiceChannelUpdateMessage {
     UserConnected(UserId),
     UserDisconnected(UserId),
-    UserStateUpdated((UserId, VoiceUserState)),
+    UserStateUpdated((UserId, VoiceChannelUserState)),
 }
 
 #[derive(Serialize, Deserialize, Error, Debug)]

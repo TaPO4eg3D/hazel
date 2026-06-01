@@ -3,8 +3,8 @@ use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification};
 use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
     GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload,
-    LeaveVoiceChannel, UpdateVoiceUserState, VoiceChannelMember, VoiceChannelUpdate,
-    VoiceChannelUpdateMessage, VoiceUserState,
+    LeaveVoiceChannel, UpdateVoiceChannelUserState, VoiceChannelMember, VoiceChannelUpdate,
+    VoiceChannelUpdateMessage, VoiceChannelUserState,
 };
 use rpc::server::RpcRouter;
 
@@ -12,7 +12,7 @@ use rpc::{self, check_auth, models};
 
 use crate::api::common::{DbErrReponseCompat, RPCHandle};
 use crate::entity::{user::Entity as User, voice_channel::Entity as VoiceChannel};
-use crate::{AppState, ConnectionState, VoiceUser, register_endpoints};
+use crate::{AppState, ConnectionState, VoiceChannelUser, register_endpoints};
 
 use sea_orm::prelude::*;
 
@@ -56,9 +56,7 @@ impl RPCHandle for GetVoiceChannels {
                         members.push(VoiceChannelMember {
                             id: voice_user.id,
                             name: user.username,
-
-                            is_muted: false,
-                            is_sound_off: false,
+                            state: voice_user.state,
                         });
                     }
 
@@ -80,11 +78,11 @@ impl RPCHandle for GetVoiceChannels {
     }
 }
 
-impl RPCHandle for UpdateVoiceUserState {
+impl RPCHandle for UpdateVoiceChannelUserState {
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
-        req: VoiceUserState,
+        user_state: VoiceChannelUserState,
     ) -> APIResult<(), ()> {
         check_auth!(connection_state);
 
@@ -117,8 +115,7 @@ impl RPCHandle for UpdateVoiceUserState {
                     continue;
                 }
 
-                voice_user.is_muted = req.is_mic_off;
-                voice_user.is_sound_off = req.is_sound_off;
+                voice_user.state = user_state;
 
                 break;
             }
@@ -137,7 +134,7 @@ impl RPCHandle for UpdateVoiceUserState {
 
             VoiceChannelUpdate {
                 channel_id: active_channel,
-                message: VoiceChannelUpdateMessage::UserStateUpdated((current_user_id, req)),
+                message: VoiceChannelUpdateMessage::UserStateUpdated((current_user_id, user_state)),
             }
             .notify(&writer)
             .await;
@@ -240,9 +237,9 @@ impl RPCHandle for JoinVoiceChannel {
                 .voice_channels
                 .entry(channel_id)
                 .and_modify(|v| {
-                    v.push(VoiceUser::new(current_user_id));
+                    v.push(VoiceChannelUser::new(current_user_id));
                 })
-                .or_insert_with(|| vec![VoiceUser::new(current_user_id)]);
+                .or_insert_with(|| vec![VoiceChannelUser::new(current_user_id)]);
         }
 
         {
@@ -281,6 +278,6 @@ pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState
         GetVoiceChannels,
         JoinVoiceChannel,
         LeaveVoiceChannel,
-        UpdateVoiceUserState,
+        UpdateVoiceChannelUserState,
     )
 }
