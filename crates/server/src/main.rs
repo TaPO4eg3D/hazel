@@ -10,7 +10,10 @@ use rpc::{
         common::RPCNotification,
         general::{UserConnectionUpdate, UserConnectionUpdateMessage},
         markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
-        voice::{VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState},
+        voice::{
+            VideoSessionParams, VoiceChannelUpdate, VoiceChannelUpdateMessage,
+            VoiceChannelUserState,
+        },
     },
     server::{RpcRouter, RpcWriter, serve},
 };
@@ -30,17 +33,25 @@ mod config;
 mod entity;
 mod streaming;
 
-pub type GlobalRouter = RpcRouter<AppState, ConnectionState>;
+pub type AppRouter = RpcRouter<AppState, ConnectionState>;
+
+#[derive(Default)]
+pub struct VideoSession {
+    params: VideoSessionParams,
+    connected_clients: Vec<UserId>,
+}
 
 pub struct VoiceChannelUser {
     id: UserId,
     state: VoiceChannelUserState,
+    screencast_session: Option<VideoSession>,
 }
 
 impl VoiceChannelUser {
     pub fn new(id: UserId) -> Self {
         Self {
             id,
+            screencast_session: None,
             state: VoiceChannelUserState::default(),
         }
     }
@@ -201,9 +212,9 @@ async fn main() {
         }))
     });
 
-    let router = messages::merge(router);
-    let router = auth::merge(router);
-    let router = voice::merge(router);
+    let router = messages::register(router);
+    let router = auth::register(router);
+    let router = voice::register(router);
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {

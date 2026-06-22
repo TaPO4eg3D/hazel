@@ -1,4 +1,12 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut, TryGetError};
+
+#[derive(thiserror::Error, Debug)]
+pub enum ParsingError {
+    #[error("incoming bytes stream is malformed")]
+    InvalidByteStream(#[from] TryGetError),
+    #[error("unknown type tag of the incoming data struct")]
+    UnexpectedTypeTag(u8),
+}
 
 pub const AUDIO_BUFF_SIZE: usize = 1024;
 
@@ -100,21 +108,25 @@ impl IntoUDPPayload for Pong {
 pub struct EncodedAudioBytes<'a>(&'a mut Bytes);
 
 impl<'a> EncodedAudioBytes<'a> {
-    pub fn parse(self, packet: &mut EncodedAudioPacket) {
+    pub fn parse(self, packet: &mut EncodedAudioPacket) -> Result<(), ParsingError> {
         let bytes = self.0;
 
-        packet.marker = bytes.get_u8() == 1;
-        packet.seq = bytes.get_u64_le();
-        packet.items = bytes.get_u16_le();
+        packet.marker = bytes.try_get_u8()? == 1;
+        packet.seq = bytes.try_get_u64_le()?;
+        packet.items = bytes.try_get_u16_le()?;
 
         if packet.items > 0 {
-            bytes.copy_to_slice(&mut packet.data[..packet.items as usize]);
+            bytes.try_copy_to_slice(&mut packet.data[..packet.items as usize])?;
         }
+
+        Ok(())
     }
 }
 
 pub struct EncodedVideoFrame {
     pub seq: u64,
+    pub chunk: u32,
+    pub chunks_total: u32,
     pub data: Vec<u8>,
 }
 
@@ -123,6 +135,8 @@ impl IntoUDPPayload for EncodedVideoFrame {
 
     fn to_bytes(&self, buf: &mut BytesMut) {
         buf.put_u64_le(self.seq);
+        buf.put_u32_le(self.chunk);
+        buf.put_u32_le(self.chunks_total);
         buf.put_u32_le(self.data.len() as u32);
 
         buf.put(&self.data[..]);
@@ -133,15 +147,19 @@ impl IntoUDPPayload for EncodedVideoFrame {
 pub struct EncodedVideoBytes<'a>(&'a mut Bytes);
 
 impl<'a> EncodedVideoBytes<'a> {
-    pub fn parse(self, packet: &mut EncodedVideoFrame) {
+    pub fn parse(self, packet: &mut EncodedVideoFrame) -> Result<(), ParsingError> {
         let bytes = self.0;
 
-        packet.seq = bytes.get_u64_le();
-        let len = bytes.get_u32_le() as usize;
+        packet.seq = bytes.try_get_u64_le()?;
+        packet.chunk = bytes.try_get_u32_le()?;
+
+        let len = bytes.try_get_u32_le()? as usize;
 
         if len > 0 {
-            bytes.copy_to_slice(&mut packet.data[..len]);
+            bytes.try_copy_to_slice(&mut packet.data[..len])?;
         }
+
+        Ok(())
     }
 }
 
@@ -154,13 +172,13 @@ pub enum UDPPayloadType<'a> {
 }
 
 impl<'a> UDPPayloadType<'a> {
-    pub fn from_byte(ty: u8, bytes: &'a mut Bytes) -> Self {
+    pub fn from_byte(ty: u8, bytes: &'a mut Bytes) -> Result<Self, ParsingError> {
         match ty {
-            EncodedAudioPacket::TAG => UDPPayloadType::Audio(EncodedAudioBytes(bytes)),
-            EncodedVideoFrame::TAG => UDPPayloadType::Video(EncodedVideoBytes(bytes)),
-            Ping::TAG => UDPPayloadType::Ping(Ping),
-            Pong::TAG => UDPPayloadType::Pong(Pong),
-            _ => unreachable!(),
+            EncodedAudioPacket::TAG => Ok(UDPPayloadType::Audio(EncodedAudioBytes(bytes))),
+            EncodedVideoFrame::TAG => Ok(UDPPayloadType::Video(EncodedVideoBytes(bytes))),
+            Ping::TAG => Ok(UDPPayloadType::Ping(Ping)),
+            Pong::TAG => Ok(UDPPayloadType::Pong(Pong)),
+            _ => Err(ParsingError::UnexpectedTypeTag(ty)),
         }
     }
 }
@@ -172,14 +190,14 @@ pub struct UDPPacket<'a> {
 }
 
 impl<'a> UDPPacket<'a> {
-    pub fn parse(buf: &'a mut Bytes) -> Self {
+    pub fn parse(buf: &'a mut Bytes) -> Result<Self, ParsingError> {
         let ty = buf.get_u8();
         let user_id = buf.get_i32_le();
 
-        Self {
+        Ok(Self {
             user_id,
-            payload: UDPPayloadType::from_byte(ty, buf),
-        }
+            payload: UDPPayloadType::from_byte(ty, buf)?,
+        })
     }
 }
 

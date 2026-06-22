@@ -1,4 +1,4 @@
-use rpc::models::common::{APIError, RPCMethod};
+use rpc::models::common::{APIError, APIResult, RPCMethod};
 use sea_orm::DbErr;
 
 use crate::{AppState, ConnectionState};
@@ -20,18 +20,39 @@ pub trait RPCHandle: RPCMethod {
         app_state: AppState,
         connection_state: ConnectionState,
         req: Self::Request,
-    ) -> Self::Response;
+    ) -> APIResult<Self::Response, Self::ResponseError>;
+
+    async fn build(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        req: Self::Request,
+    ) -> APIResult<Self::Response, Self::ResponseError> {
+        if let Ok(value) = connection_state.read() {
+            if !value.is_authenticated() {
+                return Err(APIError::Unauthorized);
+            }
+        } else {
+            log::error!("Poisoned ConnectionState lock");
+
+            return Err(APIError::Unauthorized);
+        }
+
+        Self::handle(app_state, connection_state, req).await
+    }
 }
 
-#[macro_export]
-macro_rules! register_endpoints {
-    ($router:expr, $($endpoint:ident),+ $(,)?) => {
-        $router
-            $(
-                .register(
-                    $endpoint::key(),
-                    $endpoint::handle
-                )
-            )+
-    };
+pub trait NoAuthRPCHandle: RPCMethod {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        req: Self::Request,
+    ) -> APIResult<Self::Response, Self::ResponseError>;
+
+    async fn build(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        req: Self::Request,
+    ) -> APIResult<Self::Response, Self::ResponseError> {
+        Self::handle(app_state, connection_state, req).await
+    }
 }
