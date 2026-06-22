@@ -31,12 +31,16 @@ macro_rules! check_auth {
 
 pub trait RPCMethod {
     type Request: Serialize;
-    type Response: DeserializeOwned;
+    type Response: DeserializeOwned + Debug;
+    type ResponseError: DeserializeOwned + Debug;
 
     fn key() -> &'static str;
 
     #[allow(async_fn_in_trait)]
-    async fn execute(connection: &Connection, payload: &Self::Request) -> Self::Response {
+    async fn execute(
+        connection: &Connection,
+        payload: &Self::Request,
+    ) -> APIResult<Self::Response, Self::ResponseError> {
         connection
             .execute(Self::key(), payload)
             .await

@@ -2,28 +2,27 @@ use rpc::common::Empty;
 use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification};
 use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
-    GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelError, JoinVoiceChannelPayload,
-    LeaveVoiceChannel, UpdateVoiceChannelUserState, VoiceChannelMember, VoiceChannelUpdate,
-    VoiceChannelUpdateMessage, VoiceChannelUserState,
+    GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
+    JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveVoiceChannel, StartScreenCast,
+    StopScreenCast, UpdateVoiceChannelUserState, VideoSessionParams, VoiceChannelMember,
+    VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState, WatchedScreenCastUpdate,
+    WatchedScreenCastUpdateMessage,
 };
-use rpc::server::RpcRouter;
 
-use rpc::{self, check_auth, models};
+use rpc::{self, check_auth, models, register_endpoints};
 
 use crate::api::common::{DbErrReponseCompat, RPCHandle};
 use crate::entity::{user::Entity as User, voice_channel::Entity as VoiceChannel};
-use crate::{AppState, ConnectionState, VoiceChannelUser, register_endpoints};
+use crate::{AppRouter, AppState, ConnectionState, VideoSession, VoiceChannelUser};
 
 use sea_orm::prelude::*;
 
 impl RPCHandle for GetVoiceChannels {
     async fn handle(
         app_state: AppState,
-        connection_state: ConnectionState,
+        _connection_state: ConnectionState,
         _req: Empty,
     ) -> APIResult<Vec<models::voice::VoiceChannel>, ()> {
-        check_auth!(connection_state);
-
         let voice_channels = VoiceChannel::find()
             .all(&app_state.db)
             .await
@@ -84,8 +83,6 @@ impl RPCHandle for UpdateVoiceChannelUserState {
         connection_state: ConnectionState,
         user_state: VoiceChannelUserState,
     ) -> APIResult<(), ()> {
-        check_auth!(connection_state);
-
         let active_channel = {
             let state = connection_state.read().unwrap();
 
@@ -150,8 +147,6 @@ impl RPCHandle for LeaveVoiceChannel {
         connection_state: ConnectionState,
         _req: Empty,
     ) -> APIResult<(), ()> {
-        check_auth!(connection_state);
-
         let active_channel = {
             let state = connection_state.read().unwrap();
 
@@ -212,8 +207,6 @@ impl RPCHandle for JoinVoiceChannel {
         connection_state: ConnectionState,
         JoinVoiceChannelPayload { channel_id }: JoinVoiceChannelPayload,
     ) -> APIResult<(), JoinVoiceChannelError> {
-        check_auth!(connection_state);
-
         let exists = VoiceChannel::find_by_id(channel_id.value)
             .exists(&app_state.db)
             .await
@@ -272,12 +265,115 @@ impl RPCHandle for JoinVoiceChannel {
     }
 }
 
-pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState, ConnectionState> {
+impl RPCHandle for StartScreenCast {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        _req: Self::Request,
+    ) -> APIResult<VideoSessionParams, ()> {
+        let (channel_id, host_id) = {
+            let conn_state = connection_state.read().unwrap();
+            let channel_id = conn_state
+                .active_voice_channel
+                .ok_or(APIError::ServerError)?;
+
+            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+
+            (channel_id, user_id)
+        };
+
+        let mut channel_users = app_state
+            .channels
+            .voice_channels
+            .get_mut(&channel_id)
+            .ok_or(APIError::ServerError)?;
+
+        let user_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+
+        let video_session = VideoSession::default();
+        let params = video_session.params.clone();
+
+        user_state.screencast_session = Some(video_session);
+
+        Ok(params)
+    }
+}
+
+impl RPCHandle for StopScreenCast {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        _req: Self::Request,
+    ) -> APIResult<(), ()> {
+        let (channel_id, host_id) = {
+            let conn_state = connection_state.read().unwrap();
+            let channel_id = conn_state
+                .active_voice_channel
+                .ok_or(APIError::ServerError)?;
+
+            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+
+            (channel_id, user_id)
+        };
+
+        let mut channel_users = app_state
+            .channels
+            .voice_channels
+            .get_mut(&channel_id)
+            .ok_or(APIError::ServerError)?;
+
+        let host_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+
+        if let Some(session) = host_state.screencast_session.as_ref() {
+            for user in session.connected_clients.iter() {
+                let Some(conn) = app_state.connected_clients.get(user) else {
+                    continue;
+                };
+
+                let writer = conn.write().unwrap().writer.clone();
+
+                WatchedScreenCastUpdate {
+                    user_id: host_id,
+                    message: WatchedScreenCastUpdateMessage::SessionEnded,
+                }
+                .notify(&writer)
+                .await;
+            }
+        }
+
+        host_state.screencast_session = None;
+
+        Ok(())
+    }
+}
+
+impl RPCHandle for JoinScreenCast {
+    async fn handle(
+        _app_state: AppState,
+        connection_state: ConnectionState,
+        JoinScreenCastRequest { user_id, mtu }: JoinScreenCastRequest,
+    ) -> APIResult<VideoSessionParams, ()> {
+        check_auth!(connection_state);
+
+        Ok(VideoSessionParams::default())
+    }
+}
+
+pub fn register(router: AppRouter) -> AppRouter {
     register_endpoints!(
         router,
         GetVoiceChannels,
         JoinVoiceChannel,
         LeaveVoiceChannel,
         UpdateVoiceChannelUserState,
+        StartScreenCast,
+        StopScreenCast,
+        JoinScreenCast,
     )
 }

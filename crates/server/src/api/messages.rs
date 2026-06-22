@@ -1,6 +1,6 @@
 use rpc::{models::messages::SendMessagePayload, server::RpcRouter};
 
-use crate::{AppState, ConnectionState};
+use crate::{AppRouter, AppState, ConnectionState};
 
 async fn send_message(
     state: AppState,
@@ -13,6 +13,6 @@ async fn send_message(
     Ok(())
 }
 
-pub fn merge(router: RpcRouter<AppState, ConnectionState>) -> RpcRouter<AppState, ConnectionState> {
+pub fn register(router: AppRouter) -> AppRouter {
     router.register("SendMessage", send_message)
 }

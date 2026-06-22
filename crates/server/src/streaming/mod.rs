@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use crate::AppState;
 use streaming_common::{UDPPacket, UDPPayloadType};
 
-pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
+pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()> {
     let sock = UdpSocket::bind(udp_addr).await.unwrap();
 
     // Two seconds of dual channel 48kHz if we don't
@@ -31,7 +31,9 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         let buf = buf.split().freeze();
 
         let mut _buf = buf.clone();
-        let packet = UDPPacket::parse(&mut _buf);
+        let Ok(packet) = UDPPacket::parse(&mut _buf) else {
+            continue;
+        };
 
         // No need to process, the client wants to maintain UDP connection
         if matches!(packet.payload, UDPPayloadType::Ping(_)) {
@@ -39,16 +41,16 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         }
 
         let current_user_id = Id::<User>::new(packet.user_id);
+        let (voice_channel, addr_differs) = match app_state.connected_clients.get(&current_user_id)
+        {
+            Some(user_state) => {
+                let user_state = user_state.read().unwrap();
 
-        let (voice_channel, addr_differs) = match state.connected_clients.get(&current_user_id) {
-            Some(state) => {
-                let state = state.read().unwrap();
-
-                let Some(channel_id) = state.active_voice_channel else {
+                let Some(channel_id) = user_state.active_voice_channel else {
                     continue;
                 };
 
-                if let Some(curr_addr) = state.active_stream {
+                if let Some(curr_addr) = user_state.active_stream {
                     (channel_id, curr_addr != addr)
                 } else {
                     (channel_id, true)
@@ -60,7 +62,7 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
         };
 
         if addr_differs {
-            let Some(state) = state.connected_clients.get(&current_user_id) else {
+            let Some(state) = app_state.connected_clients.get(&current_user_id) else {
                 continue;
             };
 
@@ -69,22 +71,46 @@ pub async fn open_udp_socket(state: AppState, udp_addr: &str) -> AResult<()> {
             state.active_stream = Some(addr);
         }
 
-        let Some(voice_users) = state.channels.voice_channels.get(&voice_channel) else {
+        let Some(voice_users) = app_state.channels.voice_channels.get(&voice_channel) else {
             continue;
         };
 
-        for user in voice_users.iter() {
-            if user.id == current_user_id {
-                continue;
-            }
+        match packet.payload {
+            UDPPayloadType::Audio(_) => {
+                for user in voice_users.iter() {
+                    if user.id == current_user_id {
+                        continue;
+                    }
 
-            if let Some(user) = state.connected_clients.get(&user.id) {
-                let addr = { user.read().unwrap().active_stream };
+                    if let Some(user) = app_state.connected_clients.get(&user.id) {
+                        let addr = { user.read().unwrap().active_stream };
 
-                if let Some(addr) = addr {
-                    _ = sock.send_to(&buf[..bytes_read], addr).await;
+                        if let Some(addr) = addr {
+                            _ = sock.send_to(&buf[..bytes_read], addr).await;
+                        }
+                    }
                 }
             }
+            UDPPayloadType::Video(_) => {
+                let Some(host) = voice_users.iter().find(|user| user.id == current_user_id) else {
+                    continue;
+                };
+
+                let Some(video_session) = host.screencast_session.as_ref() else {
+                    continue;
+                };
+
+                for user_id in video_session.connected_clients.iter() {
+                    if let Some(user) = app_state.connected_clients.get(user_id) {
+                        let addr = { user.read().unwrap().active_stream };
+
+                        if let Some(addr) = addr {
+                            _ = sock.send_to(&buf[..bytes_read], addr).await;
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

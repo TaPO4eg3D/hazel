@@ -1,35 +1,39 @@
 use chrono::Utc;
-use rpc::models::{
-    auth::{
-        GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
-        GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload, SessionKey, UserInfo,
+use rpc::{
+    models::{
+        auth::{
+            GetCurrentUserError, GetSessionKey, GetSessionKeyError, GetSessionKeyPayload,
+            GetSessionKeyResponse, GetUserInfo, GetUserPayload, Login, LoginError, LoginPayload,
+            SessionKey, UserInfo,
+        },
+        common::{APIError, APIResult, RPCMethod as _, RPCNotification},
+        general::{UserConnectionUpdate, UserConnectionUpdateMessage},
+        markers::TaggedEntity,
     },
-    common::{APIError, RPCMethod as _, RPCNotification},
-    general::{UserConnectionUpdate, UserConnectionUpdateMessage},
-    markers::TaggedEntity,
+    register_endpoints,
 };
 
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AppState, ConnectionState, GlobalRouter,
+    AppRouter, AppState, ConnectionState,
     api::common::{DbErrReponseCompat as _, RPCHandle},
 };
 use crate::{
+    api::common::NoAuthRPCHandle,
     entity::user::{self, Entity as User},
-    register_endpoints,
 };
 
 use sea_orm::{DbErr, entity::*, query::*};
 
 const KEY: &[u8] = b"TODO";
 
-impl RPCHandle for GetSessionKey {
+impl NoAuthRPCHandle for GetSessionKey {
     async fn handle(
         app_state: AppState,
         _connection_state: ConnectionState,
         GetSessionKeyPayload { login, password }: GetSessionKeyPayload,
-    ) -> Self::Response {
+    ) -> APIResult<GetSessionKeyResponse, GetSessionKeyError> {
         let password = Sha256::digest(password.as_bytes());
         let password = format!("{:x}", password);
 
@@ -73,12 +77,12 @@ impl RPCHandle for GetSessionKey {
     }
 }
 
-impl RPCHandle for Login {
+impl NoAuthRPCHandle for Login {
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
         LoginPayload { session_key }: LoginPayload,
-    ) -> Self::Response {
+    ) -> APIResult<(), LoginError> {
         if !session_key.verify(b"TODO") {
             return Err(APIError::Err(LoginError::InvalidSesssionKey));
         }
@@ -129,7 +133,7 @@ impl RPCHandle for GetUserInfo {
         app_state: AppState,
         _connection_state: ConnectionState,
         GetUserPayload { id }: GetUserPayload,
-    ) -> Self::Response {
+    ) -> APIResult<Option<UserInfo>, GetCurrentUserError> {
         let user = User::find_by_id(id.value)
             .one(&app_state.db)
             .await
@@ -142,6 +146,6 @@ impl RPCHandle for GetUserInfo {
     }
 }
 
-pub fn merge(router: GlobalRouter) -> GlobalRouter {
+pub fn register(router: AppRouter) -> AppRouter {
     register_endpoints!(router, Login, GetUserInfo, GetSessionKey)
 }

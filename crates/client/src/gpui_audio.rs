@@ -279,6 +279,8 @@ impl PacketSender {
 
         let packet = EncodedVideoFrame {
             seq: self.screen.seq,
+            chunk: 0,
+            chunks_total: 0,
             data: frame,
         };
 
@@ -357,18 +359,21 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
             buf.truncate(len);
 
             let mut buf: Bytes = buf.split().into();
-            let packet = UDPPacket::parse(&mut buf);
 
-            let user_id = packet.user_id;
-            match packet.payload {
-                UDPPayloadType::Audio(audio_bytes) => {
-                    let mut audio_packet = EncodedAudioPacket::default();
-                    audio_bytes.parse(&mut audio_packet);
+            if let Ok(packet) = UDPPacket::parse(&mut buf) {
+                let user_id = packet.user_id;
 
-                    packet_input.send(user_id, Instant::now(), audio_packet);
+                match packet.payload {
+                    UDPPayloadType::Audio(audio_bytes) => {
+                        let mut audio_packet = EncodedAudioPacket::default();
+
+                        if audio_bytes.parse(&mut audio_packet).is_ok() {
+                            packet_input.send(user_id, Instant::now(), audio_packet);
+                        }
+                    }
+                    UDPPayloadType::Video(_video_bytes) => {}
+                    _ => todo!(),
                 }
-                UDPPayloadType::Video(_video_bytes) => {}
-                _ => todo!(),
             }
         }
     }

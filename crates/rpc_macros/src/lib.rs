@@ -62,7 +62,8 @@ pub fn rpc_method(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         impl crate::models::common::RPCMethod for #name {
             type Request = #request_type;
-            type Response = crate::models::common::APIResult<#response_type, #error_type>;
+            type Response = #response_type;
+            type ResponseError = #error_type;
 
             fn key() -> &'static str {
                 #name_str

@@ -87,3 +87,69 @@ pub struct GetVoiceChannels {
     response: Vec<VoiceChannel>,
     error: (),
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct VideoSessionParams {
+    pub shard_size: u32,
+    pub network_loss: f32,
+}
+
+impl Default for VideoSessionParams {
+    fn default() -> Self {
+        Self {
+            shard_size: 1280,
+            network_loss: 0.2,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, RPCNotification)]
+pub enum OwnedScreenCastUpdate {
+    ParamsUpdated(VideoSessionParams),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum WatchedScreenCastUpdateMessage {
+    ParamsUpdated(VideoSessionParams),
+    SessionEnded,
+}
+
+#[derive(Serialize, Deserialize, Debug, RPCNotification)]
+pub struct WatchedScreenCastUpdate {
+    pub user_id: UserId,
+    pub message: WatchedScreenCastUpdateMessage,
+}
+
+#[rpc_method]
+pub struct StartScreenCast {
+    request: Empty,
+    response: VideoSessionParams,
+    error: (),
+}
+
+#[rpc_method]
+pub struct StopScreenCast {
+    request: Empty,
+    response: (),
+    error: (),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct JoinScreenCastRequest {
+    pub user_id: UserId,
+    pub mtu: u32,
+}
+
+#[rpc_method]
+pub struct JoinScreenCast {
+    request: JoinScreenCastRequest,
+    response: VideoSessionParams,
+    error: (),
+}
+
+#[rpc_method]
+pub struct LeaveScreenCast {
+    request: Empty,
+    response: (),
+    error: (),
+}
