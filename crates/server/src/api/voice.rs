@@ -3,10 +3,10 @@ use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification};
 use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
     GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
-    JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveVoiceChannel, StartScreenCast,
-    StopScreenCast, UpdateVoiceChannelUserState, VideoSessionParams, VoiceChannelMember,
-    VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState, WatchedScreenCastUpdate,
-    WatchedScreenCastUpdateMessage,
+    JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest,
+    LeaveVoiceChannel, StartScreenCast, StopScreenCast, UpdateVoiceChannelUserState,
+    VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate, VoiceChannelUpdateMessage,
+    VoiceChannelUserState, WatchedScreenCastUpdate, WatchedScreenCastUpdateMessage,
 };
 
 use rpc::{self, check_auth, models, register_endpoints};
@@ -355,13 +355,101 @@ impl RPCHandle for StopScreenCast {
 
 impl RPCHandle for JoinScreenCast {
     async fn handle(
-        _app_state: AppState,
+        app_state: AppState,
         connection_state: ConnectionState,
-        JoinScreenCastRequest { user_id, mtu }: JoinScreenCastRequest,
+        JoinScreenCastRequest {
+            user_id: host_id,
+            mtu: _mtu, // TODO: Handle it
+        }: JoinScreenCastRequest,
     ) -> APIResult<VideoSessionParams, ()> {
-        check_auth!(connection_state);
+        // TODO: Improve reported errors, not everything should be a ServerError
+        // plus the state should be reverted in the case of an error
+        let (channel_id, user_id) = {
+            let conn_state = connection_state.read().unwrap();
+            let channel_id = conn_state
+                .active_voice_channel
+                .ok_or(APIError::ServerError)?;
 
-        Ok(VideoSessionParams::default())
+            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+
+            (channel_id, user_id)
+        };
+
+        let mut channel_users = app_state
+            .channels
+            .voice_channels
+            .get_mut(&channel_id)
+            .ok_or(APIError::ServerError)?;
+
+        let user_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+
+        user_state.joined_streams.push(host_id);
+
+        let host_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+
+        let session = host_state
+            .screencast_session
+            .as_mut()
+            .ok_or(APIError::ServerError)?;
+
+        if !session.connected_clients.contains(&user_id) {
+            session.connected_clients.push(user_id);
+        }
+
+        Ok(session.params.clone())
+    }
+}
+
+impl RPCHandle for LeaveScreenCast {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        LeaveScreenCastRequest { user_id: host_id }: LeaveScreenCastRequest,
+    ) -> APIResult<(), ()> {
+        // TODO: Improve reported errors, not everything should be a ServerError
+        // plus the state should be reverted in the case of an error
+        let (channel_id, user_id) = {
+            let conn_state = connection_state.read().unwrap();
+            let channel_id = conn_state
+                .active_voice_channel
+                .ok_or(APIError::ServerError)?;
+
+            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+
+            (channel_id, user_id)
+        };
+
+        let mut channel_users = app_state
+            .channels
+            .voice_channels
+            .get_mut(&channel_id)
+            .ok_or(APIError::ServerError)?;
+
+        let user_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+        user_state.joined_streams.retain(|id| id != &host_id);
+
+        let host_state = channel_users
+            .iter_mut()
+            .find(|user| user.id == host_id)
+            .ok_or(APIError::ServerError)?;
+
+        let session = host_state
+            .screencast_session
+            .as_mut()
+            .ok_or(APIError::ServerError)?;
+
+        session.connected_clients.retain(|id| id != &user_id);
+
+        Ok(())
     }
 }
 
@@ -375,5 +463,6 @@ pub fn register(router: AppRouter) -> AppRouter {
         StartScreenCast,
         StopScreenCast,
         JoinScreenCast,
+        LeaveScreenCast,
     )
 }
