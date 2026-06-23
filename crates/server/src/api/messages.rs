@@ -1,4 +1,4 @@
-use rpc::{models::messages::SendMessagePayload, server::RpcRouter};
+use rpc::models::messages::SendMessagePayload;
 
 use crate::{AppRouter, AppState, ConnectionState};
 

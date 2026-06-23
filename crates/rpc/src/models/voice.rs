@@ -147,9 +147,14 @@ pub struct JoinScreenCast {
     error: (),
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LeaveScreenCastRequest {
+    pub user_id: UserId,
+}
+
 #[rpc_method]
 pub struct LeaveScreenCast {
-    request: Empty,
+    request: LeaveScreenCastRequest,
     response: (),
     error: (),
 }

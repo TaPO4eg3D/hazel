@@ -1,5 +1,6 @@
 use std::{
     net::SocketAddr,
+    ops::Deref,
     sync::{Arc, RwLock},
 };
 
@@ -44,15 +45,18 @@ pub struct VideoSession {
 pub struct VoiceChannelUser {
     id: UserId,
     state: VoiceChannelUserState,
+
     screencast_session: Option<VideoSession>,
+    joined_streams: Vec<UserId>,
 }
 
 impl VoiceChannelUser {
     pub fn new(id: UserId) -> Self {
         Self {
             id,
-            screencast_session: None,
             state: VoiceChannelUserState::default(),
+            screencast_session: None,
+            joined_streams: vec![],
         }
     }
 }

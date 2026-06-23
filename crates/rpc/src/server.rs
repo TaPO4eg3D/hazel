@@ -142,7 +142,6 @@ where
         };
 
         self.routing_table.insert(key.into(), wrapped);
-        println!("Table: {:?}", self.routing_table.keys());
 
         self
     }
@@ -224,6 +223,8 @@ pub async fn serve<AppState, ConnState>(
 
     let router = Arc::new(router);
     let on_disconnect = Arc::new(on_disconnect);
+
+    println!("Registred routes: {:#?}", router.routing_table.keys());
 
     loop {
         match listener.accept().await {
