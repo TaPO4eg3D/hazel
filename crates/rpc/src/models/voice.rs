@@ -120,18 +120,23 @@ pub struct WatchedScreenCastUpdate {
     pub message: WatchedScreenCastUpdateMessage,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum HostScreenCastError {
+    NotConnectedToVoiceChannel,
+}
+
 #[rpc_method]
 pub struct StartScreenCast {
     request: Empty,
     response: VideoSessionParams,
-    error: (),
+    error: HostScreenCastError,
 }
 
 #[rpc_method]
 pub struct StopScreenCast {
     request: Empty,
     response: (),
-    error: (),
+    error: HostScreenCastError,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -140,11 +145,18 @@ pub struct JoinScreenCastRequest {
     pub mtu: u32,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum WatchScreenCastError {
+    NotConnectedToVoiceChannel,
+    InvalidHostId,
+    NoSuchStreamAvailable,
+}
+
 #[rpc_method]
 pub struct JoinScreenCast {
     request: JoinScreenCastRequest,
     response: VideoSessionParams,
-    error: (),
+    error: WatchScreenCastError,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -156,5 +168,5 @@ pub struct LeaveScreenCastRequest {
 pub struct LeaveScreenCast {
     request: LeaveScreenCastRequest,
     response: (),
-    error: (),
+    error: WatchScreenCastError,
 }

@@ -7,7 +7,9 @@ use crate::AppState;
 use streaming_common::{UDPPacket, UDPPayloadType};
 
 pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()> {
-    let sock = UdpSocket::bind(udp_addr).await.unwrap();
+    let sock = UdpSocket::bind(udp_addr)
+        .await
+        .expect("Failed to bind a UDP socket");
 
     // Two seconds of dual channel 48kHz if we don't
     // count the size of UDPPacket header
@@ -44,7 +46,9 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
         let (voice_channel, addr_differs) = match app_state.connected_clients.get(&current_user_id)
         {
             Some(user_state) => {
-                let user_state = user_state.read().unwrap();
+                let Ok(user_state) = user_state.read::<()>() else {
+                    continue;
+                };
 
                 let Some(channel_id) = user_state.active_voice_channel else {
                     continue;
@@ -66,9 +70,9 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
                 continue;
             };
 
-            let mut state = state.write().unwrap();
-
-            state.active_stream = Some(addr);
+            if let Ok(mut state) = state.write::<()>() {
+                state.active_stream = Some(addr);
+            }
         }
 
         let Some(voice_users) = app_state.channels.voice_channels.get(&voice_channel) else {
@@ -83,7 +87,7 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
                     }
 
                     if let Some(user) = app_state.connected_clients.get(&user.id) {
-                        let addr = { user.read().unwrap().active_stream };
+                        let addr = user.read::<()>().ok().and_then(|user| user.active_stream);
 
                         if let Some(addr) = addr {
                             _ = sock.send_to(&buf[..bytes_read], addr).await;
@@ -102,7 +106,7 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
 
                 for user_id in video_session.connected_clients.iter() {
                     if let Some(user) = app_state.connected_clients.get(user_id) {
-                        let addr = { user.read().unwrap().active_stream };
+                        let addr = user.read::<()>().ok().and_then(|user| user.active_stream);
 
                         if let Some(addr) = addr {
                             _ = sock.send_to(&buf[..bytes_read], addr).await;

@@ -5,29 +5,26 @@ use thiserror::Error;
 
 use crate::{client::Connection, server::RpcWriter};
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum TransportLayerErr {
+    LargeBody,
+    IncorrectPayload,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ServerErr {
+    InternalErr,
+    Transport(TransportLayerErr),
+}
+
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError<T: Debug> {
     Err(T),
-    ServerError,
+    ServerErr(ServerErr),
     Unauthorized,
 }
 
 pub type APIResult<T, E> = Result<T, APIError<E>>;
-
-#[macro_export]
-macro_rules! check_auth {
-    ($conn_state:ident) => {
-        if let Ok(value) = $conn_state.read() {
-            if !value.is_authenticated() {
-                return Err(APIError::Unauthorized);
-            }
-        } else {
-            log::error!("Poisoned ConnectionState lock");
-
-            return Err(APIError::Unauthorized);
-        }
-    };
-}
 
 pub trait RPCMethod {
     type Request: Serialize;

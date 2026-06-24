@@ -1,14 +1,14 @@
 use std::{
+    fmt::Debug,
     net::SocketAddr,
-    ops::Deref,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use dashmap::DashMap;
 
 use rpc::{
     models::{
-        common::RPCNotification,
+        common::{APIError, APIResult, RPCNotification, ServerErr},
         general::{UserConnectionUpdate, UserConnectionUpdateMessage},
         markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
         voice::{
@@ -140,7 +140,7 @@ impl ConnectionStateInner {
         let writers = state
             .connected_clients
             .iter()
-            .map(|user| user.read().unwrap().writer.clone())
+            .filter_map(|user| user.read::<()>().ok().map(|user| user.writer.clone()))
             .collect::<Vec<_>>();
 
         for writer in writers {
@@ -177,7 +177,30 @@ impl ConnectionStateInner {
     }
 }
 
-pub type ConnectionState = Arc<RwLock<ConnectionStateInner>>;
+#[derive(Clone)]
+pub struct ConnectionState(Arc<RwLock<ConnectionStateInner>>);
+
+impl ConnectionState {
+    fn read<T: Debug>(&self) -> Result<RwLockReadGuard<'_, ConnectionStateInner>, APIError<T>> {
+        let Ok(conn_state) = self.0.read() else {
+            log::error!("Poisoned lock for the connection state");
+
+            return Err(APIError::ServerErr(ServerErr::InternalErr));
+        };
+
+        Ok(conn_state)
+    }
+
+    fn write<T: Debug>(&self) -> Result<RwLockWriteGuard<'_, ConnectionStateInner>, APIError<T>> {
+        let Ok(conn_state) = self.0.write() else {
+            log::error!("Poisoned lock for the connection state");
+
+            return Err(APIError::ServerErr(ServerErr::InternalErr));
+        };
+
+        Ok(conn_state)
+    }
+}
 
 async fn init_state() -> AppState {
     let db = Database::connect("sqlite://db.sqlite?mode=rwc")
@@ -208,12 +231,12 @@ async fn main() {
 
     let state = init_state().await;
     let router = RpcRouter::new(state.clone(), move |writer| {
-        Arc::new(RwLock::new(ConnectionStateInner {
+        ConnectionState(Arc::new(RwLock::new(ConnectionStateInner {
             user: None,
             active_voice_channel: None,
             active_stream: None,
             writer,
-        }))
+        })))
     });
 
     let router = messages::register(router);
@@ -227,9 +250,11 @@ async fn main() {
             // aka we waited a bit for a reconnect but it didn't happen
 
             Box::pin(async move {
-                let conn_state = conn_state.read().unwrap().clone();
+                let conn_state = conn_state.read::<()>().ok().map(|value| value.clone());
 
-                conn_state.disconnect(&state).await;
+                if let Some(conn_state) = conn_state {
+                    conn_state.disconnect(&state.clone()).await;
+                }
             })
         })
         .await;
