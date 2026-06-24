@@ -1,15 +1,16 @@
 use rpc::common::Empty;
-use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification};
+use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification, ServerErr};
 use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
-    GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
+    GetVoiceChannels, HostScreenCastError, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
     JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest,
     LeaveVoiceChannel, StartScreenCast, StopScreenCast, UpdateVoiceChannelUserState,
     VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate, VoiceChannelUpdateMessage,
-    VoiceChannelUserState, WatchedScreenCastUpdate, WatchedScreenCastUpdateMessage,
+    VoiceChannelUserState, WatchScreenCastError, WatchedScreenCastUpdate,
+    WatchedScreenCastUpdateMessage,
 };
 
-use rpc::{self, check_auth, models, register_endpoints};
+use rpc::{self, models, register_endpoints};
 
 use crate::api::common::{DbErrReponseCompat, RPCHandle};
 use crate::entity::{user::Entity as User, voice_channel::Entity as VoiceChannel};
@@ -84,7 +85,7 @@ impl RPCHandle for UpdateVoiceChannelUserState {
         user_state: VoiceChannelUserState,
     ) -> APIResult<(), ()> {
         let active_channel = {
-            let state = connection_state.read().unwrap();
+            let state = connection_state.read()?;
 
             state.active_voice_channel
         };
@@ -95,10 +96,9 @@ impl RPCHandle for UpdateVoiceChannelUserState {
 
         let current_user_id = {
             connection_state
-                .read()
-                .unwrap()
+                .read()?
                 .get_user_id()
-                .expect("We checked auth above")
+                .expect("Auth is checked by RPCHandle")
         };
 
         {
@@ -119,7 +119,7 @@ impl RPCHandle for UpdateVoiceChannelUserState {
         }
 
         for value in app_state.connected_clients.iter() {
-            let Some(user_id) = value.read().unwrap().get_user_id() else {
+            let Some(user_id) = value.read()?.get_user_id() else {
                 continue;
             };
 
@@ -127,7 +127,7 @@ impl RPCHandle for UpdateVoiceChannelUserState {
                 continue;
             }
 
-            let writer = value.read().unwrap().writer.clone();
+            let writer = value.read()?.writer.clone();
 
             VoiceChannelUpdate {
                 channel_id: active_channel,
@@ -148,7 +148,7 @@ impl RPCHandle for LeaveVoiceChannel {
         _req: Empty,
     ) -> APIResult<(), ()> {
         let active_channel = {
-            let state = connection_state.read().unwrap();
+            let state = connection_state.read()?;
 
             state.active_voice_channel
         };
@@ -157,17 +157,11 @@ impl RPCHandle for LeaveVoiceChannel {
             return Ok(());
         };
 
-        let current_user_id = {
-            connection_state
-                .read()
-                .unwrap()
-                .get_user_id()
-                .expect("We checked auth above")
-        };
+        let current_user_id = Self::get_current_user(&*connection_state.read()?);
 
         // Cleanup user state
         {
-            let mut state = connection_state.write().unwrap();
+            let mut state = connection_state.write()?;
 
             state.active_voice_channel = None;
             state.active_stream = None;
@@ -179,7 +173,7 @@ impl RPCHandle for LeaveVoiceChannel {
         }
 
         for value in app_state.connected_clients.iter() {
-            let Some(user_id) = value.read().unwrap().get_user_id() else {
+            let Some(user_id) = value.read()?.get_user_id() else {
                 continue;
             };
 
@@ -187,7 +181,7 @@ impl RPCHandle for LeaveVoiceChannel {
                 continue;
             }
 
-            let writer = value.read().unwrap().writer.clone();
+            let writer = value.read()?.writer.clone();
 
             VoiceChannelUpdate {
                 channel_id: active_channel,
@@ -216,13 +210,7 @@ impl RPCHandle for JoinVoiceChannel {
             return Err(APIError::Err(JoinVoiceChannelError::DoesNotExist));
         }
 
-        let current_user_id = {
-            connection_state
-                .read()
-                .unwrap()
-                .get_user_id()
-                .expect("We checked auth above")
-        };
+        let current_user_id = Self::get_current_user(&*connection_state.read()?);
 
         {
             app_state
@@ -236,12 +224,12 @@ impl RPCHandle for JoinVoiceChannel {
         }
 
         {
-            let mut state = connection_state.write().unwrap();
+            let mut state = connection_state.write()?;
             state.active_voice_channel = Some(channel_id);
         }
 
         for value in app_state.connected_clients.iter() {
-            let user_id = value.read().unwrap().get_user_id();
+            let user_id = value.read()?.get_user_id();
 
             let Some(user_id) = user_id else {
                 continue;
@@ -251,7 +239,7 @@ impl RPCHandle for JoinVoiceChannel {
                 continue;
             }
 
-            let writer = value.read().unwrap().writer.clone();
+            let writer = value.read()?.writer.clone();
 
             VoiceChannelUpdate {
                 channel_id,
@@ -270,14 +258,15 @@ impl RPCHandle for StartScreenCast {
         app_state: AppState,
         connection_state: ConnectionState,
         _req: Self::Request,
-    ) -> APIResult<VideoSessionParams, ()> {
+    ) -> APIResult<VideoSessionParams, HostScreenCastError> {
         let (channel_id, host_id) = {
-            let conn_state = connection_state.read().unwrap();
-            let channel_id = conn_state
-                .active_voice_channel
-                .ok_or(APIError::ServerError)?;
+            let conn_state = connection_state.read()?;
 
-            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+            let channel_id = conn_state.active_voice_channel.ok_or(APIError::Err(
+                HostScreenCastError::NotConnectedToVoiceChannel,
+            ))?;
+
+            let user_id = Self::get_current_user(&conn_state);
 
             (channel_id, user_id)
         };
@@ -286,12 +275,12 @@ impl RPCHandle for StartScreenCast {
             .channels
             .voice_channels
             .get_mut(&channel_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         let user_state = channel_users
             .iter_mut()
             .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         let video_session = VideoSession::default();
         let params = video_session.params.clone();
@@ -307,14 +296,14 @@ impl RPCHandle for StopScreenCast {
         app_state: AppState,
         connection_state: ConnectionState,
         _req: Self::Request,
-    ) -> APIResult<(), ()> {
+    ) -> APIResult<(), HostScreenCastError> {
         let (channel_id, host_id) = {
-            let conn_state = connection_state.read().unwrap();
-            let channel_id = conn_state
-                .active_voice_channel
-                .ok_or(APIError::ServerError)?;
+            let conn_state = connection_state.read()?;
+            let channel_id = conn_state.active_voice_channel.ok_or(APIError::Err(
+                HostScreenCastError::NotConnectedToVoiceChannel,
+            ))?;
 
-            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+            let user_id = Self::get_current_user(&conn_state);
 
             (channel_id, user_id)
         };
@@ -323,12 +312,12 @@ impl RPCHandle for StopScreenCast {
             .channels
             .voice_channels
             .get_mut(&channel_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         let host_state = channel_users
             .iter_mut()
             .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         if let Some(session) = host_state.screencast_session.as_ref() {
             for user in session.connected_clients.iter() {
@@ -336,7 +325,7 @@ impl RPCHandle for StopScreenCast {
                     continue;
                 };
 
-                let writer = conn.write().unwrap().writer.clone();
+                let writer = conn.write()?.writer.clone();
 
                 WatchedScreenCastUpdate {
                     user_id: host_id,
@@ -361,16 +350,14 @@ impl RPCHandle for JoinScreenCast {
             user_id: host_id,
             mtu: _mtu, // TODO: Handle it
         }: JoinScreenCastRequest,
-    ) -> APIResult<VideoSessionParams, ()> {
-        // TODO: Improve reported errors, not everything should be a ServerError
-        // plus the state should be reverted in the case of an error
+    ) -> APIResult<VideoSessionParams, WatchScreenCastError> {
         let (channel_id, user_id) = {
-            let conn_state = connection_state.read().unwrap();
-            let channel_id = conn_state
-                .active_voice_channel
-                .ok_or(APIError::ServerError)?;
+            let conn_state = connection_state.read()?;
+            let channel_id = conn_state.active_voice_channel.ok_or(APIError::Err(
+                WatchScreenCastError::NotConnectedToVoiceChannel,
+            ))?;
 
-            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+            let user_id = Self::get_current_user(&conn_state);
 
             (channel_id, user_id)
         };
@@ -379,24 +366,24 @@ impl RPCHandle for JoinScreenCast {
             .channels
             .voice_channels
             .get_mut(&channel_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         let user_state = channel_users
             .iter_mut()
-            .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .find(|user| user.id == user_id)
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         user_state.joined_streams.push(host_id);
 
         let host_state = channel_users
             .iter_mut()
             .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::Err(WatchScreenCastError::InvalidHostId))?;
 
         let session = host_state
             .screencast_session
             .as_mut()
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::Err(WatchScreenCastError::NoSuchStreamAvailable))?;
 
         if !session.connected_clients.contains(&user_id) {
             session.connected_clients.push(user_id);
@@ -411,16 +398,16 @@ impl RPCHandle for LeaveScreenCast {
         app_state: AppState,
         connection_state: ConnectionState,
         LeaveScreenCastRequest { user_id: host_id }: LeaveScreenCastRequest,
-    ) -> APIResult<(), ()> {
+    ) -> APIResult<(), WatchScreenCastError> {
         // TODO: Improve reported errors, not everything should be a ServerError
         // plus the state should be reverted in the case of an error
         let (channel_id, user_id) = {
-            let conn_state = connection_state.read().unwrap();
-            let channel_id = conn_state
-                .active_voice_channel
-                .ok_or(APIError::ServerError)?;
+            let conn_state = connection_state.read()?;
+            let channel_id = conn_state.active_voice_channel.ok_or(APIError::Err(
+                WatchScreenCastError::NotConnectedToVoiceChannel,
+            ))?;
 
-            let user_id = conn_state.get_user_id().ok_or(APIError::ServerError)?;
+            let user_id = Self::get_current_user(&conn_state);
 
             (channel_id, user_id)
         };
@@ -429,23 +416,24 @@ impl RPCHandle for LeaveScreenCast {
             .channels
             .voice_channels
             .get_mut(&channel_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
         let user_state = channel_users
             .iter_mut()
-            .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .find(|user| user.id == user_id)
+            .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
+
         user_state.joined_streams.retain(|id| id != &host_id);
 
         let host_state = channel_users
             .iter_mut()
             .find(|user| user.id == host_id)
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::Err(WatchScreenCastError::InvalidHostId))?;
 
         let session = host_state
             .screencast_session
             .as_mut()
-            .ok_or(APIError::ServerError)?;
+            .ok_or(APIError::Err(WatchScreenCastError::NoSuchStreamAvailable))?;
 
         session.connected_clients.retain(|id| id != &user_id);
 

@@ -45,7 +45,6 @@ impl RpcWriter {
             let key_bytes = key.as_bytes();
 
             let key_len = u8::try_from(key_bytes.len()).expect("Key is way too big"); // TODO: Do not fail
-
             let body_len = u32::try_from(body_bytes.len()).expect("Body is way too big"); // TODO: Do not fail
 
             let mut response = Vec::<u8>::with_capacity(body_len as usize);
@@ -130,9 +129,11 @@ where
                 let fut = async move {
                     let (payload_bytes, bytes_read) = process_payload(buf, stream, start).await?;
                     let payload = rmp_serde::from_slice::<In>(payload_bytes)?;
-                    let data = handler(state, conn_state, payload).await;
 
-                    writer.write(_key, data, uuid).await;
+                    tokio::spawn(async move {
+                        let data = handler(state, conn_state, payload).await;
+                        writer.write(_key, data, uuid).await;
+                    });
 
                     Ok(bytes_read)
                 };
@@ -236,7 +237,6 @@ pub async fn serve<AppState, ConnState>(
 
                 tokio::spawn(async move {
                     let state = router.state.clone();
-
                     let conn_state = process_connection(router, stream).await.unwrap();
 
                     on_disconnect(state, conn_state).await;

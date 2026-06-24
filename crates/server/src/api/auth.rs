@@ -100,16 +100,15 @@ impl NoAuthRPCHandle for Login {
         let user_id = user.tagged_id();
 
         {
-            let mut state = connection_state.write().unwrap();
+            let mut state = connection_state.write()?;
 
             state.user = Some(user);
         }
 
-        let writers = app_state
-            .connected_clients
-            .iter()
-            .map(|user| user.read().unwrap().writer.clone())
-            .collect::<Vec<_>>();
+        let mut writers = vec![];
+        for client in app_state.connected_clients.iter() {
+            writers.push(client.read()?.writer.clone());
+        }
 
         for writer in writers {
             UserConnectionUpdate {
