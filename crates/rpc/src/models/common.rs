@@ -41,7 +41,7 @@ pub trait RPCMethod {
         connection
             .execute(Self::key(), payload)
             .await
-            .expect("invalid params")
+            .expect("invalid params") // TODO: Do not panic
     }
 }
 

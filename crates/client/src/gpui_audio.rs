@@ -27,7 +27,7 @@ use crossbeam::channel;
 use gpui::{App, AppContext, AsyncApp, Global};
 
 use ringbuf::traits::Consumer as _;
-use rpc::models::markers::UserId;
+use rpc::models::{markers::UserId, voice::VideoSessionParams};
 use streaming_common::{
     EncodedAudioPacket, EncodedVideoFrame, Ping, UDPPacket, UDPPayloadType, to_udp_packet_bytes,
 };
@@ -455,11 +455,14 @@ impl Streaming {
         });
     }
 
-    pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
+    pub async fn start_screencast(
+        cx: &mut AsyncApp,
+        session_params: VideoSessionParams,
+    ) -> Option<ScreencastPreview> {
         let notifier =
             cx.read_global(|stream: &GlobalStreaming, _cx| stream.capture_notifier.clone());
 
-        let (cast, preview) = capture::video::linux::screengrab::start_screencast(notifier)
+        let (cast, preview) = capture::video::linux::screengrab::init_screencast(notifier)
             .await
             .ok()?;
 
@@ -469,6 +472,14 @@ impl Streaming {
         });
 
         Some(preview)
+    }
+
+    pub async fn stop_screencast(cx: &mut AsyncApp) {
+        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
+            if let Some(cast) = stream.active_screencast.lock().unwrap().take() {
+                cast.close();
+            }
+        });
     }
 
     pub fn disconnect<C: AppContext>(cx: &C) {

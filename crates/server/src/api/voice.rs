@@ -286,6 +286,28 @@ impl RPCHandle for StartScreenCast {
         let params = video_session.params.clone();
 
         user_state.screencast_session = Some(video_session);
+        user_state.state.is_streaming = true;
+
+        let host_state = user_state.state;
+
+        app_state
+            .for_each_user(async |client| {
+                let Some(user_id) = client.get_user_id() else {
+                    return;
+                };
+
+                if user_id == host_id {
+                    return;
+                }
+
+                VoiceChannelUpdate {
+                    channel_id: channel_id,
+                    message: VoiceChannelUpdateMessage::UserStateUpdated((host_id, host_state)),
+                }
+                .notify(&client.writer)
+                .await;
+            })
+            .await;
 
         Ok(params)
     }
@@ -337,6 +359,29 @@ impl RPCHandle for StopScreenCast {
         }
 
         host_state.screencast_session = None;
+        host_state.state.is_streaming = false;
+
+        app_state
+            .for_each_user(async |client| {
+                let Some(user_id) = client.get_user_id() else {
+                    return;
+                };
+
+                if user_id == host_id {
+                    return;
+                }
+
+                VoiceChannelUpdate {
+                    channel_id: channel_id,
+                    message: VoiceChannelUpdateMessage::UserStateUpdated((
+                        host_id,
+                        host_state.state,
+                    )),
+                }
+                .notify(&client.writer)
+                .await;
+            })
+            .await;
 
         Ok(())
     }

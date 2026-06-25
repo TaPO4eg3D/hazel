@@ -70,7 +70,9 @@ impl JitterBuffer {
             samples_buffer: heapless::Deque::new(),
             next_playout_seq: None,
             target_delay_ms: 20.,
-            min_delay_ms: 20.,
+            // TODO: Make the min_delay lower and implement more
+            // sofisticated packet loss analysis
+            min_delay_ms: 40.,
             max_delay_ms: 200.,
             jitter_estimate_ms: 0.0,
             alpha: 0.05,
@@ -193,7 +195,7 @@ impl JitterBuffer {
             self.misses = 0;
             self.next_playout_seq = Some(seq.wrapping_add(1));
 
-            self.decoder.decode(packet);
+            self.decoder.decode(&packet);
         } else {
             // YABAI!! No data to play...
 
@@ -201,7 +203,7 @@ impl JitterBuffer {
             self.next_playout_seq = Some(seq);
 
             // We might have the next packet with FEC
-            if let Some((_, packet)) = self.packets_buffer.remove(&seq) {
+            if let Some((_, packet)) = self.packets_buffer.get(&seq) {
                 // We don't need to increment `next_playout_seq`
                 // this packet is used only for correction
                 self.decoder.decode_fec(packet);

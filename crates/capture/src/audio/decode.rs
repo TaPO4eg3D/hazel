@@ -55,11 +55,11 @@ impl AudioDecoder {
         self.decode_inner(&[], false);
     }
 
-    pub(crate) fn decode_fec(&mut self, packet: EncodedAudioPacket) {
+    pub(crate) fn decode_fec(&mut self, packet: &EncodedAudioPacket) {
         self.decode_inner(packet.as_slice(), true);
     }
 
-    pub(crate) fn decode(&mut self, packet: EncodedAudioPacket) {
+    pub(crate) fn decode(&mut self, packet: &EncodedAudioPacket) {
         self.decode_inner(packet.as_slice(), false);
     }
 }

@@ -538,9 +538,13 @@ impl StartedScreencast {
     pub fn get_ready_frame(&mut self) -> Option<Vec<u8>> {
         self.ready_frame_queue.try_pop()
     }
+
+    pub fn close(self) {
+        _ = self.pw_tx.send(());
+    }
 }
 
-pub async fn start_screencast(
+pub async fn init_screencast(
     notifier: CaptureNotifier,
 ) -> AResult<(StartedScreencast, ScreencastPreview)> {
     let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
