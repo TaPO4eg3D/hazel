@@ -6,6 +6,8 @@ use tokio::net::UdpSocket;
 use crate::AppState;
 use streaming_common::{UDPPacket, UDPPayloadType};
 
+// TODO: Somehow implement authorized socket communication.
+// Currenlty it is possible to do quite nasty stuff
 pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()> {
     let sock = UdpSocket::bind(udp_addr)
         .await

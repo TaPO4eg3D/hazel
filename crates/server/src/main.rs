@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    future::Future,
     net::SocketAddr,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
@@ -108,6 +109,20 @@ impl AppState {
         };
 
         self.connected_clients.remove(&user_id);
+    }
+
+    async fn for_each_user<F, Fut>(&self, f: F)
+    where
+        F: Fn(ConnectionStateInner) -> Fut,
+        Fut: Future<Output = ()> + Send,
+    {
+        for client in self.connected_clients.iter() {
+            let Ok(state) = client.read::<()>().map(|state| state.clone()) else {
+                return;
+            };
+
+            f(state).await
+        }
     }
 }
 

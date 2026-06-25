@@ -145,7 +145,13 @@ impl RenderOnce for ControlPanel {
                             .label("Stop streaming")
                             .max_w_64()
                             .w_full()
-                            .danger(),
+                            .danger()
+                            .on_click(window.listener_for(
+                                &self.streaming,
+                                |this, _, window, cx| {
+                                    this.stop_screencast(window, cx);
+                                },
+                            )),
                     )
                 },
                 |this| {
@@ -162,19 +168,8 @@ impl RenderOnce for ControlPanel {
                             .when(can_stream, |this| {
                                 this.on_click(window.listener_for(
                                     &self.streaming,
-                                    |_, _, _, cx| {
-                                        cx.spawn(async |state, cx| {
-                                            if let Some(preview) =
-                                                Streaming::start_screencast(cx).await
-                                            {
-                                                state
-                                                    .update(cx, move |this, cx| {
-                                                        this.set_screencast_preview(preview, cx);
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .detach();
+                                    |this, _, window, cx| {
+                                        this.start_screencast(window, cx);
                                     },
                                 ))
                             })

@@ -21,7 +21,7 @@ pub enum RpcError {
     InvalidUUID,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
 pub struct Empty {}
 
 pub async fn parse_rpc_method<T: AsyncReadExt + Unpin>(
