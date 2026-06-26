@@ -30,6 +30,7 @@ tracy-client = { workspace = true }
 
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"
+reed-solomon-simd = "3.1.0"
 
 tracing = "0.1.44"
 clap = { version = "4.5.60", features = ["derive"] }
