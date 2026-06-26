@@ -7,7 +7,7 @@ use gpui_component::{
     label::Label,
 };
 
-use crate::{assets::IconName, components::streaming_state::StreamingState, gpui_audio::Streaming};
+use crate::{assets::IconName, components::streaming_state::StreamingState};
 
 #[derive(IntoElement)]
 pub struct CallRoom {

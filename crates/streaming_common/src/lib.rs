@@ -123,6 +123,7 @@ impl<'a> EncodedAudioBytes<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct EncodedVideoFrame {
     pub seq: u64,
     pub chunk: u32,
@@ -207,3 +208,5 @@ pub fn to_udp_packet_bytes(buf: &mut BytesMut, user_id: i32, payload: &impl Into
 
     payload.to_bytes(buf);
 }
+
+pub fn send_video_frame(seq: u64, data: &[u8], shard_size: u32) {}

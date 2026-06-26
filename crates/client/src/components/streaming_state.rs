@@ -32,7 +32,7 @@ use rpc::{
 };
 use smol::stream::StreamExt as _;
 
-use crate::{ConnectionManger, gpui_audio::Streaming};
+use crate::{ConnectionManger, streaming::Streaming};
 
 #[derive(Clone)]
 pub struct VoiceChannel {

@@ -27,6 +27,7 @@ rnnoise-sys = { git = "https://github.com/TaPO4eg3D/rnnoise-sys.git" }
 ffmpeg-next = "8.1.0"
 drm-fourcc = "2.2.0"
 smallvec = "1.15.1"
+reed-solomon-simd = "3.1.0"
 
 
 [target.'cfg(unix)'.dependencies]
