@@ -21,15 +21,17 @@ use capture::{
             PlaybackPacketCommand, PlaybackPacketInput,
         },
     },
-    video::linux::screengrab::{ScreencastPreview, StartedScreencast},
+    video::linux::screengrab::{ActiveScreencast, ScreencastPreview},
 };
 use crossbeam::channel;
 use gpui::{App, AppContext, AsyncApp, Global};
 
+use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
 use rpc::models::{markers::UserId, voice::VideoSessionParams};
 use streaming_common::{
-    EncodedAudioPacket, EncodedVideoFrame, Ping, UDPPacket, UDPPayloadType, to_udp_packet_bytes,
+    BorrowedEncodedVideoFrame, EncodedAudioPacket, Ping, StreamPacketHeader, UDPPacket,
+    UDPPayloadType, to_udp_packet_bytes,
 };
 
 use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
@@ -56,7 +58,7 @@ impl AudioStreamingSharedState {
     }
 }
 
-type SharedStartedScreencast = Arc<Mutex<Option<StartedScreencast>>>;
+type SharedStartedScreencast = Arc<Mutex<Option<ActiveScreencast>>>;
 
 struct ScreenStreamingData {
     seq: u64,
@@ -263,36 +265,82 @@ impl PacketSender {
         }
     }
 
+    fn try_send_frame(
+        &mut self,
+        user_id: UserId,
+        addr: SocketAddr,
+        shard_len: usize,
+        packet_loss: f32,
+    ) -> bool {
+        let mut screencast = self.screen.screencast.lock().unwrap();
+        let Some(screencast) = screencast.as_mut() else {
+            return false;
+        };
+
+        let Some(mut ready_frame) = screencast.frame_pool.get_ready_frame() else {
+            return false;
+        };
+
+        let data_shards_len = ((ready_frame.len() as f32) / shard_len as f32).ceil() as usize;
+        let rec_shards_len =
+            ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
+
+        let padding = (data_shards_len * shard_len) - ready_frame.len();
+        for _ in 0..padding {
+            ready_frame.push(0);
+        }
+
+        // TODO: Fork this library? It allocates memory on every invocation
+        // kinda defeats the purpose of the dedicated frame pool
+        let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
+            .expect("Failed to initialize Reed Solomon Encoder");
+
+        ready_frame.chunks_exact(shard_len).for_each(|chunk| {
+            encoder
+                .add_original_shard(chunk)
+                .expect("All preparations done above, should not fail");
+        });
+
+        let encoded = encoder.encode().expect("Should not fail");
+
+        let frames = ready_frame
+            .chunks_exact(shard_len)
+            .chain(encoded.recovery_iter())
+            .enumerate()
+            .map(|(i, chunk)| BorrowedEncodedVideoFrame {
+                header: StreamPacketHeader {
+                    seq: self.screen.seq,
+                    shard: i as u16,
+                    shards_total: data_shards_len as u16,
+                    shard_size: shard_len as u16,
+                    recovery_shards: rec_shards_len as u16,
+                    padding: padding as u16,
+                },
+                data: chunk,
+            });
+
+        for frame in frames {
+            self.buf.clear();
+            to_udp_packet_bytes(&mut self.buf, user_id.value, &frame);
+
+            // TODO: Limit throughput, we don't want to spam packets way too fast?
+            _ = self.socket.send_to(&self.buf, addr);
+            self.last_send = Instant::now();
+        }
+
+        screencast.frame_pool.push_emtpy_frame(ready_frame);
+
+        true
+    }
+
     fn process_video_frame(&mut self) {
         let Some((user_id, addr)) = *self.addr.lock().unwrap() else {
             return;
         };
 
-        let mut screencast = self.screen.screencast.lock().unwrap();
-        let Some(screencast) = screencast.as_mut() else {
-            return;
-        };
-
-        let Some(frame) = screencast.get_ready_frame() else {
-            return;
-        };
-
-        let packet = EncodedVideoFrame {
-            seq: self.screen.seq,
-            chunk: 0,
-            chunks_total: 0,
-            data: frame,
-        };
-
-        self.buf.clear();
-        to_udp_packet_bytes(&mut self.buf, user_id.value, &packet);
-
-        if let Err(_err) = self.socket.send_to(&self.buf, addr) {
-            // println!("{err:?}");
+        if self.try_send_frame(user_id, addr, 1280, 0.2) {
+            self.screen.seq += 1;
         }
-
-        self.screen.seq += 1;
-        screencast.push_emtpy_frame(packet.data);
     }
 
     fn run(mut self) {

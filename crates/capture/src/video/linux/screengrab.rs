@@ -16,8 +16,8 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
+use bytes::BytesMut;
 use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
-use reed_solomon_simd::{ReedSolomonDecoder, ReedSolomonEncoder};
 use smallvec::smallvec;
 
 // TODO: Both should be configurable
@@ -50,7 +50,7 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split},
 };
-use streaming_common::EncodedVideoFrame;
+use streaming_common::{BorrowedEncodedVideoFrame, StreamPacketHeader};
 
 use crate::{
     CaptureNotifier,
@@ -525,81 +525,26 @@ fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
 pub type ScreencastPreview = FrameRecv<gpui::DMABuffer>;
 
 pub struct FramePool {
-    // Frames in the process of building from
-    // chunks coming from the network
-    pending_frames: Vec<(Instant, EncodedVideoFrame)>,
-
-    // Reusable buffer used to split frame on chunks
-    chunk_frame: EncodedVideoFrame,
-
     empty_frame_queue: HeapProd<Vec<u8>>,
     ready_frame_queue: HeapCons<Vec<u8>>,
-}
-
-pub struct FrameChunkIter<'a> {
-    chunk_buf: &'a mut EncodedVideoFrame,
-}
-
-impl<'a> Iterator for FrameChunkIter<'a> {
-    type Item = &'a EncodedVideoFrame;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        return None;
-    }
 }
 
 impl FramePool {
     fn new(empty_queue: HeapProd<Vec<u8>>, ready_queue: HeapCons<Vec<u8>>) -> Self {
         Self {
-            pending_frames: vec![],
-            chunk_frame: EncodedVideoFrame::default(),
             empty_frame_queue: empty_queue,
             ready_frame_queue: ready_queue,
         }
     }
 
-    fn push_emtpy_frame(&mut self, frame: Vec<u8>) {
+    pub fn push_emtpy_frame(&mut self, frame: Vec<u8>) {
         if self.empty_frame_queue.try_push(frame).is_err() {
             todo!("handle the case");
         }
     }
 
-    fn get_ready_frame(&mut self) -> Option<Vec<u8>> {
+    pub fn get_ready_frame(&mut self) -> Option<Vec<u8>> {
         self.ready_frame_queue.try_pop()
-    }
-
-    pub fn get_frame_chunks<'a>(
-        &'a mut self,
-        seq: u64,
-        shard_len: usize,
-        packet_loss: f32,
-    ) -> Option<FrameChunkIter<'a>> {
-        let mut ready_frame = self.ready_frame_queue.try_pop()?;
-
-        let data_shards_len = ((ready_frame.len() as f32) / shard_len as f32).ceil() as usize;
-        let rec_shards_len =
-            ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
-
-        let padding = (data_shards_len * shard_len) - ready_frame.len();
-        for _ in 0..padding {
-            ready_frame.push(0);
-        }
-
-        let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
-            .expect("Failed to initialize Reed Solomon Encoder");
-
-        ready_frame.chunks_exact(shard_len).for_each(|chunk| {
-            encoder
-                .add_original_shard(chunk)
-                .expect("All preparations done above, should not fail");
-        });
-
-        let encoded = encoder.encode().expect("Should not fail");
-        _ = self.empty_frame_queue.try_push(ready_frame);
-
-        // let shards = (packet_loss / (1 - packet_loss)) *
-
-        None
     }
 }
 
