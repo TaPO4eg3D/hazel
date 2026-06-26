@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use gpui::{
     Anchor, AnyElement, App, Div, Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior,
     InspectorElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Window,
-    anchored, deferred, div, prelude::FluentBuilder, px,
+    ParentElement, Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, anchored, deferred, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, label::Label};
 
@@ -349,6 +349,7 @@ pub struct CtxPopoverButton {
     id: ElementId,
     label: Option<SharedString>,
     icon: Option<IconName>,
+    on_click: Option<Box<dyn Fn(&(), &mut Window, &mut App)>>,
 }
 
 impl CtxPopoverButton {
@@ -357,6 +358,7 @@ impl CtxPopoverButton {
             id: id.into(),
             label: None,
             icon: None,
+            on_click: None,
         }
     }
 
@@ -367,6 +369,11 @@ impl CtxPopoverButton {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn on_click(mut self, f: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(f));
         self
     }
 }
@@ -386,6 +393,9 @@ impl RenderOnce for CtxPopoverButton {
             })
             .when_some(self.label, |this, label| {
                 this.child(Label::new(label).text_sm())
+            })
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |_, window, cx| on_click(&(), window, cx))
             })
     }
 }
