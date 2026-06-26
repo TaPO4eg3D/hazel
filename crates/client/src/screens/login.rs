@@ -218,37 +218,19 @@ impl LoginScreen {
     }
 }
 
-const INPUT_BG: u32 = 0x262626;
-
 impl LoginScreen {
-    fn create_input(
-        &self,
-        state: &Entity<InputState>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) -> Input {
-        let is_focused = {
-            let state = state.read(cx);
-            state.focus_handle(cx).is_focused(window)
-        };
-
+    fn create_input(&self, state: &Entity<InputState>) -> Input {
         Input::new(state)
-            .appearance(false)
-            .bg(rgb(INPUT_BG))
             .border_1()
-            .border_color(rgb(INPUT_BG))
             .rounded_md()
             .disabled(self.is_connecting)
-            .when(is_focused, |this| {
-                this.border_1().border_color(rgb(0x323333))
-            })
     }
 }
 
 impl Render for LoginScreen {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         // Background container
@@ -264,7 +246,6 @@ impl Render for LoginScreen {
                     .w_96()
                     .border_1()
                     .rounded_lg()
-                    .bg(cx.theme().secondary)
                     .border_color(cx.theme().secondary_active)
                     .child(
                         // Card Content
@@ -282,7 +263,6 @@ impl Render for LoginScreen {
                                     "Enter any credentials if you're logging for the first time. \
                                 Account will be created automatically",
                                 )
-                                .text_color(rgb(0x727272))
                                 .mt_4()
                                 .mb_4()
                                 .text_center()
@@ -292,19 +272,19 @@ impl Render for LoginScreen {
                                 div()
                                     .mb_2()
                                     .child(Label::new("Username").text_xs())
-                                    .child(self.create_input(&self.username, window, cx)),
+                                    .child(self.create_input(&self.username)),
                             )
                             .child(
                                 div()
                                     .child(Label::new("Password").text_xs())
-                                    .child(self.create_input(&self.password, window, cx)),
+                                    .child(self.create_input(&self.password)),
                             )
                             .child(Divider::horizontal().mt_4().mb_4())
                             .child(
                                 div()
                                     .mb_2()
                                     .child(Label::new("Server IP").text_xs())
-                                    .child(self.create_input(&self.server_address, window, cx)),
+                                    .child(self.create_input(&self.server_address)),
                             )
                             .child(
                                 Button::new("login-btn")
