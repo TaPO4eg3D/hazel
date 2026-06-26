@@ -17,4 +17,4 @@ Modern VoIP software with snappy UI and self-hosting capabilities.
 
 ### Main Screen
 
-![main](./docs/workspace.png)
+![main](./docs/workspace2.png)
