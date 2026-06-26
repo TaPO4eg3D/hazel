@@ -419,7 +419,9 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
                             packet_input.send(user_id, Instant::now(), audio_packet);
                         }
                     }
-                    UDPPayloadType::Video(_video_bytes) => {}
+                    UDPPayloadType::Video(_video_bytes) => {
+                        println!("video much");
+                    }
                     _ => todo!(),
                 }
             }

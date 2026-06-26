@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, Styled, Window, div, prelude::FluentBuilder, rgb,
+    AppContext, ClickEvent, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
+    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, StyledExt, WindowExt,

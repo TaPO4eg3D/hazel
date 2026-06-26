@@ -180,9 +180,10 @@ impl RenderOnce for VoiceMemberComponent {
         if !is_me {
             element
                 .context_popover(format!("context-voice-{}", self.member.id.value), {
+                    let user_id = self.member.id;
                     let output_volume = self.member.output_volume.clone();
 
-                    move |this, _, _cx| {
+                    move |this, window, _cx| {
                         this.v_flex()
                             .w_48()
                             .p_2()
@@ -191,7 +192,13 @@ impl RenderOnce for VoiceMemberComponent {
                                 this.child(
                                     CtxPopoverButton::new("watch-stream")
                                         .label("Watch stream")
-                                        .icon(IconName::ScreenShare),
+                                        .icon(IconName::ScreenShare)
+                                        .on_click(window.listener_for(
+                                            &self.streaming_state,
+                                            move |this, _, window, cx| {
+                                                this.join_screencast(user_id, window, cx);
+                                            },
+                                        )),
                                 )
                             })
                             .child(VolumeSlider::new(output_volume.clone()))

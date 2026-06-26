@@ -9,8 +9,8 @@ use capture::{
     video::linux::screengrab::ScreencastPreview,
 };
 use gpui::{
-    AppContext, AsyncApp, Context, DMABuffer, Entity, SharedString, Subscription, Task, WeakEntity,
-    Window,
+    AppContext, AsyncApp, AsyncWindowContext, Context, DMABuffer, Entity, SharedString,
+    Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::{
     WindowExt,
@@ -24,7 +24,8 @@ use rpc::{
         common::RPCMethod as _,
         markers::{UserId, VoiceChannelId},
         voice::{
-            GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload, LeaveVoiceChannel,
+            GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
+            JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest, LeaveVoiceChannel,
             StartScreenCast, StopScreenCast, UpdateVoiceChannelUserState, VoiceChannelUpdate,
             VoiceChannelUpdateMessage, VoiceChannelUserState,
         },
@@ -650,35 +651,47 @@ impl StreamingState {
         .detach();
     }
 
+    async fn stop_screencast_inner(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext) {
+        let is_streaming = this
+            .read_with(cx, |this, _cx| this.screencast_preview_task.is_some())
+            .unwrap();
+
+        if !is_streaming {
+            return;
+        }
+
+        let connection = ConnectionManger::get(cx);
+
+        Streaming::stop_screencast(&mut *cx).await;
+
+        this.update(cx, |this, _cx| {
+            this.preview_frame = None;
+            this.screencast_preview_task = None;
+        })
+        .ok();
+
+        if StopScreenCast::execute(&connection, &Empty::default())
+            .await
+            .is_err()
+        {
+            cx.window_handle()
+                .update(cx, |_, window, cx| {
+                    window.push_notification(
+                        Notification::error(
+                            "Unable to stop the screencast, the server returned an error",
+                        ),
+                        cx,
+                    );
+                })
+                .ok();
+
+            return;
+        };
+    }
+
     pub fn stop_screencast(&self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async |this, cx| {
-            let connection = ConnectionManger::get(cx);
-
-            Streaming::stop_screencast(&mut *cx).await;
-
-            this.update(cx, |this, _cx| {
-                this.preview_frame = None;
-                this.screencast_preview_task = None;
-            })
-            .ok();
-
-            if StopScreenCast::execute(&connection, &Empty::default())
-                .await
-                .is_err()
-            {
-                cx.window_handle()
-                    .update(cx, |_, window, cx| {
-                        window.push_notification(
-                            Notification::error(
-                                "Unable to stop the screencast, the server returned an error",
-                            ),
-                            cx,
-                        );
-                    })
-                    .ok();
-
-                return;
-            };
+            Self::stop_screencast_inner(&this, cx).await
         })
         .detach();
     }
@@ -695,5 +708,57 @@ impl StreamingState {
                 .ok();
             }
         }));
+    }
+
+    pub fn join_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            Self::stop_screencast_inner(&this, cx).await;
+
+            let connection = ConnectionManger::get(cx);
+
+            if JoinScreenCast::execute(&connection, &JoinScreenCastRequest { user_id, mtu: 0 })
+                .await
+                .is_err()
+            {
+                cx.window_handle()
+                    .update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(
+                                "Unable to join the screencast, the server returned an error",
+                            ),
+                            cx,
+                        );
+                    })
+                    .ok();
+
+                return;
+            };
+        })
+        .detach();
+    }
+
+    pub fn leave_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |_this, cx| {
+            let connection = ConnectionManger::get(cx);
+
+            if LeaveScreenCast::execute(&connection, &LeaveScreenCastRequest { user_id })
+                .await
+                .is_err()
+            {
+                cx.window_handle()
+                    .update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(
+                                "Unable to leave the screencast, the server returned an error",
+                            ),
+                            cx,
+                        );
+                    })
+                    .ok();
+
+                return;
+            };
+        })
+        .detach();
     }
 }
