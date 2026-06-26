@@ -15,7 +15,7 @@ use gpui_component::{
 use crate::{
     assets::IconName,
     components::streaming_state::{NoiseReductionAlgorithm, StreamingState},
-    gpui_audio::Streaming,
+    streaming::Streaming,
 };
 
 pub mod text_channels;

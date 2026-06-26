@@ -24,8 +24,8 @@ pub mod components;
 pub mod db;
 pub mod screens;
 
-pub mod gpui_audio;
 pub mod gpui_tokio;
+pub mod streaming;
 
 use screens::login::LoginScreen;
 
@@ -168,7 +168,7 @@ fn main() {
         gpui_component::init(cx);
 
         gpui_tokio::init(cx);
-        gpui_audio::init(cx, args.audio_debug);
+        streaming::init(cx, args.audio_debug);
 
         init_theme(cx);
         cx.set_global(ConnectionManger::new());
