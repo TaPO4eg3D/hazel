@@ -123,7 +123,7 @@ impl<'a> EncodedAudioBytes<'a> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StreamPacketHeader {
     pub seq: u64,
     pub shard: u16,
@@ -181,7 +181,7 @@ impl<'a> IntoUDPPayload for BorrowedEncodedVideoFrameChunk<'a> {
 
 #[derive(Default)]
 pub struct OwnedEncodedVideoFrameChunk {
-    header: StreamPacketHeader,
+    pub header: StreamPacketHeader,
     pub data: Vec<u8>,
 }
 

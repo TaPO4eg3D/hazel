@@ -628,6 +628,7 @@ impl StreamingState {
 
             if let Some(preview) = Streaming::start_screencast(cx).await {
                 // Wait for the first frame to get width and height
+                // TODO: Do it properly. Portal should report the size?
                 let (width, height) = loop {
                     if let Some(frame) = preview.recv().await {
                         break (frame.width, frame.height);
