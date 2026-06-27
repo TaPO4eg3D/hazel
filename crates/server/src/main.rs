@@ -37,10 +37,18 @@ mod streaming;
 
 pub type AppRouter = RpcRouter<AppState, ConnectionState>;
 
-#[derive(Default)]
 pub struct VideoSession {
     params: VideoSessionParams,
     connected_clients: Vec<UserId>,
+}
+
+impl VideoSession {
+    pub fn new(params: VideoSessionParams) -> Self {
+        Self {
+            params,
+            connected_clients: vec![],
+        }
+    }
 }
 
 pub struct VoiceChannelUser {

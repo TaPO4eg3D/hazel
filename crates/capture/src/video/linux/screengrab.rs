@@ -50,7 +50,7 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split},
 };
-use streaming_common::{BorrowedEncodedVideoFrame, StreamPacketHeader};
+use streaming_common::{BorrowedEncodedVideoFrameChunk, StreamPacketHeader};
 
 use crate::{
     CaptureNotifier,

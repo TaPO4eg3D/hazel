@@ -90,13 +90,17 @@ pub struct GetVoiceChannels {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct VideoSessionParams {
+    pub width: u32,
+    pub height: u32,
     pub shard_size: u32,
     pub network_loss: f32,
 }
 
-impl Default for VideoSessionParams {
-    fn default() -> Self {
+impl VideoSessionParams {
+    pub fn new(width: u32, height: u32) -> Self {
         Self {
+            width,
+            height,
             shard_size: 1280,
             network_loss: 0.2,
         }
@@ -125,9 +129,15 @@ pub enum HostScreenCastError {
     NotConnectedToVoiceChannel,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StartScreenCastRequest {
+    pub width: u32,
+    pub height: u32,
+}
+
 #[rpc_method]
 pub struct StartScreenCast {
-    request: Empty,
+    request: StartScreenCastRequest,
     response: VideoSessionParams,
     error: HostScreenCastError,
 }
