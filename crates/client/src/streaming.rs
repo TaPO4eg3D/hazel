@@ -30,7 +30,7 @@ use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
 use rpc::models::{markers::UserId, voice::VideoSessionParams};
 use streaming_common::{
-    BorrowedEncodedVideoFrame, EncodedAudioPacket, Ping, StreamPacketHeader, UDPPacket,
+    BorrowedEncodedVideoFrameChunk, EncodedAudioPacket, Ping, StreamPacketHeader, UDPPacket,
     UDPPayloadType, to_udp_packet_bytes,
 };
 
@@ -290,8 +290,8 @@ impl PacketSender {
             ready_frame.push(0);
         }
 
-        // TODO: Fork this library? It allocates memory on every invocation
-        // kinda defeats the purpose of the dedicated frame pool
+        // TODO: Fork this library? It allocates memory on every invocation,
+        // this kinda defeats the purpose of the dedicated frame pool
         let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
             .expect("Failed to initialize Reed Solomon Encoder");
 
@@ -307,7 +307,7 @@ impl PacketSender {
             .chunks_exact(shard_len)
             .chain(encoded.recovery_iter())
             .enumerate()
-            .map(|(i, chunk)| BorrowedEncodedVideoFrame {
+            .map(|(i, chunk)| BorrowedEncodedVideoFrameChunk {
                 header: StreamPacketHeader {
                     seq: self.screen.seq,
                     shard: i as u16,
@@ -338,6 +338,7 @@ impl PacketSender {
             return;
         };
 
+        // TODO: Should be comming from the server (VideoSessionParams)
         if self.try_send_frame(user_id, addr, 1280, 0.2) {
             self.screen.seq += 1;
         }
@@ -419,8 +420,8 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
                             packet_input.send(user_id, Instant::now(), audio_packet);
                         }
                     }
-                    UDPPayloadType::Video(_video_bytes) => {
-                        println!("video much");
+                    UDPPayloadType::Video(video_bytes) => {
+                        println!("1")
                     }
                     _ => todo!(),
                 }
@@ -505,10 +506,7 @@ impl Streaming {
         });
     }
 
-    pub async fn start_screencast(
-        cx: &mut AsyncApp,
-        session_params: VideoSessionParams,
-    ) -> Option<ScreencastPreview> {
+    pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
         let notifier =
             cx.read_global(|stream: &GlobalStreaming, _cx| stream.capture_notifier.clone());
 

@@ -4,10 +4,10 @@ use rpc::models::markers::TaggedEntity;
 use rpc::models::voice::{
     GetVoiceChannels, HostScreenCastError, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
     JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest,
-    LeaveVoiceChannel, StartScreenCast, StopScreenCast, UpdateVoiceChannelUserState,
-    VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate, VoiceChannelUpdateMessage,
-    VoiceChannelUserState, WatchScreenCastError, WatchedScreenCastUpdate,
-    WatchedScreenCastUpdateMessage,
+    LeaveVoiceChannel, StartScreenCast, StartScreenCastRequest, StopScreenCast,
+    UpdateVoiceChannelUserState, VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate,
+    VoiceChannelUpdateMessage, VoiceChannelUserState, WatchScreenCastError,
+    WatchedScreenCastUpdate, WatchedScreenCastUpdateMessage,
 };
 
 use rpc::{self, models, register_endpoints};
@@ -257,7 +257,7 @@ impl RPCHandle for StartScreenCast {
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
-        _req: Self::Request,
+        StartScreenCastRequest { width, height }: StartScreenCastRequest,
     ) -> APIResult<VideoSessionParams, HostScreenCastError> {
         let (channel_id, host_id) = {
             let conn_state = connection_state.read()?;
@@ -282,8 +282,8 @@ impl RPCHandle for StartScreenCast {
             .find(|user| user.id == host_id)
             .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
 
-        let video_session = VideoSession::default();
-        let params = video_session.params.clone();
+        let params = VideoSessionParams::new(width, height);
+        let video_session = VideoSession::new(params.clone());
 
         user_state.screencast_session = Some(video_session);
         user_state.state.is_streaming = true;

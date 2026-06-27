@@ -26,8 +26,8 @@ use rpc::{
         voice::{
             GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
             JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest, LeaveVoiceChannel,
-            StartScreenCast, StopScreenCast, UpdateVoiceChannelUserState, VoiceChannelUpdate,
-            VoiceChannelUpdateMessage, VoiceChannelUserState,
+            StartScreenCast, StartScreenCastRequest, StopScreenCast, UpdateVoiceChannelUserState,
+            VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState,
         },
     },
 };
@@ -626,22 +626,38 @@ impl StreamingState {
         cx.spawn_in(window, async |this, cx| {
             let connection = ConnectionManger::get(cx);
 
-            let Ok(params) = StartScreenCast::execute(&connection, &Empty::default()).await else {
-                cx.window_handle()
-                    .update(cx, |_, window, cx| {
-                        window.push_notification(
-                            Notification::error(
-                                "Unable to start the screencast, the server returned an error",
-                            ),
-                            cx,
-                        );
-                    })
-                    .ok();
+            if let Some(preview) = Streaming::start_screencast(cx).await {
+                // Wait for the first frame to get width and height
+                let (width, height) = loop {
+                    if let Some(frame) = preview.recv().await {
+                        break (frame.width, frame.height);
+                    };
+                };
 
-                return;
-            };
+                let Ok(_params) = StartScreenCast::execute(
+                    &connection,
+                    &StartScreenCastRequest { width, height },
+                )
+                .await
+                else {
+                    Streaming::stop_screencast(&mut *cx).await;
 
-            if let Some(preview) = Streaming::start_screencast(cx, params).await {
+                    cx.window_handle()
+                        .update(cx, |_, window, cx| {
+                            window.push_notification(
+                                Notification::error(
+                                    "Unable to start the screencast, the server returned an error",
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+
+                    return;
+                };
+
+                // TODO: Update stream params
+
                 this.update(cx, move |this, cx| {
                     this.set_screencast_preview(preview, cx);
                 })

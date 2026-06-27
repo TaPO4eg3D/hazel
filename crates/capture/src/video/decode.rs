@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, ffi::c_int};
 
-use drm_fourcc::DrmFourcc;
+use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Frame, codec, decoder,
     ffi::{
@@ -10,6 +10,7 @@ use ffmpeg_next::{
         avcodec_receive_frame, avcodec_send_packet,
     },
 };
+use gpui::{DMABuffer, DMABufferPlane};
 use smallvec::SmallVec;
 
 use crate::video::wrapper::{DrmPlane, GPUDevice};
@@ -65,7 +66,7 @@ pub struct VAAPIDecoder {
 
     packet: *mut AVPacket,
 
-    pub frame_queue: VecDeque<DecodedFrame>,
+    pub frame_queue: VecDeque<DMABuffer>,
 }
 
 impl Drop for VAAPIDecoder {
@@ -104,6 +105,8 @@ impl VAAPIDecoder {
             let packet = av_packet_alloc();
             assert!(!packet.is_null(), "Failed to allocate packet");
 
+            // Like in Pipewire. We're maintaining a pool of
+            // DRM Frames to not invalidate a frame we're display
             let drm_frames = (0..12)
                 .into_iter()
                 .map(|_| Frame::empty())
@@ -201,27 +204,33 @@ impl VAAPIDecoder {
                 let format = DrmFourcc::try_from(layers[0].format)
                     .expect("Unknown DRM format from decoded frame");
 
-                let mut planes = SmallVec::new();
+                let mut planes: SmallVec<[DMABufferPlane; 2]> = SmallVec::new();
                 for layer in layers {
                     let layer_planes = &layer.planes[..layer.nb_planes as usize];
 
                     for plane in layer_planes {
-                        planes.push(DrmPlane {
-                            offset: plane.offset,
-                            stride: plane.pitch,
+                        planes.push(DMABufferPlane {
+                            offset: plane.offset as usize,
+                            stride: plane.pitch as usize,
                         });
                     }
                 }
 
-                let decoded = DecodedFrame {
-                    fd: objects[0].fd,
-                    width: (*drm_frame.as_ptr()).width,
-                    height: (*drm_frame.as_ptr()).height,
-                    format,
-                    modifier,
-                    planes,
-                    pts: self.hw_frame.pts().unwrap_or(-1),
-                };
+                let fd = objects[0].fd;
+
+                let width = (*drm_frame.as_ptr()).width as u32;
+                let height = (*drm_frame.as_ptr()).height as u32;
+
+                let decoded = DMABuffer::new(
+                    fd,
+                    width,
+                    height,
+                    DrmFormat {
+                        code: format,
+                        modifier: DrmModifier::from(modifier),
+                    },
+                    &planes,
+                );
 
                 av_frame_unref(self.hw_frame.as_mut_ptr());
                 self.frame_queue.push_back(decoded);
