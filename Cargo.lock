@@ -1164,6 +1164,7 @@ dependencies = [
  "pipewire",
  "ringbuf",
  "rnnoise-sys",
+ "rpc",
  "smallvec",
  "smol",
  "streaming_common",
