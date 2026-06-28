@@ -9,7 +9,9 @@ use crate::{
         AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
         capture::AudioCapture,
         linux::{capture::CaptureStream, playback::PlaybackStream},
-        playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
+        playback::{
+            AudioPlaybackController, AudioPlaybackPacketInput, Playback, PlaybackPacketOutput,
+        },
     },
 };
 
@@ -17,7 +19,7 @@ pub mod capture;
 pub mod playback;
 
 pub(crate) fn init(
-    packet_input: PlaybackPacketInput,
+    packet_input: AudioPlaybackPacketInput,
     packet_output: PlaybackPacketOutput,
     notifier: CaptureNotifier,
 ) -> (AudioCapture, Playback, DeviceRegistry) {
@@ -29,7 +31,7 @@ pub(crate) fn init(
     let capture = AudioCapture::new(capture_consumer, pw_sender.clone());
 
     let playback = Playback {
-        controller: PlaybackController::new(pw_sender.clone()),
+        controller: AudioPlaybackController::new(pw_sender.clone()),
         packet_input: Some(packet_input),
     };
 

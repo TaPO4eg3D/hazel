@@ -14,6 +14,7 @@ struct CaptureNotifierInner {
 
 #[derive(Clone, Copy, Default)]
 pub struct CaptureNotifierState {
+    pub ping: bool,
     pub is_audio_ready: bool,
     pub is_screen_ready: bool,
 }
@@ -54,6 +55,7 @@ impl CaptureNotifier {
 
         state.is_audio_ready = false;
         state.is_screen_ready = false;
+        state.ping = false;
 
         WaitResult::Ready(result)
     }
@@ -65,7 +67,13 @@ impl CaptureNotifier {
         self.inner.condvar.notify_one();
     }
 
-    #[allow(dead_code)]
+    pub fn notify_ping(&self) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.ping = true;
+
+        self.inner.condvar.notify_one();
+    }
+
     pub(crate) fn notify_screen(&self) {
         let mut state = self.inner.state.lock().unwrap();
         state.is_screen_ready = true;

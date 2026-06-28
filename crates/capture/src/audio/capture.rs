@@ -8,12 +8,12 @@ use ringbuf::HeapCons;
 use crate::audio::{AudioLoopCommand, PlatformLoopController, encode::AudioEncoder};
 
 #[derive(Clone)]
-pub struct CaptureController {
+pub struct AudioCaptureController {
     is_enabled: Arc<AtomicBool>,
     platform_loop_controller: PlatformLoopController,
 }
 
-impl CaptureController {
+impl AudioCaptureController {
     pub fn set_enabled(&self, value: bool) {
         self.is_enabled.store(value, Ordering::Relaxed);
 
@@ -41,8 +41,8 @@ impl AudioCapture {
         }
     }
 
-    pub fn get_controller(&self) -> CaptureController {
-        CaptureController {
+    pub fn get_controller(&self) -> AudioCaptureController {
+        AudioCaptureController {
             is_enabled: self.is_enabled.clone(),
             platform_loop_controller: self.platform_loop_controller.clone(),
         }

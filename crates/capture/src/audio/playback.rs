@@ -302,14 +302,14 @@ pub enum PlaybackPacketCommand {
     RemoveClient(i32),
 }
 
-pub struct PlaybackPacketInput {
+pub struct AudioPlaybackPacketInput {
     pub command_sender: channel::Sender<PlaybackPacketCommand>,
     pub output_state: PlaybackOutputState,
 
     packet_buffer: HeapProd<(i32, Instant, EncodedAudioPacket)>,
 }
 
-impl PlaybackPacketInput {
+impl AudioPlaybackPacketInput {
     pub fn send(&mut self, user_id: i32, arrival_ts: Instant, packet: EncodedAudioPacket) {
         _ = self.packet_buffer.try_push((user_id, arrival_ts, packet));
     }
@@ -408,17 +408,17 @@ impl Default for PlaybackOutputState {
 }
 
 #[derive(Clone)]
-pub struct PlaybackController {
+pub struct AudioPlaybackController {
     loop_controller: PlatformLoopController,
 }
 
-impl PlaybackController {
+impl AudioPlaybackController {
     pub(crate) fn new(loop_controller: PlatformLoopController) -> Self {
         Self { loop_controller }
     }
 }
 
-impl PlaybackController {
+impl AudioPlaybackController {
     pub fn set_enabled(&self, value: bool) {
         _ = self
             .loop_controller
@@ -427,11 +427,13 @@ impl PlaybackController {
 }
 
 pub struct Playback {
-    pub packet_input: Option<PlaybackPacketInput>,
-    pub controller: PlaybackController,
+    pub packet_input: Option<AudioPlaybackPacketInput>,
+    pub controller: AudioPlaybackController,
 }
 
-pub(crate) fn init_packet_processing(debug: bool) -> (PlaybackPacketInput, PlaybackPacketOutput) {
+pub(crate) fn init_packet_processing(
+    debug: bool,
+) -> (AudioPlaybackPacketInput, PlaybackPacketOutput) {
     let ring = HeapRb::new(24);
     let (packet_prod, packet_cons) = ring.split();
 
@@ -439,7 +441,7 @@ pub(crate) fn init_packet_processing(debug: bool) -> (PlaybackPacketInput, Playb
 
     let output_state = PlaybackOutputState::default();
 
-    let packet_input = PlaybackPacketInput {
+    let packet_input = AudioPlaybackPacketInput {
         command_sender: tx,
         output_state: output_state.clone(),
         packet_buffer: packet_prod,

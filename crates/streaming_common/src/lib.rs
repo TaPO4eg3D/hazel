@@ -123,42 +123,51 @@ impl<'a> EncodedAudioBytes<'a> {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct StreamPacketHeader {
     pub seq: u64,
     pub shard: u16,
-    pub shards_total: u16,
     pub shard_size: u16,
+    pub data_shards: u16,
     pub recovery_shards: u16,
-    pub padding: u16,
+    pub data_size: u64,
 }
 
 impl StreamPacketHeader {
+    #[inline(always)]
+    pub fn total_chunks(&self) -> usize {
+        self.data_shards as usize + self.recovery_shards as usize
+    }
+
+    pub fn is_fec(&self) -> bool {
+        self.shard >= self.data_shards
+    }
+
     fn parse(buf: &mut Bytes) -> Result<Self, ParsingError> {
         let seq = buf.try_get_u64_le()?;
         let shard = buf.try_get_u16_le()?;
-        let shards_total = buf.try_get_u16_le()?;
         let shard_size = buf.try_get_u16_le()?;
+        let data_shards = buf.try_get_u16_le()?;
         let recovery_shards = buf.try_get_u16_le()?;
-        let padding = buf.try_get_u16_le()?;
+        let data_size = buf.try_get_u64_le()?;
 
         Ok(Self {
             seq,
             shard,
-            shards_total,
+            data_shards,
             shard_size,
             recovery_shards,
-            padding,
+            data_size,
         })
     }
 
     fn to_bytes(&self, buf: &mut BytesMut) {
         buf.put_u64_le(self.seq);
         buf.put_u16_le(self.shard);
-        buf.put_u16_le(self.shards_total);
         buf.put_u16_le(self.shard_size);
+        buf.put_u16_le(self.data_shards);
         buf.put_u16_le(self.recovery_shards);
-        buf.put_u16_le(self.padding);
+        buf.put_u64_le(self.data_size);
     }
 }
 
@@ -208,7 +217,7 @@ impl<'a> EncodedVideoBytes<'a> {
 
         let len = bytes.try_get_u32_le()? as usize;
         if len > 0 {
-            bytes.try_copy_to_slice(&mut packet.data[..len])?;
+            packet.data.extend_from_slice(&bytes[..len]);
         }
 
         Ok(())

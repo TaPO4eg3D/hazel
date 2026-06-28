@@ -39,12 +39,21 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
             continue;
         };
 
+        let current_user_id = Id::<User>::new(packet.user_id);
+
         // No need to process, the client wants to maintain UDP connection
         if matches!(packet.payload, UDPPayloadType::Ping(_)) {
+            let Some(state) = app_state.connected_clients.get(&current_user_id) else {
+                continue;
+            };
+
+            if let Ok(mut state) = state.write::<()>() {
+                state.active_stream = Some(addr);
+            }
+
             continue;
         }
 
-        let current_user_id = Id::<User>::new(packet.user_id);
         let (voice_channel, addr_differs) = match app_state.connected_clients.get(&current_user_id)
         {
             Some(user_state) => {
