@@ -14,14 +14,18 @@ use capture::{
     CaptureNotifier, WaitResult,
     audio::{
         self, DEFAULT_BIT_RATE, DeviceRegistry,
-        capture::{AudioCapture, CaptureController},
+        capture::{AudioCapture, AudioCaptureController},
         noise::RNNoiseState,
         playback::{
-            AudioStreamingClientSharedState, PlaybackController, PlaybackOutputState,
-            PlaybackPacketCommand, PlaybackPacketInput,
+            AudioPlaybackController, AudioPlaybackPacketInput, AudioStreamingClientSharedState,
+            PlaybackOutputState, PlaybackPacketCommand,
         },
     },
-    video::linux::screengrab::{ActiveScreencast, ScreencastPreview},
+    video::{
+        self,
+        linux::screengrab::{ActiveScreencast, ScreencastPreview},
+        playback::{DecodingWorkerCommand, VideoPlaybackController},
+    },
 };
 use crossbeam::channel;
 use gpui::{App, AppContext, AsyncApp, Global};
@@ -285,6 +289,7 @@ impl PacketSender {
         let rec_shards_len =
             ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
 
+        let data_size = ready_frame.len();
         let padding = (data_shards_len * shard_len) - ready_frame.len();
         for _ in 0..padding {
             ready_frame.push(0);
@@ -311,10 +316,10 @@ impl PacketSender {
                 header: StreamPacketHeader {
                     seq: self.screen.seq,
                     shard: i as u16,
-                    shards_total: data_shards_len as u16,
+                    data_shards: data_shards_len as u16,
                     shard_size: shard_len as u16,
                     recovery_shards: rec_shards_len as u16,
-                    padding: padding as u16,
+                    data_size: data_size as u64,
                 },
                 data: chunk,
             });
@@ -394,7 +399,11 @@ impl PacketSender {
     }
 }
 
-fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput) {
+fn spawn_receiver(
+    socket: Arc<UdpSocket>,
+    mut video_controller: VideoPlaybackController,
+    mut audio_packet_input: AudioPlaybackPacketInput,
+) {
     // Around 8 MByte to handle both high-quality audio and video at 4k
     const BUF_SIZE: usize = 8 * 1024_usize.pow(2);
 
@@ -417,11 +426,11 @@ fn spawn_receiver(socket: Arc<UdpSocket>, mut packet_input: PlaybackPacketInput)
                         let mut audio_packet = EncodedAudioPacket::default();
 
                         if audio_bytes.parse(&mut audio_packet).is_ok() {
-                            packet_input.send(user_id, Instant::now(), audio_packet);
+                            audio_packet_input.send(user_id, Instant::now(), audio_packet);
                         }
                     }
-                    UDPPayloadType::Video(video_bytes) => {
-                        println!("1")
+                    UDPPayloadType::Video(chunk_bytes) => {
+                        video_controller.process_frame(UserId::new(user_id), chunk_bytes);
                     }
                     _ => todo!(),
                 }
@@ -434,10 +443,13 @@ struct GlobalStreaming {
     stream_addr: UDPAddr,
 
     capture_notifier: CaptureNotifier,
+
     active_screencast: SharedStartedScreencast,
 
-    audio_capture: CaptureController,
-    audio_playback: PlaybackController,
+    audio_capture: AudioCaptureController,
+    audio_playback: AudioPlaybackController,
+
+    video_command_tx: channel::Sender<DecodingWorkerCommand>,
 
     audio_packet_command_tx: channel::Sender<PlaybackPacketCommand>,
     audio_playback_output_state: PlaybackOutputState,
@@ -486,7 +498,7 @@ impl Streaming {
         })
     }
 
-    pub fn get_playback<C: AppContext>(cx: &C) -> PlaybackController {
+    pub fn get_playback<C: AppContext>(cx: &C) -> AudioPlaybackController {
         cx.read_global(|stream: &GlobalStreaming, _| stream.audio_playback.clone())
     }
 
@@ -494,15 +506,19 @@ impl Streaming {
         cx.read_global(|stream: &GlobalStreaming, _| stream.audio_device_registry.clone())
     }
 
-    pub fn get_capture<C: AppContext>(cx: &C) -> CaptureController {
+    pub fn get_capture<C: AppContext>(cx: &C) -> AudioCaptureController {
         cx.read_global(|stream: &GlobalStreaming, _| stream.audio_capture.clone())
     }
 
     pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
         cx.read_global(|stream: &GlobalStreaming, _| {
             let mut state = stream.stream_addr.lock().unwrap();
-
             *state = Some((user_id, addr));
+
+            // TODO: Extremelly bad solution, fix ASAP.
+            // We have to properly ensure we're established a UDP connection
+            // + reflect the status of connection in UI
+            stream.capture_notifier.notify_ping();
         });
     }
 
@@ -527,6 +543,14 @@ impl Streaming {
             if let Some(cast) = stream.active_screencast.lock().unwrap().take() {
                 cast.close();
             }
+        });
+    }
+
+    pub fn register_video_stream(cx: &mut AsyncApp, user_id: UserId, params: VideoSessionParams) {
+        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
+            _ = stream
+                .video_command_tx
+                .send(DecodingWorkerCommand::AddClient((user_id, params)));
         });
     }
 
@@ -572,6 +596,9 @@ pub fn init(cx: &mut App, debug: bool) {
 
     let active_screencast = Arc::new(Mutex::new(None));
 
+    let video_playback = video::playback::init();
+    let video_command_tx = video_playback.get_command_tx();
+
     thread::Builder::new()
         .name("udp-sender".into())
         .spawn({
@@ -601,7 +628,7 @@ pub fn init(cx: &mut App, debug: bool) {
             let socket = socket.clone();
 
             move || {
-                spawn_receiver(socket, audio_packet_input);
+                spawn_receiver(socket, video_playback, audio_packet_input);
             }
         })
         .unwrap();
@@ -613,6 +640,7 @@ pub fn init(cx: &mut App, debug: bool) {
         audio_playback: audio_playback.controller,
         audio_packet_command_tx: audio_packet_tx,
         audio_playback_output_state: audio_packet_output_state,
+        video_command_tx,
         audio_shared_state,
         stream_addr,
         audio_device_registry,

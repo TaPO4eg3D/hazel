@@ -5,10 +5,10 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},
 };
-use rpc::models::voice::VideoSessionParams;
+use rpc::models::{markers::UserId, voice::VideoSessionParams};
 use streaming_common::{EncodedVideoBytes, OwnedEncodedVideoFrameChunk, StreamPacketHeader};
 
-use crate::video::decode::VAAPIDecoder;
+use crate::video::decode::{VAAPIDecoder, VAAPIDecoderParams};
 
 #[derive(Default)]
 struct Chunk {
@@ -33,9 +33,17 @@ impl Chunk {
 #[derive(Default)]
 struct PendingFrame {
     header: StreamPacketHeader,
-    processed_chunks: u32,
+    data_shards: usize,
+    recovery_shards: usize,
+    /// We are reusing `PendingFrame`s,
+    /// this flag is used to indicate if the frame
+    /// is in the process of aggregating chunks.
+    /// You're supposted to raise this flag when you're
+    /// claiming the frame and put it down once you're done.
+    /// Maybe there's a better way to do it but it is what it is
     in_constuction: bool,
     chunks: Vec<Chunk>,
+    data: Vec<u8>,
 }
 
 impl PendingFrame {
@@ -52,9 +60,7 @@ impl PendingFrame {
         self.header = incoming_chunk.header.clone();
 
         // At first we need to make sure we have enough space to store the frame
-        let total_chunks = incoming_chunk.header.shards_total as usize
-            + incoming_chunk.header.recovery_shards as usize;
-
+        let total_chunks = incoming_chunk.header.total_chunks();
         if self.chunks.len() < total_chunks as usize {
             let diff = total_chunks - self.chunks.len();
 
@@ -72,62 +78,121 @@ impl PendingFrame {
         }
 
         chunk.set(&incoming_chunk.data);
+        if incoming_chunk.header.is_fec() {
+            self.recovery_shards += 1;
+        } else {
+            self.data_shards += 1;
+        }
+    }
+
+    fn process(&mut self) -> bool {
+        let total_processed = self.data_shards + self.recovery_shards;
+        if total_processed < self.header.data_shards as usize {
+            return false;
+        }
+        // We have enough chunks, it's time to build the frame
+        println!(
+            "FRAME: {:#?} ({}, {})",
+            self.header, self.data_shards, self.recovery_shards
+        );
+
+        self.data.clear();
+
+        let fec_needed = self.data_shards < self.header.data_shards as usize;
+        if fec_needed {
+            todo!("Implement FEC");
+        } else {
+            for chunk in self.chunks.iter() {
+                if !chunk.processed {
+                    continue;
+                }
+
+                self.data.extend_from_slice(&chunk.data);
+            }
+        }
+
+        self.data.truncate(self.header.data_size as usize);
+
+        true
     }
 }
 
 struct VideoStreamingClientState {
     decoder: VAAPIDecoder,
-    framerate: f32,
-    pending_frames: [PendingFrame; 4],
+    pending_frames: Vec<PendingFrame>,
+    next_seq: u64,
 }
 
 impl VideoStreamingClientState {
+    fn new(decoder: VAAPIDecoder) -> Self {
+        let pending_frames = (0..4).map(|_| PendingFrame::default()).collect::<Vec<_>>();
+
+        Self {
+            next_seq: 0,
+            decoder,
+            pending_frames,
+        }
+    }
+
     fn process_chunk(&mut self, chunk: &OwnedEncodedVideoFrameChunk) {
-        // At first we're trying to find a frame in construction
-        // with the matching seq
-        if let Some(frame) = self
+        // Do not process late chunks
+        if chunk.header.seq < self.next_seq {
+            println!("late: {}", chunk.header.seq);
+            return;
+        }
+
+        // At first we're trying to find a frame in construction with the matching seq
+        let frame = if let Some(frame) = self
             .pending_frames
             .iter_mut()
             .find(|frame| frame.in_constuction && frame.header.seq == chunk.header.seq)
         {
-            frame.merge_chunk(chunk);
-        }
-
-        // Nothing found, that's a new frame.
-        // Trying to find a frame we can use
-        if let Some(frame) = self
+            println!("found frame");
+            frame
+        } else if let Some(frame) = self // Nothing found, that's a new frame. Trying to find a frame we can use
             .pending_frames
             .iter_mut()
             .find(|frame| !frame.in_constuction)
         {
-            frame.merge_chunk(chunk);
-        }
-
-        // All frames are claimed, remove one with the lowest seq
-        let frame = self
-            .pending_frames
-            .iter_mut()
-            .min_by_key(|frame| frame.header.seq)
-            .expect("We should always have at least one such frame");
+            println!("new frame");
+            frame
+        } else {
+            println!("no vacant frames");
+            // All frames are claimed, remove one with the lowest seq
+            self.pending_frames
+                .iter_mut()
+                .min_by_key(|frame| frame.header.seq)
+                .expect("We should always have at least one such frame")
+        };
 
         frame.merge_chunk(chunk);
+        if frame.process() {
+            println!("FRAME: {:?}", frame.data);
+            self.decoder.decode(&frame.data);
+            if let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
+                println!("Decoded frame!");
+            }
+
+            self.next_seq = chunk.header.seq + 1;
+            frame.reset();
+        }
     }
 }
 
 pub enum DecodingWorkerCommand {
-    AddClient((i32, VideoSessionParams)),
-    RemoveClient(i32),
+    AddClient((UserId, VideoSessionParams)),
+    RemoveClient(UserId),
     ProcessFrameChunk,
 }
 
 struct ChunkMetadata {
-    user_id: i32,
+    user_id: UserId,
     parsed_correctly: bool,
 }
 
 pub struct DecodingWorker {
     command_rx: channel::Receiver<DecodingWorkerCommand>,
-    active_clients: Vec<(i32, VideoStreamingClientState)>,
+    active_clients: Vec<(UserId, VideoStreamingClientState)>,
 
     used_chunks: HeapProd<OwnedEncodedVideoFrameChunk>,
     pending_chunks: HeapCons<(ChunkMetadata, OwnedEncodedVideoFrameChunk)>,
@@ -165,21 +230,40 @@ impl DecodingWorker {
         {
             client.process_chunk(&chunk);
         }
+
+        _ = self.used_chunks.try_push(chunk);
+    }
+
+    fn add_client(&mut self, user_id: UserId, params: VideoSessionParams) {
+        if self
+            .active_clients
+            .iter()
+            .any(|(client_id, _)| *client_id == user_id)
+        {
+            return;
+        }
+
+        let client = VideoStreamingClientState::new(VAAPIDecoder::new(VAAPIDecoderParams {
+            width: params.width,
+            height: params.height,
+        }));
+
+        self.active_clients.push((user_id, client));
     }
 
     fn run(mut self) {
-        let timeout = Duration::from_secs_f32(f32::MAX);
-
         loop {
-            match self.command_rx.recv_timeout(timeout) {
+            match self.command_rx.recv() {
                 Ok(command) => match command {
-                    DecodingWorkerCommand::AddClient(_) => {}
-                    DecodingWorkerCommand::RemoveClient(_) => {}
+                    DecodingWorkerCommand::AddClient((user_id, params)) => {
+                        self.add_client(user_id, params)
+                    }
+                    DecodingWorkerCommand::RemoveClient(_) => todo!("Implement client removal"),
                     DecodingWorkerCommand::ProcessFrameChunk => self.process_frame_chunk(),
                 },
-                Err(RecvTimeoutError::Timeout) => {
-                    todo!("handle stale streams");
-                }
+                // Err(RecvTimeoutError::Timeout) => {
+                //     todo!("handle stale streams");
+                // }
                 _ => unreachable!("Decoding worker should be always active"),
             }
         }
@@ -194,7 +278,11 @@ pub struct VideoPlaybackController {
 }
 
 impl VideoPlaybackController {
-    fn process_frame(&mut self, user_id: i32, chunk_bytes: EncodedVideoBytes<'_>) {
+    pub fn get_command_tx(&self) -> channel::Sender<DecodingWorkerCommand> {
+        self.command_tx.clone()
+    }
+
+    pub fn process_frame(&mut self, user_id: UserId, chunk_bytes: EncodedVideoBytes<'_>) {
         if let Some(mut chunk) = self.used_chunks.try_pop() {
             let result = chunk_bytes.parse(&mut chunk);
 

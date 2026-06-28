@@ -733,23 +733,27 @@ impl StreamingState {
 
             let connection = ConnectionManger::get(cx);
 
-            if JoinScreenCast::execute(&connection, &JoinScreenCastRequest { user_id, mtu: 0 })
+            match JoinScreenCast::execute(&connection, &JoinScreenCastRequest { user_id, mtu: 0 })
                 .await
-                .is_err()
             {
-                cx.window_handle()
-                    .update(cx, |_, window, cx| {
-                        window.push_notification(
-                            Notification::error(
-                                "Unable to join the screencast, the server returned an error",
-                            ),
-                            cx,
-                        );
-                    })
-                    .ok();
+                Ok(params) => {
+                    Streaming::register_video_stream(cx, user_id, params);
+                }
+                Err(err) => {
+                    println!("Error: {err:?}");
 
-                return;
-            };
+                    cx.window_handle()
+                        .update(cx, |_, window, cx| {
+                            window.push_notification(
+                                Notification::error(
+                                    "Unable to join the screencast, the server returned an error",
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
         })
         .detach();
     }
