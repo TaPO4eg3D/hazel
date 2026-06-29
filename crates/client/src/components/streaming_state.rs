@@ -750,7 +750,6 @@ impl StreamingState {
                         this.watching_frame_task = Some(cx.spawn(async move |this, cx| {
                             while let Ok(frame) = frame_rx.recv().await {
                                 this.update(cx, |this, cx| {
-                                    println!("{frame:?}");
                                     this.watching_frame = Some(frame);
 
                                     cx.notify();

@@ -229,7 +229,10 @@ impl VAAPIDecoder {
                     width,
                     height,
                     DrmFormat {
-                        code: format,
+                        // TODO: Format from layer is PER layer,
+                        // figure out how to handle it. For now it's fine
+                        // to hardcode, since VAAPI is almost always NV12
+                        code: DrmFourcc::Nv12,
                         modifier: DrmModifier::from(modifier),
                     },
                     &planes,
