@@ -60,8 +60,11 @@ impl RenderOnce for ScreenSpace {
             .when_some(state.preview_frame.as_ref(), |this, frame| {
                 this.child(surface(frame.clone()).size_full())
             })
+            .when_some(state.watching_frame.as_ref(), |this, frame| {
+                this.child(surface(frame.clone()).size_full())
+            })
             // No stream placeholder
-            .when_none(&state.preview_frame, |this| {
+            .when(!state.is_stream_playing(), |this| {
                 this.child(
                     div()
                         .v_flex()

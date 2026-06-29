@@ -28,7 +28,7 @@ use capture::{
     },
 };
 use crossbeam::channel;
-use gpui::{App, AppContext, AsyncApp, Global};
+use gpui::{App, AppContext, AsyncApp, DMABuffer, Global};
 
 use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
@@ -546,11 +546,18 @@ impl Streaming {
         });
     }
 
-    pub fn register_video_stream(cx: &mut AsyncApp, user_id: UserId, params: VideoSessionParams) {
+    pub fn register_video_stream(
+        cx: &mut AsyncApp,
+        user_id: UserId,
+        frame_tx: smol::channel::Sender<DMABuffer>,
+        params: VideoSessionParams,
+    ) {
         cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
             _ = stream
                 .video_command_tx
-                .send(DecodingWorkerCommand::AddClient((user_id, params)));
+                .send(DecodingWorkerCommand::AddClient((
+                    user_id, frame_tx, params,
+                )));
         });
     }
 

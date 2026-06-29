@@ -31,7 +31,7 @@ use rpc::{
         },
     },
 };
-use smol::stream::StreamExt as _;
+use smol::{channel, stream::StreamExt as _};
 
 use crate::{ConnectionManger, streaming::Streaming};
 
@@ -183,14 +183,20 @@ pub struct StreamingState {
     noise_reduction: NoiseReductionAlgorithm,
 
     screencast_preview_task: Option<Task<()>>,
+    watching_frame_task: Option<Task<()>>,
+
     pub preview_frame: Option<DMABuffer>,
+    pub watching_frame: Option<DMABuffer>,
 }
 
 impl StreamingState {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = Self {
             screencast_preview_task: None,
+            watching_frame_task: None,
+
             preview_frame: None,
+            watching_frame: None,
 
             voice_channels: vec![],
 
@@ -737,7 +743,24 @@ impl StreamingState {
                 .await
             {
                 Ok(params) => {
-                    Streaming::register_video_stream(cx, user_id, params);
+                    let (frame_tx, frame_rx) = channel::bounded::<DMABuffer>(1);
+
+                    let this = this.upgrade().unwrap();
+                    this.update(cx, |this, cx| {
+                        this.watching_frame_task = Some(cx.spawn(async move |this, cx| {
+                            while let Ok(frame) = frame_rx.recv().await {
+                                this.update(cx, |this, cx| {
+                                    println!("{frame:?}");
+                                    this.watching_frame = Some(frame);
+
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        }));
+                    });
+
+                    Streaming::register_video_stream(cx, user_id, frame_tx, params);
                 }
                 Err(err) => {
                     println!("Error: {err:?}");
@@ -781,5 +804,9 @@ impl StreamingState {
             };
         })
         .detach();
+    }
+
+    pub fn is_stream_playing(&self) -> bool {
+        self.screencast_preview_task.is_some() || self.watching_frame_task.is_some()
     }
 }

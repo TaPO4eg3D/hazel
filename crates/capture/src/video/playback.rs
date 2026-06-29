@@ -1,6 +1,8 @@
-use std::{thread, time::Duration};
+use std::{collections::VecDeque, thread};
 
-use crossbeam::channel::{self, RecvTimeoutError};
+use crossbeam::channel;
+use gpui::DMABuffer;
+use reed_solomon_simd::ReedSolomonDecoder;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},
@@ -50,17 +52,20 @@ impl PendingFrame {
     fn reset(&mut self) {
         self.in_constuction = false;
 
+        self.data_shards = 0;
+        self.recovery_shards = 0;
+
         for chunk in self.chunks.iter_mut() {
             chunk.reset();
         }
     }
 
-    fn merge_chunk(&mut self, incoming_chunk: &OwnedEncodedVideoFrameChunk) {
+    fn merge_chunk(&mut self, new_chunk: &OwnedEncodedVideoFrameChunk) {
         self.in_constuction = true;
-        self.header = incoming_chunk.header.clone();
+        self.header = new_chunk.header.clone();
 
-        // At first we need to make sure we have enough space to store the frame
-        let total_chunks = incoming_chunk.header.total_chunks();
+        // At first we need to make sure we have enough space to store all of the chunks
+        let total_chunks = new_chunk.header.total_chunks();
         if self.chunks.len() < total_chunks as usize {
             let diff = total_chunks - self.chunks.len();
 
@@ -69,16 +74,18 @@ impl PendingFrame {
             }
         }
 
-        let chunk = &mut self.chunks[incoming_chunk.header.shard as usize];
+        let chunk = &mut self.chunks[new_chunk.header.shard as usize];
         if chunk.processed {
-            // is it possible?
-            log::warn!("Chunk {} alredy processed", incoming_chunk.header.seq);
-
-            return;
+            // is it even possible?
+            panic!(
+                "Chunk {} ({}) alredy processed",
+                new_chunk.header.shard, new_chunk.header.seq
+            );
         }
 
-        chunk.set(&incoming_chunk.data);
-        if incoming_chunk.header.is_fec() {
+        chunk.set(&new_chunk.data);
+
+        if new_chunk.header.is_fec() {
             self.recovery_shards += 1;
         } else {
             self.data_shards += 1;
@@ -90,22 +97,62 @@ impl PendingFrame {
         if total_processed < self.header.data_shards as usize {
             return false;
         }
-        // We have enough chunks, it's time to build the frame
-        println!(
-            "FRAME: {:#?} ({}, {})",
-            self.header, self.data_shards, self.recovery_shards
-        );
 
+        // We have enough chunks, it's time to build the frame
         self.data.clear();
 
-        let fec_needed = self.data_shards < self.header.data_shards as usize;
-        if fec_needed {
-            todo!("Implement FEC");
-        } else {
-            for chunk in self.chunks.iter() {
+        let recovery_needed = self.data_shards < self.header.data_shards as usize;
+        if recovery_needed {
+            // TODO: Fork the library? We jump through a lot of hoops
+            // to ensure as minimum allocations as possible only
+            // to blast allocations on every error correction
+            let Ok(mut reed) = ReedSolomonDecoder::new(
+                self.header.data_shards as usize,
+                self.header.recovery_shards as usize,
+                self.header.shard_size as usize,
+            ) else {
+                // the function should return Result<bool, ProcessErr>
+                // or something like this
+                todo!("Handle failure in decoding");
+            };
+
+            for i in 0..self.header.total_chunks() {
+                let chunk = &self.chunks[i];
+
                 if !chunk.processed {
                     continue;
                 }
+
+                if i >= self.header.data_shards as usize {
+                    reed.add_recovery_shard(i, &chunk.data).unwrap()
+                } else {
+                    reed.add_original_shard(i, &chunk.data).unwrap()
+                }
+            }
+
+            let Ok(restored) = reed.decode() else {
+                // the function should return Result<bool, ProcessErr>
+                // or something like this
+                todo!("Handle failure in decoding");
+            };
+            let mut restored = restored.restored_original_iter().collect::<VecDeque<_>>();
+
+            for i in 0..self.header.data_shards as usize {
+                let chunk = &self.chunks[i];
+
+                if chunk.processed {
+                    self.data.extend_from_slice(&chunk.data);
+                } else {
+                    let (idx, data) = restored.pop_front().expect("todo: same note as above");
+                    assert!(idx == i);
+
+                    self.data.extend_from_slice(&data);
+                }
+            }
+        } else {
+            for i in 0..self.header.data_shards as usize {
+                let chunk = &self.chunks[i];
+                debug_assert!(chunk.processed);
 
                 self.data.extend_from_slice(&chunk.data);
             }
@@ -119,16 +166,18 @@ impl PendingFrame {
 
 struct VideoStreamingClientState {
     decoder: VAAPIDecoder,
+    frame_tx: smol::channel::Sender<DMABuffer>,
     pending_frames: Vec<PendingFrame>,
     next_seq: u64,
 }
 
 impl VideoStreamingClientState {
-    fn new(decoder: VAAPIDecoder) -> Self {
+    fn new(frame_tx: smol::channel::Sender<DMABuffer>, decoder: VAAPIDecoder) -> Self {
         let pending_frames = (0..4).map(|_| PendingFrame::default()).collect::<Vec<_>>();
 
         Self {
             next_seq: 0,
+            frame_tx,
             decoder,
             pending_frames,
         }
@@ -137,7 +186,6 @@ impl VideoStreamingClientState {
     fn process_chunk(&mut self, chunk: &OwnedEncodedVideoFrameChunk) {
         // Do not process late chunks
         if chunk.header.seq < self.next_seq {
-            println!("late: {}", chunk.header.seq);
             return;
         }
 
@@ -147,17 +195,14 @@ impl VideoStreamingClientState {
             .iter_mut()
             .find(|frame| frame.in_constuction && frame.header.seq == chunk.header.seq)
         {
-            println!("found frame");
             frame
         } else if let Some(frame) = self // Nothing found, that's a new frame. Trying to find a frame we can use
             .pending_frames
             .iter_mut()
             .find(|frame| !frame.in_constuction)
         {
-            println!("new frame");
             frame
         } else {
-            println!("no vacant frames");
             // All frames are claimed, remove one with the lowest seq
             self.pending_frames
                 .iter_mut()
@@ -167,10 +212,10 @@ impl VideoStreamingClientState {
 
         frame.merge_chunk(chunk);
         if frame.process() {
-            println!("FRAME: {:?}", frame.data);
             self.decoder.decode(&frame.data);
             if let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
-                println!("Decoded frame!");
+                // TODO: Deregister the client if the sender is dead
+                _ = self.frame_tx.send_blocking(decoded_frame).is_err();
             }
 
             self.next_seq = chunk.header.seq + 1;
@@ -180,7 +225,7 @@ impl VideoStreamingClientState {
 }
 
 pub enum DecodingWorkerCommand {
-    AddClient((UserId, VideoSessionParams)),
+    AddClient((UserId, smol::channel::Sender<DMABuffer>, VideoSessionParams)),
     RemoveClient(UserId),
     ProcessFrameChunk,
 }
@@ -234,7 +279,12 @@ impl DecodingWorker {
         _ = self.used_chunks.try_push(chunk);
     }
 
-    fn add_client(&mut self, user_id: UserId, params: VideoSessionParams) {
+    fn add_client(
+        &mut self,
+        user_id: UserId,
+        frame_tx: smol::channel::Sender<DMABuffer>,
+        params: VideoSessionParams,
+    ) {
         if self
             .active_clients
             .iter()
@@ -243,10 +293,13 @@ impl DecodingWorker {
             return;
         }
 
-        let client = VideoStreamingClientState::new(VAAPIDecoder::new(VAAPIDecoderParams {
-            width: params.width,
-            height: params.height,
-        }));
+        let client = VideoStreamingClientState::new(
+            frame_tx,
+            VAAPIDecoder::new(VAAPIDecoderParams {
+                width: params.width,
+                height: params.height,
+            }),
+        );
 
         self.active_clients.push((user_id, client));
     }
@@ -255,8 +308,8 @@ impl DecodingWorker {
         loop {
             match self.command_rx.recv() {
                 Ok(command) => match command {
-                    DecodingWorkerCommand::AddClient((user_id, params)) => {
-                        self.add_client(user_id, params)
+                    DecodingWorkerCommand::AddClient((user_id, frame_tx, params)) => {
+                        self.add_client(user_id, frame_tx, params)
                     }
                     DecodingWorkerCommand::RemoveClient(_) => todo!("Implement client removal"),
                     DecodingWorkerCommand::ProcessFrameChunk => self.process_frame_chunk(),

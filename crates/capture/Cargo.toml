@@ -15,6 +15,7 @@ atomic_float = { workspace = true }
 ringbuf = { workspace = true }
 smol = { workspace = true }
 rpc = { workspace = true }
+reed-solomon-simd = { workspace = true }
 
 streaming_common = { workspace = true }
 
