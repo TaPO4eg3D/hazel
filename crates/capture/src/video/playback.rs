@@ -124,7 +124,8 @@ impl PendingFrame {
                 }
 
                 if i >= self.header.data_shards as usize {
-                    reed.add_recovery_shard(i, &chunk.data).unwrap()
+                    reed.add_recovery_shard(i - self.header.data_shards as usize, &chunk.data)
+                        .unwrap()
                 } else {
                     reed.add_original_shard(i, &chunk.data).unwrap()
                 }
