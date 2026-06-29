@@ -16,13 +16,12 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
-use bytes::BytesMut;
 use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use smallvec::smallvec;
 
 // TODO: Both should be configurable
 const DEFAULT_FRAMERATE: u32 = 60;
-const DEFAULT_BITRATE: u32 = 10 * 1000_u32.pow(2);
+const DEFAULT_BITRATE: u32 = 4 * 1000_u32.pow(2);
 
 use gpui::{DMABuffer, DMABufferPlane};
 use libspa::{
@@ -50,7 +49,6 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split},
 };
-use streaming_common::{BorrowedEncodedVideoFrameChunk, StreamPacketHeader};
 
 use crate::{
     CaptureNotifier,
@@ -333,7 +331,7 @@ impl ScreencastStream {
             VideoFormat::BGRx => DrmFourcc::Xrgb8888,
             VideoFormat::BGRA => DrmFourcc::Xrgb8888,
             VideoFormat::RGBx => DrmFourcc::Xbgr8888,
-            format => todo!("Unimplemnted: {format:?}"),
+            format => todo!("Unimplemented: {format:?}"),
         };
 
         let format = DrmInfo {

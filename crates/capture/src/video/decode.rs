@@ -154,7 +154,10 @@ impl VAAPIDecoder {
 
                     let err = avcodec_send_packet(self.decoder.as_mut_ptr(), self.packet);
                     if err < 0 {
-                        panic!("Failed to send packet to decoder: {err}");
+                        // TODO: It should not be a plain return. Some errors
+                        // carry a usefull context: like if we missed a keyframe,
+                        // we should ask the host to generate a new one
+                        return;
                     }
 
                     self.receive_frames();
@@ -198,7 +201,7 @@ impl VAAPIDecoder {
                 let layers = (*desc).layers;
                 let layers = &layers[..(*desc).nb_layers as usize];
 
-                // TODO: Technically it's not correct since different
+                // NOTE: Technically it's not correct since different
                 // layers might be on different DMA-BUFs but it should work fine???
                 let modifier = objects[0].format_modifier;
                 let format = DrmFourcc::try_from(layers[0].format)

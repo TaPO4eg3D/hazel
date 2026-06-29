@@ -1162,6 +1162,7 @@ dependencies = [
  "nnnoiseless",
  "opus",
  "pipewire",
+ "reed-solomon-simd",
  "ringbuf",
  "rnnoise-sys",
  "rpc",
