@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, thread};
+use std::{collections::VecDeque, thread, time::Instant};
 
 use crossbeam::channel;
 use gpui::DMABuffer;
@@ -170,6 +170,7 @@ struct VideoStreamingClientState {
     frame_tx: smol::channel::Sender<DMABuffer>,
     pending_frames: Vec<PendingFrame>,
     next_seq: u64,
+    last_frame: Instant,
 }
 
 impl VideoStreamingClientState {
@@ -180,6 +181,7 @@ impl VideoStreamingClientState {
             next_seq: 0,
             frame_tx,
             decoder,
+            last_frame: Instant::now(),
             pending_frames,
         }
     }
@@ -213,6 +215,12 @@ impl VideoStreamingClientState {
 
         frame.merge_chunk(chunk);
         if frame.process() {
+            let now = Instant::now();
+            let diff = now - self.last_frame;
+
+            println!("Frame Time: {}ms", diff.as_millis());
+            self.last_frame = now;
+
             self.decoder.decode(&frame.data);
             if let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
                 // TODO: Deregister the client if the sender is dead

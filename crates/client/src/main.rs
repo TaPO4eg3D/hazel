@@ -121,7 +121,8 @@ impl Global for ConnectionManger {}
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let notification_layer = Root::render_notification_layer(window, cx);
+        let dialogue_layer = Root::render_dialog_layer(window, cx);
+        let notifications_layer = Root::render_notification_layer(window, cx);
 
         let mut root = div().size_full();
 
@@ -130,7 +131,7 @@ impl Render for MainWindow {
             Screen::MainWorkspace => root = root.child(self.workspace_screen.clone()),
         };
 
-        root.children(notification_layer)
+        root.children(dialogue_layer).children(notifications_layer)
     }
 }
 
