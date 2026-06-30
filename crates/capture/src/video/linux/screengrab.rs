@@ -578,33 +578,35 @@ pub async fn init_screencast(
 
     pw::init();
 
-    _ = thread::spawn(move || {
-        let mainloop = pw::main_loop::MainLoopRc::new(None)?;
-        let context = pw::context::ContextRc::new(&mainloop, None)?;
-        let core = context.connect_fd_rc(fd, None)?;
+    _ = thread::Builder::new()
+        .name("video-processing".to_string())
+        .spawn(move || {
+            let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+            let context = pw::context::ContextRc::new(&mainloop, None)?;
+            let core = context.connect_fd_rc(fd, None)?;
 
-        let _stream = ScreencastStream::new(ScreencastStreamParams {
-            core,
-            node_id,
-            preview_tx,
-            notifier,
-            empty_frame_queue: emtpy_frame_queue_cons,
-            ready_frame_queue: ready_frame_queue_prod,
-        })
-        .expect("Failed to create screencast stream");
+            let _stream = ScreencastStream::new(ScreencastStreamParams {
+                core,
+                node_id,
+                preview_tx,
+                notifier,
+                empty_frame_queue: emtpy_frame_queue_cons,
+                ready_frame_queue: ready_frame_queue_prod,
+            })
+            .expect("Failed to create screencast stream");
 
-        let _attached = pw_rx.attach(mainloop.loop_(), {
-            let mainloop = mainloop.clone();
+            let _attached = pw_rx.attach(mainloop.loop_(), {
+                let mainloop = mainloop.clone();
 
-            move |_| {
-                mainloop.quit();
-            }
+                move |_| {
+                    mainloop.quit();
+                }
+            });
+
+            mainloop.run();
+
+            Ok::<_, anyhow::Error>(())
         });
-
-        mainloop.run();
-
-        Ok::<_, anyhow::Error>(())
-    });
 
     Ok((
         ActiveScreencast {

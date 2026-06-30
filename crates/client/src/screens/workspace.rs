@@ -1,4 +1,3 @@
-use capture::video::decode::DecodedFrame;
 use gpui::{
     AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Task,
     Window, div, px,
@@ -25,9 +24,6 @@ pub struct WorkspaceScreen {
 
     text_card: Entity<CollapsableCardState>,
     voice_card: Entity<CollapsableCardState>,
-
-    frame: Option<DecodedFrame>,
-    _streaming_task: Option<Task<()>>,
 }
 
 impl WorkspaceScreen {
@@ -53,9 +49,6 @@ impl WorkspaceScreen {
 
             text_card,
             voice_card,
-
-            frame: None,
-            _streaming_task: None,
         }
     }
 }
@@ -92,38 +85,8 @@ impl Render for WorkspaceScreen {
                 div()
                     .v_flex()
                     .size_full()
-                    .child(CallRoom::new(&self.streaming))
+                    .child(CallRoom::new("call-room", &self.streaming))
                     .into_any_element(),
-                // div()
-                //     .size_full()
-                //     .flex()
-                //     .justify_center()
-                //     .items_center()
-                //     .when_some(self.frame.as_ref(), |this, frame| {
-                //         let planes = frame
-                //             .planes
-                //             .iter()
-                //             .map(|plane| DMABufferPlane {
-                //                 offset: plane.offset as usize,
-                //                 stride: plane.stride as usize,
-                //             })
-                //             .collect::<Vec<_>>();
-
-                //         this.v_flex().child("FRAME").child(
-                //             surface(DMABuffer::new(
-                //                 frame.fd,
-                //                 frame.width as u32,
-                //                 frame.height as u32,
-                //                 DrmFormat {
-                //                     code: DrmFourcc::Nv12,
-                //                     modifier: DrmModifier::try_from(frame.modifier).unwrap(),
-                //                 },
-                //                 &planes,
-                //             ))
-                //             .size_full(),
-                //         )
-                //     })
-                //     .into_any_element(),
             )
     }
 }
