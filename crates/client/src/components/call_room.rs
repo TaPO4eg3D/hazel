@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use gpui::{
     App, AppContext, ClickEvent, ElementId, Entity, IntoElement, ParentElement, RenderOnce,
     SharedString, Styled, Window, div, prelude::FluentBuilder, surface,
@@ -6,26 +8,45 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, Size, StyledExt as _,
     button::{Button, ButtonVariants},
     label::Label,
-    select::{Select, SelectState},
+    select::{Select, SelectItem, SelectState},
 };
 
 use crate::{assets::IconName, components::streaming_state::StreamingState};
 
+#[derive(Clone, Copy)]
+enum StreamingQuality {
+    LowLatency,
+    HighQuality,
+}
+
+impl SelectItem for StreamingQuality {
+    type Value = Self;
+
+    fn title(&self) -> SharedString {
+        match self {
+            Self::HighQuality => "High quality: 30FPS".into(),
+            Self::LowLatency => "Low latency: 60FPS".into(),
+        }
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
+}
+
 struct CallRoomState {
     show_configuration: bool,
-    select_state: Entity<SelectState<Vec<SharedString>>>,
+    select_state: Entity<SelectState<Vec<StreamingQuality>>>,
 }
 
 #[derive(IntoElement)]
 pub struct CallRoom {
-    id: ElementId,
     streaming: Entity<StreamingState>,
 }
 
 impl CallRoom {
-    pub fn new(id: impl Into<ElementId>, streaming: &Entity<StreamingState>) -> Self {
+    pub fn new(streaming: &Entity<StreamingState>) -> Self {
         Self {
-            id: id.into(),
             streaming: streaming.clone(),
         }
     }
@@ -33,11 +54,11 @@ impl CallRoom {
 
 impl RenderOnce for CallRoom {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-        let room_state = window.use_keyed_state(self.id, cx, |window, cx| CallRoomState {
+        let room_state = window.use_state(cx, |window, cx| CallRoomState {
             show_configuration: false,
             select_state: cx.new(|cx| {
                 SelectState::new(
-                    vec!["Low latency: 60 FPS".into(), "High quality: 30 FPS".into()],
+                    vec![StreamingQuality::LowLatency, StreamingQuality::HighQuality],
                     Some(IndexPath::default()), // Select first item
                     window,
                     cx,
@@ -63,23 +84,32 @@ impl RenderOnce for CallRoom {
 
                         window.listener_for(
                             &self.streaming,
-                            move |streaming_state, _: &(), window, cx| {
+                            move |streaming_state,
+                                  config: &Option<StreamingQuality>,
+                                  window,
+                                  cx| {
                                 room_state.update(cx, |this, _cx| {
                                     this.show_configuration = false;
                                 });
 
-                                streaming_state.start_screencast(window, cx);
+                                if config.is_some() {
+                                    streaming_state.start_screencast(window, cx);
+                                }
                             },
                         )
                     }),
             )
-            .child(ControlPanel::new(&self.streaming).on_click({
-                move |_, _, cx| {
-                    room_state.update(cx, |this, _cx| {
-                        this.show_configuration = true;
-                    });
-                }
-            }))
+            .child(
+                ControlPanel::new(&self.streaming)
+                    .disabled(*show_configuration)
+                    .on_click({
+                        move |_, _, cx| {
+                            room_state.update(cx, |this, _cx| {
+                                this.show_configuration = true;
+                            });
+                        }
+                    }),
+            )
     }
 }
 
@@ -87,14 +117,14 @@ impl RenderOnce for CallRoom {
 struct ScreenSpace {
     streaming: Entity<StreamingState>,
     show_configuration: bool,
-    select_state: Entity<SelectState<Vec<SharedString>>>,
-    on_config: Option<Box<dyn Fn(&(), &mut Window, &mut App)>>,
+    select_state: Entity<SelectState<Vec<StreamingQuality>>>,
+    on_config: Option<Rc<dyn Fn(&Option<StreamingQuality>, &mut Window, &mut App)>>,
 }
 
 impl ScreenSpace {
     pub fn new(
         streaming: &Entity<StreamingState>,
-        select_state: Entity<SelectState<Vec<SharedString>>>,
+        select_state: Entity<SelectState<Vec<StreamingQuality>>>,
     ) -> Self {
         Self {
             show_configuration: false,
@@ -109,8 +139,11 @@ impl ScreenSpace {
         self
     }
 
-    fn on_config(mut self, value: impl Fn(&(), &mut Window, &mut App) + 'static) -> Self {
-        self.on_config = Some(Box::new(value));
+    fn on_config(
+        mut self,
+        value: impl Fn(&Option<StreamingQuality>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_config = Some(Rc::new(value));
         self
     }
 }
@@ -125,7 +158,6 @@ impl RenderOnce for ScreenSpace {
             .border_1()
             .size_full()
             .border_color(cx.theme().secondary)
-            .when(self.show_configuration, |this| this)
             .when_else(
                 self.show_configuration,
                 |this| {
@@ -151,12 +183,37 @@ impl RenderOnce for ScreenSpace {
                                                 Button::new("screencast-decline-config")
                                                     .label("Cancel")
                                                     .danger()
-                                                    .flex_1(),
+                                                    .flex_1()
+                                                    .when_some(
+                                                        self.on_config.clone(),
+                                                        |this, on_config| {
+                                                            this.on_click(move |_, window, cx| {
+                                                                on_config(&None, window, cx);
+                                                            })
+                                                        },
+                                                    ),
                                             )
                                             .child(
                                                 Button::new("screencast-accept-config")
                                                     .label("Confirm")
-                                                    .flex_1(),
+                                                    .flex_1()
+                                                    .when_some(
+                                                        self.on_config,
+                                                        |this, on_config| {
+                                                            this.on_click(move |_, window, cx| {
+                                                                let select =
+                                                                    self.select_state.read(cx);
+
+                                                                on_config(
+                                                                    &select
+                                                                        .selected_value()
+                                                                        .cloned(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                        },
+                                                    ),
                                             ),
                                     ),
                             ),
@@ -220,6 +277,7 @@ impl RenderOnce for ScreenSpace {
 #[derive(IntoElement)]
 struct ControlPanel {
     streaming: Entity<StreamingState>,
+    disabled: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 
@@ -227,8 +285,14 @@ impl ControlPanel {
     pub fn new(streaming: &Entity<StreamingState>) -> Self {
         Self {
             streaming: streaming.clone(),
+            disabled: false,
             on_click: None,
         }
+    }
+
+    fn disabled(mut self, value: bool) -> Self {
+        self.disabled = value;
+        self
     }
 
     fn on_click(mut self, value: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
@@ -279,6 +343,7 @@ impl RenderOnce for ControlPanel {
                             .label("Share screen")
                             .max_w_64()
                             .w_full()
+                            .disabled(self.disabled)
                             .when(!can_stream, |this| {
                                 this.disabled(!can_stream)
                                     .tooltip("Join a voice channel first")
