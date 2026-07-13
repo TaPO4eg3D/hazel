@@ -23,7 +23,7 @@ use rpc::{
         auth::{GetUserInfo, GetUserPayload},
         common::RPCMethod as _,
         markers::{UserId, VoiceChannelId},
-        voice::{
+        voice_channels::{
             GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
             JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest, LeaveVoiceChannel,
             StartScreenCast, StartScreenCastRequest, StopScreenCast, UpdateVoiceChannelUserState,

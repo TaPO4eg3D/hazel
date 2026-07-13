@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, AppContext, ClickEvent, ElementId, Entity, IntoElement, ParentElement, RenderOnce,
-    SharedString, Styled, Window, div, prelude::FluentBuilder, surface,
+    App, AppContext, ClickEvent, Entity, IntoElement, ParentElement, RenderOnce, SharedString,
+    Styled, Window, div, prelude::FluentBuilder, surface,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, Size, StyledExt as _,

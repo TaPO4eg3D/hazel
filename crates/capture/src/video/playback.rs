@@ -7,7 +7,7 @@ use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Consumer, Producer, Split as _},
 };
-use rpc::models::{markers::UserId, voice::VideoSessionParams};
+use rpc::models::{markers::UserId, voice_channels::VideoSessionParams};
 use streaming_common::{EncodedVideoBytes, OwnedEncodedVideoFrameChunk, StreamPacketHeader};
 
 use crate::video::decode::{VAAPIDecoder, VAAPIDecoderParams};

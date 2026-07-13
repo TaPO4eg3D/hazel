@@ -12,7 +12,7 @@ use rpc::{
         common::{APIError, APIResult, RPCNotification, ServerErr},
         general::{UserConnectionUpdate, UserConnectionUpdateMessage},
         markers::{TaggedEntity, TextChannelId, UserId, VoiceChannelId},
-        voice::{
+        voice_channels::{
             VideoSessionParams, VoiceChannelUpdate, VoiceChannelUpdateMessage,
             VoiceChannelUserState,
         },
@@ -25,7 +25,7 @@ use sea_orm::{Database, DatabaseConnection};
 use entity::user::Model as User;
 
 use crate::{
-    api::{auth, messages, voice},
+    api::{auth, messages, voice_channels},
     config::Config,
     streaming::open_udp_socket,
 };
@@ -264,7 +264,7 @@ async fn main() {
 
     let router = messages::register(router);
     let router = auth::register(router);
-    let router = voice::register(router);
+    let router = voice_channels::register(router);
 
     let tcp_addr = config.tcp_addr.clone();
     tokio::spawn(async move {
