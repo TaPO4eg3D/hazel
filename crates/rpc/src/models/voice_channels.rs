@@ -110,6 +110,7 @@ impl VideoSessionParams {
 #[derive(Serialize, Deserialize, Debug, RPCNotification)]
 pub enum OwnedScreenCastUpdate {
     ParamsUpdated(VideoSessionParams),
+    IDRFrameRequested,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -177,6 +178,18 @@ pub struct LeaveScreenCastRequest {
 #[rpc_method]
 pub struct LeaveScreenCast {
     request: LeaveScreenCastRequest,
+    response: (),
+    error: WatchScreenCastError,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestIDRFramePayload {
+    pub user_id: UserId,
+}
+
+#[rpc_method]
+pub struct RequestIDRFrame {
+    request: RequestIDRFramePayload,
     response: (),
     error: WatchScreenCastError,
 }

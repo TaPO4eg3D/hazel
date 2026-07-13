@@ -32,7 +32,7 @@ use gpui::{App, AppContext, AsyncApp, DMABuffer, Global};
 
 use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
-use rpc::models::{markers::UserId, voice::VideoSessionParams};
+use rpc::models::{markers::UserId, voice_channels::VideoSessionParams};
 use streaming_common::{
     BorrowedEncodedVideoFrameChunk, EncodedAudioPacket, Ping, StreamPacketHeader, UDPPacket,
     UDPPayloadType, to_udp_packet_bytes,

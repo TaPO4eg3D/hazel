@@ -1,11 +1,9 @@
 use std::{
     io::Cursor,
-    marker::PhantomData,
     os::fd::OwnedFd,
     sync::{Arc, Mutex},
     task::{Poll, Waker},
     thread,
-    time::Instant,
 };
 
 use anyhow::Result as AResult;

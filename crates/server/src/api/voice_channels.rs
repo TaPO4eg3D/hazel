@@ -1,13 +1,14 @@
 use rpc::common::Empty;
 use rpc::models::common::{APIError, APIResult, RPCMethod, RPCNotification, ServerErr};
 use rpc::models::markers::TaggedEntity;
-use rpc::models::voice::{
+use rpc::models::voice_channels::{
     GetVoiceChannels, HostScreenCastError, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
     JoinVoiceChannelError, JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest,
-    LeaveVoiceChannel, StartScreenCast, StartScreenCastRequest, StopScreenCast,
-    UpdateVoiceChannelUserState, VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate,
-    VoiceChannelUpdateMessage, VoiceChannelUserState, WatchScreenCastError,
-    WatchedScreenCastUpdate, WatchedScreenCastUpdateMessage,
+    LeaveVoiceChannel, OwnedScreenCastUpdate, RequestIDRFrame, RequestIDRFramePayload,
+    StartScreenCast, StartScreenCastRequest, StopScreenCast, UpdateVoiceChannelUserState,
+    VideoSessionParams, VoiceChannelMember, VoiceChannelUpdate, VoiceChannelUpdateMessage,
+    VoiceChannelUserState, WatchScreenCastError, WatchedScreenCastUpdate,
+    WatchedScreenCastUpdateMessage,
 };
 
 use rpc::{self, models, register_endpoints};
@@ -23,7 +24,7 @@ impl RPCHandle for GetVoiceChannels {
         app_state: AppState,
         _connection_state: ConnectionState,
         _req: Empty,
-    ) -> APIResult<Vec<models::voice::VoiceChannel>, ()> {
+    ) -> APIResult<Vec<models::voice_channels::VoiceChannel>, ()> {
         let voice_channels = VoiceChannel::find()
             .all(&app_state.db)
             .await
@@ -66,7 +67,7 @@ impl RPCHandle for GetVoiceChannels {
                 }
             };
 
-            let item = models::voice::VoiceChannel {
+            let item = models::voice_channels::VoiceChannel {
                 id: channel.tagged_id(),
                 name: channel.name,
                 members,
@@ -486,6 +487,48 @@ impl RPCHandle for LeaveScreenCast {
     }
 }
 
+impl RPCHandle for RequestIDRFrame {
+    async fn handle(
+        app_state: AppState,
+        connection_state: ConnectionState,
+        RequestIDRFramePayload { user_id: host_id }: RequestIDRFramePayload,
+    ) -> APIResult<(), WatchScreenCastError> {
+        let channel_id = {
+            let conn_state = connection_state.read()?;
+
+            conn_state.active_voice_channel.ok_or(APIError::Err(
+                WatchScreenCastError::NotConnectedToVoiceChannel,
+            ))?
+        };
+
+        let writer = {
+            let mut channel_users = app_state
+                .channels
+                .voice_channels
+                .get_mut(&channel_id)
+                .ok_or(APIError::ServerErr(ServerErr::InternalErr))?;
+
+            channel_users
+                .iter_mut()
+                .find(|user| user.id == host_id)
+                .ok_or(APIError::Err(WatchScreenCastError::InvalidHostId))?;
+
+            let host_state = app_state
+                .connected_clients
+                .get(&host_id)
+                .ok_or(APIError::Err(WatchScreenCastError::InvalidHostId))?;
+
+            host_state.read()?.writer.clone()
+        };
+
+        OwnedScreenCastUpdate::IDRFrameRequested
+            .notify(&writer)
+            .await;
+
+        Ok(())
+    }
+}
+
 pub fn register(router: AppRouter) -> AppRouter {
     register_endpoints!(
         router,
@@ -497,5 +540,6 @@ pub fn register(router: AppRouter) -> AppRouter {
         StopScreenCast,
         JoinScreenCast,
         LeaveScreenCast,
+        RequestIDRFrame,
     )
 }
