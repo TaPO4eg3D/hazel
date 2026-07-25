@@ -1,2 +1,4 @@
 /target
 *.sqlite
+flamegraph.svg
+perf.data*
