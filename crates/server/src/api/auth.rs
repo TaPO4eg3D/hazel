@@ -16,12 +16,12 @@ use rpc::{
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AppRouter, AppState, ConnectionState,
-    api::common::{DbErrReponseCompat as _, RPCHandle},
-};
-use crate::{
     api::common::NoAuthRPCHandle,
     entity::user::{self, Entity as User},
+};
+use crate::{
+    api::common::{DbErrReponseCompat as _, RPCHandle},
+    state::{AppRouter, AppState, ConnectionState},
 };
 
 use sea_orm::{DbErr, entity::*, query::*};

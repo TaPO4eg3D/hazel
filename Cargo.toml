@@ -8,6 +8,7 @@ members = [
     "crates/client",
     "crates/capture",
     "crates/streaming_common",
+    "crates/simulation",
 ]
 
 default-members = ["crates/client"]
@@ -20,6 +21,9 @@ client_macros = { path = "crates/client_macros" }
 
 capture = { path = "crates/capture" }
 streaming_common = { path = "crates/streaming_common" }
+
+client = { path = "crates/client" }
+server = { path = "crates/server" }
 
 log = "0.4.29"
 anyhow = "1.0.100"

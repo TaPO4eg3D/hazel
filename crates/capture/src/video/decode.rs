@@ -13,7 +13,7 @@ use ffmpeg_next::{
 use gpui::{DMABuffer, DMABufferPlane};
 use smallvec::SmallVec;
 
-use crate::video::wrapper::{DrmPlane, GPUDevice};
+use crate::video::wrapper::GPUDevice;
 
 unsafe extern "C" fn vaapi_get_format(
     _ctx: *mut AVCodecContext,
@@ -32,20 +32,6 @@ unsafe extern "C" fn vaapi_get_format(
 
         AVPixelFormat::AV_PIX_FMT_NONE
     }
-}
-
-#[derive(Debug)]
-pub struct DecodedFrame {
-    pub fd: i32,
-    pub pts: i64,
-
-    pub width: i32,
-    pub height: i32,
-
-    pub format: DrmFourcc,
-    pub modifier: u64,
-
-    pub planes: SmallVec<[DrmPlane; 2]>,
 }
 
 pub struct VAAPIDecoderParams {
@@ -79,6 +65,8 @@ impl Drop for VAAPIDecoder {
 }
 
 impl VAAPIDecoder {
+    const DRM_FRAME_POOL_SIZE: usize = 12;
+
     pub fn new(params: VAAPIDecoderParams) -> Self {
         let codec = decoder::find(codec::Id::H264).unwrap();
 
@@ -105,10 +93,9 @@ impl VAAPIDecoder {
             let packet = av_packet_alloc();
             assert!(!packet.is_null(), "Failed to allocate packet");
 
-            // Like in Pipewire. We're maintaining a pool of
+            // Like in Pipewire, we're maintaining a pool of
             // DRM Frames to not invalidate a frame we're display
-            let drm_frames = (0..12)
-                .into_iter()
+            let drm_frames = (0..Self::DRM_FRAME_POOL_SIZE)
                 .map(|_| Frame::empty())
                 .collect::<Vec<_>>();
 
@@ -171,7 +158,7 @@ impl VAAPIDecoder {
             loop {
                 let ret =
                     avcodec_receive_frame(self.decoder.as_mut_ptr(), self.hw_frame.as_mut_ptr());
-                if ret == -EAGAIN || ret == -(ffmpeg_next::ffi::AVERROR_EOF as i32) {
+                if ret == -EAGAIN || ret == -ffmpeg_next::ffi::AVERROR_EOF {
                     break;
                 }
                 assert!(ret >= 0, "Decoder error: {ret}");
@@ -204,7 +191,7 @@ impl VAAPIDecoder {
                 // NOTE: Technically it's not correct since different
                 // layers might be on different DMA-BUFs but it should work fine???
                 let modifier = objects[0].format_modifier;
-                let format = DrmFourcc::try_from(layers[0].format)
+                let _format = DrmFourcc::try_from(layers[0].format) // Check TODO below in DrmFormat struct
                     .expect("Unknown DRM format from decoded frame");
 
                 let mut planes: SmallVec<[DMABufferPlane; 2]> = SmallVec::new();

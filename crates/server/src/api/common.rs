@@ -4,7 +4,7 @@ use rpc::models::{
 };
 use sea_orm::DbErr;
 
-use crate::{AppState, ConnectionState, ConnectionStateInner};
+use crate::state::{AppState, ConnectionState, ConnectionStateInner};
 
 pub trait DbErrReponseCompat {
     fn into_api_error<E: std::fmt::Debug>(self) -> APIError<E>;

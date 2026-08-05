@@ -1,0 +1,8 @@
+[package]
+name = "simulation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+client = { workspace = true }
+server = { workspace = true }

@@ -30,7 +30,6 @@ ffmpeg-next = "8.1.0"
 drm-fourcc = "2.2.0"
 smallvec = "1.15.1"
 
-
 [target.'cfg(unix)'.dependencies]
 ashpd = { version = "0.13.4", default-features = false, features = ["async-io", "screencast"] }
 
