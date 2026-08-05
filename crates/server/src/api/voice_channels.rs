@@ -15,7 +15,7 @@ use rpc::{self, models, register_endpoints};
 
 use crate::api::common::{DbErrReponseCompat, RPCHandle};
 use crate::entity::{user::Entity as User, voice_channel::Entity as VoiceChannel};
-use crate::{AppRouter, AppState, ConnectionState, VideoSession, VoiceChannelUser};
+use crate::state::{AppRouter, AppState, ConnectionState, VideoSession, VoiceChannelUser};
 
 use sea_orm::prelude::*;
 

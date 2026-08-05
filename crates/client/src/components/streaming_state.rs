@@ -26,8 +26,9 @@ use rpc::{
         voice_channels::{
             GetVoiceChannels, JoinScreenCast, JoinScreenCastRequest, JoinVoiceChannel,
             JoinVoiceChannelPayload, LeaveScreenCast, LeaveScreenCastRequest, LeaveVoiceChannel,
-            StartScreenCast, StartScreenCastRequest, StopScreenCast, UpdateVoiceChannelUserState,
-            VoiceChannelUpdate, VoiceChannelUpdateMessage, VoiceChannelUserState,
+            RequestIDRFrame, RequestIDRFramePayload, StartScreenCast, StartScreenCastRequest,
+            StopScreenCast, UpdateVoiceChannelUserState, VoiceChannelUpdate,
+            VoiceChannelUpdateMessage, VoiceChannelUserState,
         },
     },
 };
@@ -758,6 +759,9 @@ impl StreamingState {
                             }
                         }));
                     });
+
+                    _ = RequestIDRFrame::execute(&connection, &RequestIDRFramePayload { user_id })
+                        .await;
 
                     Streaming::register_video_stream(cx, user_id, frame_tx, params);
                 }

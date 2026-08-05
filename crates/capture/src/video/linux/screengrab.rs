@@ -19,7 +19,7 @@ use smallvec::smallvec;
 
 // TODO: Both should be configurable
 const DEFAULT_FRAMERATE: u32 = 60;
-const DEFAULT_BITRATE: u32 = 8 * 1000_u32.pow(2);
+const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
 
 use gpui::{DMABuffer, DMABufferPlane};
 use libspa::{
@@ -326,8 +326,7 @@ impl ScreencastStream {
         let height = this.format.size().height;
 
         let format = match this.format.format() {
-            VideoFormat::BGRx => DrmFourcc::Xrgb8888,
-            VideoFormat::BGRA => DrmFourcc::Xrgb8888,
+            VideoFormat::BGRx | VideoFormat::BGRA => DrmFourcc::Xrgb8888,
             VideoFormat::RGBx => DrmFourcc::Xbgr8888,
             format => todo!("Unimplemented: {format:?}"),
         };
@@ -336,7 +335,7 @@ impl ScreencastStream {
             width: width as i32,
             height: height as i32,
             format,
-            modifier: DrmModifier::try_from(this.format.modifier()).unwrap(),
+            modifier: DrmModifier::from(this.format.modifier()),
             plane_offset: offset,
             plane_stride: stride,
         };
@@ -484,7 +483,7 @@ impl<T> Future for FrameRecvFuture<T> {
             return Poll::Pending;
         }
 
-        return Poll::Ready(inner.frame.take());
+        Poll::Ready(inner.frame.take())
     }
 }
 

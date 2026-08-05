@@ -3,13 +3,15 @@ use bytes::BytesMut;
 use rpc::models::markers::{Id, User};
 use tokio::net::UdpSocket;
 
-use crate::AppState;
+use crate::state::AppState;
 use streaming_common::{UDPPacket, UDPPayloadType};
 
 // TODO: Somehow implement authorized socket communication.
 // Currenlty it is possible to do quite nasty stuff
 pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()> {
-    let sock = UdpSocket::bind(udp_addr)
+    const BUF_SIZE: usize = 4096;
+
+    let socket = UdpSocket::bind(udp_addr)
         .await
         .expect("Failed to bind a UDP socket");
 
@@ -18,13 +20,10 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
     let mut buf = BytesMut::with_capacity(4800 * 4);
 
     loop {
-        // Around 8 MByte to handle both high-quality audio and video at 4k
-        const BUF_SIZE: usize = 8 * 1024_usize.pow(2);
-
         buf.clear();
         buf.resize(BUF_SIZE, 0);
 
-        let (bytes_read, addr) = sock.recv_from(&mut buf).await?;
+        let (bytes_read, addr) = socket.recv_from(&mut buf).await?;
 
         if bytes_read == 0 {
             continue;
@@ -101,7 +100,7 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
                         let addr = user.read::<()>().ok().and_then(|user| user.active_stream);
 
                         if let Some(addr) = addr {
-                            _ = sock.send_to(&buf[..bytes_read], addr).await;
+                            _ = socket.send_to(&buf[..bytes_read], addr).await;
                         }
                     }
                 }
@@ -120,7 +119,7 @@ pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()>
                         let addr = user.read::<()>().ok().and_then(|user| user.active_stream);
 
                         if let Some(addr) = addr {
-                            _ = sock.send_to(&buf[..bytes_read], addr).await;
+                            _ = socket.send_to(&buf[..bytes_read], addr).await;
                         }
                     }
                 }

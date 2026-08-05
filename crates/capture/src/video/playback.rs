@@ -79,7 +79,7 @@ impl PendingFrame {
             // is it even possible?
             panic!(
                 "Chunk {} ({}) alredy processed",
-                new_chunk.header.shard, new_chunk.header.seq
+                new_chunk.header.shard, new_chunk.header.seq,
             );
         }
 
@@ -206,19 +206,22 @@ impl VideoStreamingClientState {
         {
             frame
         } else {
-            // All frames are claimed, remove one with the lowest seq
-            self.pending_frames
+            // All frames are claimed
+            println!("Can't keep up with the frames");
+            let frame = self
+                .pending_frames
                 .iter_mut()
                 .min_by_key(|frame| frame.header.seq)
-                .expect("We should always have at least one such frame")
+                .expect("We should always have at least one such frame");
+
+            frame.reset();
+
+            return;
         };
 
         frame.merge_chunk(chunk);
         if frame.process() {
             let now = Instant::now();
-            let diff = now - self.last_frame;
-
-            println!("Frame Time: {}ms", diff.as_millis());
             self.last_frame = now;
 
             self.decoder.decode(&frame.data);

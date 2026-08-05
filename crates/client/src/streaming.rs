@@ -308,7 +308,7 @@ impl PacketSender {
 
         let encoded = encoder.encode().expect("Should not fail");
 
-        let frames = ready_frame
+        let frame_chunks = ready_frame
             .chunks_exact(shard_len)
             .chain(encoded.recovery_iter())
             .enumerate()
@@ -324,9 +324,9 @@ impl PacketSender {
                 data: chunk,
             });
 
-        for frame in frames {
+        for frame_chunk in frame_chunks {
             self.buf.clear();
-            to_udp_packet_bytes(&mut self.buf, user_id.value, &frame);
+            to_udp_packet_bytes(&mut self.buf, user_id.value, &frame_chunk);
 
             // TODO: Limit throughput, we don't want to spam packets way too fast?
             _ = self.socket.send_to(&self.buf, addr);
@@ -404,13 +404,10 @@ fn spawn_receiver(
     mut video_controller: VideoPlaybackController,
     mut audio_packet_input: AudioPlaybackPacketInput,
 ) {
-    // Around 8 MByte to handle both high-quality audio and video at 4k
-    const BUF_SIZE: usize = 8 * 1024_usize.pow(2);
-
+    const BUF_SIZE: usize = 4096;
     let mut buf = BytesMut::with_capacity(BUF_SIZE);
 
     loop {
-        buf.clear();
         buf.resize(BUF_SIZE, 0);
 
         if let Ok(len) = socket.recv(&mut buf[..]) {
