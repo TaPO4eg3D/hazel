@@ -90,11 +90,14 @@ impl VoiceChannelMember {
         }
     }
 
-    pub fn fetch_is_talking(&mut self, cx: &Context<ServerConnectionState>) -> bool {
-        let current_value = self.is_talking;
-        let current_user = cx.entity().read(cx).user_id;
+    pub fn fetch_is_talking(
+        &mut self,
+        cx: &Context<ServerConnectionState>,
+        connected_user: UserId,
+    ) -> bool {
+        let was_talking = self.is_talking;
 
-        if self.is_talking && current_user == self.id {
+        self.is_talking = if connected_user == self.id {
             Streaming::is_talking(cx)
         } else if let Some(state) = self.shared.as_ref() {
             state.read(cx).playback.is_talking.load(Ordering::Relaxed)
@@ -102,7 +105,7 @@ impl VoiceChannelMember {
             false
         };
 
-        self.is_talking != current_value
+        self.is_talking != was_talking
     }
 
     pub fn register(&mut self, cx: &mut Context<ServerConnectionState>) {
@@ -168,9 +171,10 @@ impl NoiseReductionAlgorithm {
     }
 }
 
+#[derive(Clone)]
 pub struct RpcConnectionInfo {
     pub server_ip: String,
-    pub port: String,
+    // pub port: String,
 }
 
 /// Connection per one dedicated server. Ideally we want to support
@@ -628,7 +632,7 @@ impl ServerConnectionState {
         .detach();
 
         cx.spawn(async move |this, cx| {
-            let Some(self_id) = this.read_with(cx, |this, _cx| this.user_id.clone()).ok() else {
+            let Some(self_id) = this.read_with(cx, |this, _cx| this.user_id).ok() else {
                 return;
             };
 
@@ -647,7 +651,7 @@ impl ServerConnectionState {
                             if member.id == self_id && !capture_enabled {
                                 member.is_talking = false;
                             } else {
-                                updated = member.fetch_is_talking(cx) || updated;
+                                updated = member.fetch_is_talking(cx, self_id) || updated;
                             }
                         }
                     }
