@@ -31,6 +31,10 @@ pub fn init(cx: &mut App) {
     cx.set_global(GlobalTokio::new());
 }
 
+pub fn init_with_runtime(cx: &mut App, runtime: tokio::runtime::Runtime) {
+    cx.set_global(GlobalTokio { runtime });
+}
+
 struct GlobalTokio {
     runtime: tokio::runtime::Runtime,
 }

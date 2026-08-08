@@ -14,7 +14,7 @@ use gpui_component::{
 
 use crate::{
     assets::IconName,
-    components::streaming_state::{NoiseReductionAlgorithm, StreamingState},
+    components::connection_state::{NoiseReductionAlgorithm, ServerConnectionState},
     streaming::Streaming,
 };
 
@@ -23,13 +23,13 @@ pub mod voice_channels;
 
 #[derive(IntoElement)]
 pub struct ControlPanel {
-    streaming_state: Entity<StreamingState>,
+    connection_state: Entity<ServerConnectionState>,
 }
 
 impl ControlPanel {
-    pub fn new(state: &Entity<StreamingState>) -> Self {
+    pub fn new(state: &Entity<ServerConnectionState>) -> Self {
         Self {
-            streaming_state: state.clone(),
+            connection_state: state.clone(),
         }
     }
 }
@@ -37,7 +37,7 @@ impl ControlPanel {
 impl RenderOnce for ControlPanel {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_channel_name = {
-            self.streaming_state
+            self.connection_state
                 .read(cx)
                 .get_active_channel()
                 .map(|channel| channel.name.clone())
@@ -87,7 +87,7 @@ impl RenderOnce for ControlPanel {
                                 .icon(IconName::PhoneOff)
                                 .ghost()
                                 .on_click({
-                                    let state = self.streaming_state.clone();
+                                    let state = self.connection_state.clone();
 
                                     move |_, _, cx| {
                                         state.update(cx, |this, cx| {
@@ -105,11 +105,11 @@ impl RenderOnce for ControlPanel {
                     .flex()
                     .gap_2()
                     .child(AudioDeviceControl::new(
-                        &self.streaming_state,
+                        &self.connection_state,
                         AudioDeviceType::Capture,
                     ))
                     .child(AudioDeviceControl::new(
-                        &self.streaming_state,
+                        &self.connection_state,
                         AudioDeviceType::Playback,
                     )),
             )
@@ -191,25 +191,25 @@ impl RenderOnce for NoiseReductionItem {
 
 #[derive(IntoElement)]
 struct NoiseReductionSelector {
-    streaming_state: Entity<StreamingState>,
+    connection_state: Entity<ServerConnectionState>,
     capture_state: Entity<CaptureControlState>,
 }
 
 impl NoiseReductionSelector {
     fn new(
-        streaming_state: Entity<StreamingState>,
+        connection_state: Entity<ServerConnectionState>,
         capture_state: Entity<CaptureControlState>,
     ) -> Self {
         Self {
             capture_state,
-            streaming_state,
+            connection_state,
         }
     }
 }
 
 impl RenderOnce for NoiseReductionSelector {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let active_algorithm = self.streaming_state.read(cx).noise_reduction();
+        let active_algorithm = self.connection_state.read(cx).noise_reduction();
         let is_hovered = self.capture_state.read(cx).displaying;
 
         div()
@@ -272,7 +272,7 @@ impl RenderOnce for NoiseReductionSelector {
                                 .id("noise-supression-algo")
                                 .v_flex()
                                 .child(div().v_flex().p_2().child({
-                                    let state = self.streaming_state.clone();
+                                    let state = self.connection_state.clone();
                                     let algorithm = NoiseReductionAlgorithm::Disabled;
 
                                     NoiseReductionItem::new(algorithm.id(), algorithm.label())
@@ -290,7 +290,7 @@ impl RenderOnce for NoiseReductionSelector {
                                         .gap_1()
                                         .p_2()
                                         .child({
-                                            let state = self.streaming_state.clone();
+                                            let state = self.connection_state.clone();
                                             let algorithm = NoiseReductionAlgorithm::RNNoise;
 
                                             NoiseReductionItem::new(
@@ -316,9 +316,13 @@ impl RenderOnce for NoiseReductionSelector {
                                             .active(active_algorithm == algorithm)
                                             .on_click(
                                                 move |_, cx| {
-                                                    self.streaming_state.update(cx, |state, cx| {
-                                                        state.set_noise_reduction(algorithm, cx);
-                                                    });
+                                                    self.connection_state.update(
+                                                        cx,
+                                                        |state, cx| {
+                                                            state
+                                                                .set_noise_reduction(algorithm, cx);
+                                                        },
+                                                    );
                                                 },
                                             )
                                         }),
@@ -338,14 +342,14 @@ enum AudioDeviceType {
 #[derive(IntoElement)]
 struct AudioDeviceControl {
     device_type: AudioDeviceType,
-    streaming_state: Entity<StreamingState>,
+    connection_state: Entity<ServerConnectionState>,
 }
 
 impl AudioDeviceControl {
-    fn new(state: &Entity<StreamingState>, device_type: AudioDeviceType) -> Self {
+    fn new(state: &Entity<ServerConnectionState>, device_type: AudioDeviceType) -> Self {
         Self {
             device_type,
-            streaming_state: state.clone(),
+            connection_state: state.clone(),
         }
     }
 }
@@ -353,20 +357,20 @@ impl AudioDeviceControl {
 impl RenderOnce for AudioDeviceControl {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let devices = match self.device_type {
-            AudioDeviceType::Playback => self.streaming_state.read(cx).output_devices.clone(),
-            AudioDeviceType::Capture => self.streaming_state.read(cx).input_devices.clone(),
+            AudioDeviceType::Playback => self.connection_state.read(cx).output_devices.clone(),
+            AudioDeviceType::Capture => self.connection_state.read(cx).input_devices.clone(),
         };
 
         let device_volume = {
             match self.device_type {
-                AudioDeviceType::Capture => self.streaming_state.read(cx).capture_volume.clone(),
-                AudioDeviceType::Playback => self.streaming_state.read(cx).playback_volume.clone(),
+                AudioDeviceType::Capture => self.connection_state.read(cx).capture_volume.clone(),
+                AudioDeviceType::Playback => self.connection_state.read(cx).playback_volume.clone(),
             }
         };
 
         let is_enabled = match self.device_type {
-            AudioDeviceType::Capture => self.streaming_state.read(cx).is_capture_enabled,
-            AudioDeviceType::Playback => self.streaming_state.read(cx).is_playback_enabled,
+            AudioDeviceType::Capture => self.connection_state.read(cx).is_capture_enabled,
+            AudioDeviceType::Playback => self.connection_state.read(cx).is_playback_enabled,
         };
 
         div()
@@ -389,7 +393,7 @@ impl RenderOnce for AudioDeviceControl {
                     })
                     .on_click(
                         window.listener_for(
-                            &self.streaming_state,
+                            &self.connection_state,
                             move |this, _, _, cx| match self.device_type {
                                 AudioDeviceType::Capture => {
                                     this.toggle_capture(cx);
@@ -520,7 +524,7 @@ impl RenderOnce for AudioDeviceControl {
                                 matches!(self.device_type, AudioDeviceType::Capture),
                                 |this| {
                                     this.child(div().p_2().child(NoiseReductionSelector::new(
-                                        self.streaming_state.clone(),
+                                        self.connection_state.clone(),
                                         capture_state.clone(),
                                     )))
                                     .child(Divider::horizontal())

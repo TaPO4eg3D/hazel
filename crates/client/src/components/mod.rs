@@ -4,8 +4,8 @@ pub mod animation;
 pub mod call_room;
 pub mod chat_state;
 pub mod collapsable_card;
+pub mod connection_state;
 pub mod context_popover;
 pub mod left_sidebar;
-pub mod streaming_state;
 
 pub type EventCallback<T> = Box<dyn Fn(&T, &mut Window, &mut App)>;

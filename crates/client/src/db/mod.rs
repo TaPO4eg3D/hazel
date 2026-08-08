@@ -17,7 +17,7 @@ impl DBConnectionManager {
             .await
             .unwrap();
 
-        db.get_schema_registry("hazel_client::db::entity::*")
+        db.get_schema_registry("client::db::entity::*")
             .sync(&db)
             .await
             .unwrap();

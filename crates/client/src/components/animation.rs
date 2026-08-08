@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gpui::{
     Animation, AnyElement, App, Bounds, Element, ElementId, GlobalElementId, Hitbox,
-    HitboxBehavior, InspectorElementId, IntoElement, MouseMoveEvent, Pixels, StyleRefinement,
-    Styled, Window,
+    HitboxBehavior, InspectorElementId, IntoElement, LayoutId, MouseMoveEvent, Pixels,
+    StyleRefinement, Styled, Window,
 };
 use gpui_component::StyledExt;
 
@@ -123,7 +123,7 @@ impl<E: IntoElement + Styled + 'static> Element for HoverAnimationElement<E> {
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (crate::LayoutId, Self::RequestLayoutState) {
+    ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_element_state(
             global_id.unwrap(),
             |state: Option<Rc<RefCell<HoverAnimationState>>>, window| {

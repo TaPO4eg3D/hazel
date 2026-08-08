@@ -14,10 +14,7 @@ pub mod entity;
 pub mod state;
 pub mod streaming;
 
-pub async fn run() {
-    let config = std::fs::read_to_string("./config.toml").expect("Config is not provided");
-    let config = toml::from_str::<Config>(&config).expect("Invalid config");
-
+pub async fn start_server(config: Config) {
     let state = init_state().await;
     let router = RpcRouter::new(state.clone(), move |writer| {
         ConnectionState(Arc::new(RwLock::new(ConnectionStateInner {

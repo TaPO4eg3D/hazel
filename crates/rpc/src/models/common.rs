@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{client::Connection, server::RpcWriter};
+use crate::{client::ClientConnection, server::RpcWriter};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TransportLayerErr {
@@ -35,7 +35,7 @@ pub trait RPCMethod {
 
     #[allow(async_fn_in_trait)]
     async fn execute(
-        connection: &Connection,
+        connection: &ClientConnection,
         payload: &Self::Request,
     ) -> APIResult<Self::Response, Self::ResponseError> {
         connection
