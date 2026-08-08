@@ -323,7 +323,7 @@ pub(crate) struct BufferSinkFilterBuilder {
     filter: Filter,
 }
 
-impl<'a> BufferSinkFilterBuilder {
+impl BufferSinkFilterBuilder {
     pub(crate) fn build(self) -> Filter {
         self.filter
     }
@@ -407,7 +407,7 @@ impl Graph {
         Some(filter)
     }
 
-    pub(crate) fn create_buffersink_filter<'a>(
+    pub(crate) fn create_buffersink_filter(
         &self,
         node_name: &str,
         f: impl FnOnce(BufferSinkFilterBuilder) -> BufferSinkFilterBuilder,

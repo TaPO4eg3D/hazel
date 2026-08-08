@@ -9,19 +9,22 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     label::Label,
 };
-use rpc::models::{
-    auth::{
-        GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse, LoginError,
-        LoginPayload,
+use rpc::{
+    client::ClientConnection,
+    models::{
+        auth::{
+            GetSessionKey, GetSessionKeyError, GetSessionKeyPayload, GetSessionKeyResponse,
+            LoginError, LoginPayload,
+        },
+        common::{APIError, RPCMethod},
+        markers::{Id, UserId},
     },
-    common::{APIError, RPCMethod},
-    markers::Id,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
 use crate::{
-    ConnectionManger,
     assets::IconName,
+    components::connection_state::RpcConnectionInfo,
     db::{DBConnectionManager, entity::registry},
     gpui_tokio::Tokio,
 };
@@ -37,7 +40,7 @@ pub struct LoginScreen {
     is_form_valid: bool,
 }
 
-impl EventEmitter<()> for LoginScreen {}
+impl EventEmitter<(UserId, ClientConnection, RpcConnectionInfo)> for LoginScreen {}
 
 enum ConnectionResult {
     NewUser,
@@ -56,7 +59,7 @@ impl LoginScreen {
         let password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let server_address = cx.new(|cx| {
             InputState::new(window, cx)
-                .default_value(server_address.unwrap_or("localhost".to_string()))
+                .default_value(server_address.unwrap_or("127.0.0.1".to_string()))
         });
 
         cx.subscribe_in(&username, window, Self::watch_for_inputs)
@@ -127,8 +130,15 @@ impl LoginScreen {
             .detach();
 
         cx.spawn(async move |this, cx| {
-            // TODO: Properly handle a case when we can't connect
-            ConnectionManger::connect(cx, server_ip.clone().into()).await?;
+            // TODO: Refeactor how we manage connection,
+            // we currently hang indefinetly while waiting for the connection.
+            let connection = Tokio::spawn(cx, {
+                let server_ip = server_ip.clone();
+
+                async move { ClientConnection::new(&format!("{server_ip}:9898")) }
+            })
+            .await
+            .expect("todo: we currently can't fail and just hang");
 
             let (login, password) = this.read_with(cx, |this, cx| {
                 (
@@ -136,7 +146,6 @@ impl LoginScreen {
                     this.password.read(cx).value(),
                 )
             })?;
-            let connection = ConnectionManger::get(cx);
 
             let response = GetSessionKey::execute(
                 &connection,
@@ -162,14 +171,19 @@ impl LoginScreen {
 
                     let db = DBConnectionManager::get(cx);
                     let session_key_bytes = rmp_serde::to_vec(&session_key).unwrap();
-                    Tokio::spawn(cx, async move {
-                        let registry = DBConnectionManager::get_registry(&db).await;
-                        let mut registry: registry::ActiveModel = registry.into();
 
-                        registry.session_key = Set(Some(session_key_bytes));
-                        registry.connected_server = Set(Some(server_ip.into()));
+                    Tokio::spawn(cx, {
+                        let server_ip = server_ip.clone();
 
-                        registry.update(&db).await.unwrap();
+                        async move {
+                            let registry = DBConnectionManager::get_registry(&db).await;
+                            let mut registry: registry::ActiveModel = registry.into();
+
+                            registry.session_key = Set(Some(session_key_bytes));
+                            registry.connected_server = Set(Some(server_ip.into()));
+
+                            registry.update(&db).await.unwrap();
+                        }
                     })
                     .await?;
 
@@ -185,11 +199,15 @@ impl LoginScreen {
 
                     data.expect("We just logged in, it should not fail");
 
-                    ConnectionManger::set_user_id(cx, Id::new(session_key.body.user_id));
-
                     // Notify parent component that we're logged in
                     this.update(cx, |_, cx| {
-                        cx.emit(());
+                        cx.emit((
+                            UserId::new(session_key.body.user_id),
+                            connection,
+                            RpcConnectionInfo {
+                                server_ip: server_ip.into(),
+                            },
+                        ));
                     })
                     .unwrap();
                 }

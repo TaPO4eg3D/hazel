@@ -11,7 +11,7 @@ use gpui_component::{
     select::{Select, SelectItem, SelectState},
 };
 
-use crate::{assets::IconName, components::streaming_state::StreamingState};
+use crate::{assets::IconName, components::connection_state::ServerConnectionState};
 
 #[derive(Clone, Copy)]
 enum StreamingQuality {
@@ -41,11 +41,11 @@ struct CallRoomState {
 
 #[derive(IntoElement)]
 pub struct CallRoom {
-    streaming: Entity<StreamingState>,
+    streaming: Entity<ServerConnectionState>,
 }
 
 impl CallRoom {
-    pub fn new(streaming: &Entity<StreamingState>) -> Self {
+    pub fn new(streaming: &Entity<ServerConnectionState>) -> Self {
         Self {
             streaming: streaming.clone(),
         }
@@ -84,7 +84,7 @@ impl RenderOnce for CallRoom {
 
                         window.listener_for(
                             &self.streaming,
-                            move |streaming_state,
+                            move |connection_state,
                                   config: &Option<StreamingQuality>,
                                   window,
                                   cx| {
@@ -93,7 +93,7 @@ impl RenderOnce for CallRoom {
                                 });
 
                                 if config.is_some() {
-                                    streaming_state.start_screencast(window, cx);
+                                    connection_state.start_screencast(window, cx);
                                 }
                             },
                         )
@@ -115,7 +115,7 @@ impl RenderOnce for CallRoom {
 
 #[derive(IntoElement)]
 struct ScreenSpace {
-    streaming: Entity<StreamingState>,
+    streaming: Entity<ServerConnectionState>,
     show_configuration: bool,
     select_state: Entity<SelectState<Vec<StreamingQuality>>>,
     on_config: Option<Rc<dyn Fn(&Option<StreamingQuality>, &mut Window, &mut App)>>,
@@ -123,7 +123,7 @@ struct ScreenSpace {
 
 impl ScreenSpace {
     pub fn new(
-        streaming: &Entity<StreamingState>,
+        streaming: &Entity<ServerConnectionState>,
         select_state: Entity<SelectState<Vec<StreamingQuality>>>,
     ) -> Self {
         Self {
@@ -276,13 +276,13 @@ impl RenderOnce for ScreenSpace {
 
 #[derive(IntoElement)]
 struct ControlPanel {
-    streaming: Entity<StreamingState>,
+    streaming: Entity<ServerConnectionState>,
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
 }
 
 impl ControlPanel {
-    pub fn new(streaming: &Entity<StreamingState>) -> Self {
+    pub fn new(streaming: &Entity<ServerConnectionState>) -> Self {
         Self {
             streaming: streaming.clone(),
             disabled: false,

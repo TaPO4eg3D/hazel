@@ -28,7 +28,7 @@ impl Chunk {
         self.processed = true;
 
         self.data.clear();
-        self.data.extend_from_slice(&data);
+        self.data.extend_from_slice(data);
     }
 }
 
@@ -66,7 +66,7 @@ impl PendingFrame {
 
         // At first we need to make sure we have enough space to store all of the chunks
         let total_chunks = new_chunk.header.total_chunks();
-        if self.chunks.len() < total_chunks as usize {
+        if self.chunks.len() < total_chunks {
             let diff = total_chunks - self.chunks.len();
 
             for _ in 0..diff {
@@ -147,7 +147,7 @@ impl PendingFrame {
                     let (idx, data) = restored.pop_front().expect("todo: same note as above");
                     assert!(idx == i);
 
-                    self.data.extend_from_slice(&data);
+                    self.data.extend_from_slice(data);
                 }
             }
         } else {

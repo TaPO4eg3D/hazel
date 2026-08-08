@@ -12,13 +12,12 @@ use gpui_component::{
 };
 
 use crate::{
-    ConnectionManger,
     assets::IconName,
     components::{
         animation::HoverAnimationExt,
         collapsable_card::{CollapsableCard, CollapsableCardState},
+        connection_state::{ServerConnectionState, VoiceChannel, VoiceChannelMember},
         context_popover::{ContextPopover as _, CtxPopoverButton},
-        streaming_state::{StreamingState, VoiceChannel, VoiceChannelMember},
     },
 };
 
@@ -52,33 +51,33 @@ impl RenderOnce for VolumeSlider {
 #[derive(IntoElement)]
 pub struct VoiceChannelsComponent {
     card_state: Entity<CollapsableCardState>,
-    streaming_state: Entity<StreamingState>,
+    connection_state: Entity<ServerConnectionState>,
 }
 
 impl VoiceChannelsComponent {
     pub fn new(
         card_state: &Entity<CollapsableCardState>,
-        streaming_state: &Entity<StreamingState>,
+        connection_state: &Entity<ServerConnectionState>,
     ) -> Self {
         Self {
             card_state: card_state.clone(),
-            streaming_state: streaming_state.clone(),
+            connection_state: connection_state.clone(),
         }
     }
 }
 
 #[derive(IntoElement)]
 struct VoiceMemberComponent {
-    streaming_state: Entity<StreamingState>,
+    connection_state: Entity<ServerConnectionState>,
     member: VoiceChannelMember,
 }
 
 impl RenderOnce for VoiceMemberComponent {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let current_user = ConnectionManger::get_user_id(cx);
+        let connected_user = self.connection_state.read(cx).user_id;
 
         let (is_capture_disabled, is_playback_disabled, has_preview) = {
-            let state = self.streaming_state.read(cx);
+            let state = self.connection_state.read(cx);
 
             (
                 !state.is_capture_enabled,
@@ -89,7 +88,7 @@ impl RenderOnce for VoiceMemberComponent {
 
         let secondary = cx.theme().secondary;
 
-        let is_me = current_user.is_some_and(|id| self.member.id == id);
+        let is_me = self.member.id == connected_user;
 
         let is_mic_off = if is_me {
             is_capture_disabled
@@ -194,7 +193,7 @@ impl RenderOnce for VoiceMemberComponent {
                                         .label("Watch stream")
                                         .icon(IconName::ScreenShare)
                                         .on_click(window.listener_for(
-                                            &self.streaming_state,
+                                            &self.connection_state,
                                             move |this, _, window, cx| {
                                                 this.join_screencast(user_id, window, cx);
                                             },
@@ -234,7 +233,7 @@ impl VoiceChannelsComponent {
                 .members
                 .into_iter()
                 .map(|member| VoiceMemberComponent {
-                    streaming_state: self.streaming_state.clone(),
+                    connection_state: self.connection_state.clone(),
                     member,
                 });
 
@@ -275,7 +274,7 @@ impl VoiceChannelsComponent {
                                 ),
                         )
                         .on_click(window.listener_for(
-                            &self.streaming_state,
+                            &self.connection_state,
                             move |state, _, window, cx| {
                                 state.join_voice_channel(&channel_id, window, cx);
                             },
@@ -288,7 +287,7 @@ impl VoiceChannelsComponent {
 
 impl RenderOnce for VoiceChannelsComponent {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let channels = self.streaming_state.read(cx).voice_channels.clone();
+        let channels = self.connection_state.read(cx).voice_channels.clone();
 
         CollapsableCard::new("voice-channels", self.card_state.clone())
             .title("Voice channels")

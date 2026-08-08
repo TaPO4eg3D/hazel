@@ -28,38 +28,44 @@ use crate::{
 
 use anyhow::Result as AResult;
 
-type UuidMap = Arc<DashMap<Uuid, OneshotSender<Vec<u8>>>>;
+/// UUIDOfRequest: ReqBytesSender
+type ReqMap = DashMap<Uuid, OneshotSender<Vec<u8>>>;
+/// MethodName: (SubscriptionUUID, ReqBytesSender)
+type SubsMap = DashMap<String, Vec<(Uuid, MPSCSender<Vec<u8>>)>>;
 
-type KeyMapInner = DashMap<String, Vec<(Uuid, MPSCSender<Vec<u8>>)>>;
-
-type KeyMap = Arc<KeyMapInner>;
-
-#[derive(Clone, Debug)]
-pub struct Connection {
+#[derive(Debug)]
+struct ClientConnectionInner {
     outcome_sender: MPSCSender<TCPTraffic>,
 
     /// Subscription on a specific response
-    uuid_map: UuidMap,
+    req_map: ReqMap,
 
     /// General subscription for an event
-    key_map: KeyMap,
+    subs_map: SubsMap,
+}
+
+#[derive(Clone, Debug)]
+pub struct ClientConnection {
+    inner: Arc<ClientConnectionInner>,
 }
 
 type TCPTraffic = (String, Vec<u8>);
 
 pub struct Subscription<T> {
+    /// TODO: This is needed only for a clean up in `SubsMap`
+    /// after drop of the subscription. Maybe there's a better way?
     uuid: Uuid,
     event: String,
 
     rx: MPSCReceiver<Vec<u8>>,
 
-    key_map: Weak<KeyMapInner>,
+    conn: Weak<ClientConnectionInner>,
 
     _marker: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> Subscription<T> {
-    fn new(event: &str, key_map: Weak<KeyMapInner>) -> (MPSCSender<Vec<u8>>, Self) {
+    fn new(event: &str, conn: Weak<ClientConnectionInner>) -> (MPSCSender<Vec<u8>>, Self) {
         let (tx, rx) = mpsc::channel(24);
 
         (
@@ -68,7 +74,7 @@ impl<T: DeserializeOwned> Subscription<T> {
                 uuid: Uuid::new_v4(),
                 event: event.into(),
                 rx,
-                key_map,
+                conn,
                 _marker: PhantomData,
             },
         )
@@ -90,11 +96,11 @@ impl<T: DeserializeOwned> Subscription<T> {
 
 impl<T> Drop for Subscription<T> {
     fn drop(&mut self) {
-        let Some(key_map) = self.key_map.upgrade() else {
+        let Some(conn) = self.conn.upgrade() else {
             return;
         };
 
-        let Some(mut subscriptions) = key_map.get_mut(&self.event) else {
+        let Some(mut subscriptions) = conn.subs_map.get_mut(&self.event) else {
             return;
         };
 
@@ -102,12 +108,11 @@ impl<T> Drop for Subscription<T> {
     }
 }
 
-impl Connection {
+impl ClientConnection {
     const TIMEOUT_SEC: usize = 10;
 
     async fn setup_tcp_reader_task(
-        key_map: KeyMap,
-        uuid_map: UuidMap,
+        &self,
         conn_sender: MPSCSender<()>,
         mut reader_recv: MPSCReceiver<OwnedReadHalf>,
     ) {
@@ -154,12 +159,12 @@ impl Connection {
 
             if let Some(uuid) = uuid {
                 #[allow(clippy::collapsible_if)]
-                if let Some((_, sender)) = uuid_map.remove(&uuid) {
+                if let Some((_, sender)) = self.inner.req_map.remove(&uuid) {
                     _ = sender.send(payload_bytes.to_vec());
                 }
             }
 
-            if let Some(senders) = key_map.get(&method) {
+            if let Some(senders) = self.inner.subs_map.get(&method) {
                 for (_, sender) in senders.iter() {
                     _ = sender.send(payload_bytes.to_vec()).await;
                 }
@@ -174,6 +179,7 @@ impl Connection {
     }
 
     async fn setup_tcp_writer_task(
+        &self,
         conn_sender: MPSCSender<()>,
         mut outcome_recv: MPSCReceiver<TCPTraffic>,
         mut writer_recv: MPSCReceiver<OwnedWriteHalf>,
@@ -207,9 +213,9 @@ impl Connection {
         }
     }
 
-    pub async fn new(addr: String) -> AResult<Self> {
-        let key_map: KeyMap = Arc::new(DashMap::new());
-        let uuid_map: UuidMap = Arc::new(DashMap::new());
+    pub fn new(addr: &str) -> Self {
+        let req_map: ReqMap = DashMap::new();
+        let subs_map: SubsMap = DashMap::new();
 
         // Channel for outcome traffic
         let (outcome_sender, outcome_recv) = mpsc::channel::<TCPTraffic>(16);
@@ -221,22 +227,34 @@ impl Connection {
         let (reader_sender, reader_recv) = mpsc::channel::<OwnedReadHalf>(16);
         let (writer_sender, writer_recv) = mpsc::channel::<OwnedWriteHalf>(16);
 
+        let connection = ClientConnection {
+            inner: Arc::new(ClientConnectionInner {
+                outcome_sender,
+                req_map,
+                subs_map,
+            }),
+        };
+
         // Spawn a separate task to read data from a TCP socket
         tokio::spawn({
-            let uuid_map = uuid_map.clone();
-            let key_map = key_map.clone();
-
             let conn_sender = conn_sender.clone();
+            let connection = connection.clone();
 
             async move {
-                _ = Self::setup_tcp_reader_task(key_map, uuid_map, conn_sender, reader_recv).await;
+                _ = connection
+                    .setup_tcp_reader_task(conn_sender, reader_recv)
+                    .await;
             }
         });
 
         // Spawn a task to write data into a TCP socket
         tokio::spawn({
+            let connection = connection.clone();
+
             async move {
-                _ = Self::setup_tcp_writer_task(conn_sender, outcome_recv, writer_recv).await;
+                _ = connection
+                    .setup_tcp_writer_task(conn_sender, outcome_recv, writer_recv)
+                    .await;
             }
         });
 
@@ -289,22 +307,19 @@ impl Connection {
             }
         });
 
-        Ok(Self {
-            key_map,
-            uuid_map,
-            outcome_sender,
-        })
+        connection
     }
 
     pub fn subscribe<Out>(&self) -> Subscription<Out>
     where
         Out: RPCNotification,
     {
-        let key_map = Arc::downgrade(&self.key_map);
-        let (sender, subscription) = Subscription::new(Out::key(), key_map);
+        let connection_inner = Arc::downgrade(&self.inner);
+        let (sender, subscription) = Subscription::new(Out::key(), connection_inner);
 
         let uuid = subscription.uuid;
-        self.key_map
+        self.inner
+            .subs_map
             .entry(Out::key().into())
             .and_modify({
                 let sender = sender.clone();
@@ -342,10 +357,11 @@ impl Connection {
 
         // First we setup the listener...
         let (tx, rx) = oneshot::channel();
-        self.uuid_map.insert(uuid, tx);
+        self.inner.req_map.insert(uuid, tx);
 
         // ...then we send the data
-        self.outcome_sender
+        self.inner
+            .outcome_sender
             .send((key.into(), data))
             .await
             .expect("Should be alive");
@@ -353,7 +369,7 @@ impl Connection {
         // Waiting for the response
         // TODO: Add timeout?
         let data = rx.await.expect("Handler should not be dropped");
-        self.uuid_map.remove(&uuid);
+        self.inner.req_map.remove(&uuid);
 
         let data = rmp_serde::from_slice::<Out>(&data)?;
 

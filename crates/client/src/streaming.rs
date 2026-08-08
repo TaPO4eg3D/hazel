@@ -38,7 +38,7 @@ use streaming_common::{
     UDPPayloadType, to_udp_packet_bytes,
 };
 
-use crate::components::streaming_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
+use crate::components::connection_state::{AtomicNoiseReductionAlgorithm, NoiseReductionAlgorithm};
 
 type UDPAddr = Arc<Mutex<Option<(UserId, SocketAddr)>>>;
 

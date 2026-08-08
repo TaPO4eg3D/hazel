@@ -7,45 +7,51 @@ use gpui_component::{
     divider::Divider,
     resizable::{h_resizable, resizable_panel},
 };
+use rpc::{client::ClientConnection, models::markers::UserId};
 
 use crate::components::{
     call_room::CallRoom,
     chat_state::ChatState,
     collapsable_card::CollapsableCardState,
+    connection_state::{RpcConnectionInfo, ServerConnectionState},
     left_sidebar::{
         ControlPanel, text_channels::TextChannelsComponent, voice_channels::VoiceChannelsComponent,
     },
-    streaming_state::StreamingState,
 };
 
 pub struct WorkspaceScreen {
     chat: Entity<ChatState>,
-    streaming: Entity<StreamingState>,
+    streaming: Entity<ServerConnectionState>,
 
     text_card: Entity<CollapsableCardState>,
     voice_card: Entity<CollapsableCardState>,
 }
 
 impl WorkspaceScreen {
-    pub fn init<C: AppContext>(&self, cx: &mut C) {
-        self.streaming.update(cx, |this, cx| {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        user_id: UserId,
+        connection: ClientConnection,
+        connection_info: RpcConnectionInfo,
+    ) -> Self {
+        let chat = cx.new(|cx| ChatState::new(window, cx));
+        let connection_state =
+            cx.new(|cx| ServerConnectionState::new(cx, user_id, connection, connection_info));
+
+        let text_card = cx.new(|_| CollapsableCardState::new(true));
+        let voice_card = cx.new(|_| CollapsableCardState::new(false));
+
+        connection_state.update(cx, |this, cx| {
             this.fetch_voice_channels(cx);
 
             this.watch_voice_channel_updates(cx);
             this.watch_streaming_state_updates(cx);
         });
-    }
-
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let chat = cx.new(|cx| ChatState::new(window, cx));
-        let streaming = cx.new(StreamingState::new);
-
-        let text_card = cx.new(|_| CollapsableCardState::new(true));
-        let voice_card = cx.new(|_| CollapsableCardState::new(false));
 
         Self {
             chat,
-            streaming,
+            streaming: connection_state,
 
             text_card,
             voice_card,

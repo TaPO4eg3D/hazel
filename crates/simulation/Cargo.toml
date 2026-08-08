@@ -4,5 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.6.5", features = ["derive"] }
+
+log = { workspace = true }
+env_logger = { workspace = true }
+
+gpui = { workspace = true }
+gpui-component = { workspace = true }
+gpui_platform = { workspace = true }
+
 client = { workspace = true }
 server = { workspace = true }
+
+tokio = { workspace = true }
