@@ -4,10 +4,10 @@ use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Frame, codec, decoder,
     ffi::{
-        AV_HWFRAME_MAP_DIRECT, AV_HWFRAME_MAP_READ, AVCodecContext, AVCodecParserContext,
-        AVDRMFrameDescriptor, AVPacket, AVPixelFormat, EAGAIN, av_frame_unref, av_hwframe_map,
-        av_packet_alloc, av_packet_free, av_parser_close, av_parser_init, av_parser_parse2,
-        avcodec_receive_frame, avcodec_send_packet,
+        AV_HWFRAME_MAP_DIRECT, AV_HWFRAME_MAP_READ, AVCodecContext, AVCodecID,
+        AVCodecParserContext, AVDRMFrameDescriptor, AVPacket, AVPixelFormat, EAGAIN,
+        av_frame_unref, av_hwframe_map, av_packet_alloc, av_packet_free, av_parser_close,
+        av_parser_init, av_parser_parse2, avcodec_receive_frame, avcodec_send_packet,
     },
 };
 use gpui::{DMABuffer, DMABufferPlane};
@@ -87,7 +87,7 @@ impl VAAPIDecoder {
         let decoder = decoder.video().expect("Failed to open the decoder");
 
         unsafe {
-            let parser = av_parser_init(codec::Id::H264 as i32);
+            let parser = av_parser_init(AVCodecID::AV_CODEC_ID_H264);
             assert!(!parser.is_null(), "Failed to init H.264 parser");
 
             let packet = av_packet_alloc();

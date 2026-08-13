@@ -17,3 +17,8 @@ client = { workspace = true }
 server = { workspace = true }
 
 tokio = { workspace = true }
+
+ash = { version = "0.38.0", features = ["linked"] }
+drm-fourcc = "2.2.0"
+arrayvec = "0.7.8"
+image = "0.25.10"

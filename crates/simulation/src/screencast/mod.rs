@@ -1,18 +1,34 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, thread, time::Duration};
 
+use ash::vk::Format as VkFormat;
 use client::gpui_tokio;
-use gpui::{AppContext, WindowOptions};
+use drm_fourcc::{DrmFormat, DrmFourcc};
+use gpui::{AppContext, Styled, WindowOptions, surface};
 use gpui_platform::application;
 use server::{config::Config, start_server};
 use tokio::runtime::Builder;
 
-use crate::screencast::view::ScreenCastView;
+use crate::screencast::{
+    view::ScreenCastView,
+    vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
+};
 
 mod view;
+mod vulkan;
 
 pub fn run(file: Option<PathBuf>) {
     let file = file.expect("Live capture is not yet supported for this scenario");
 
+    let img = image::open(&file).unwrap();
+    let mut dma_buffer_pool = VkDmaBufferPool::<12>::new(DmaBufferPoolOptions {
+        width: img.width(),
+        height: img.height(),
+        // That's not a mistake. VkFormat and DrmFormat have different endianess
+        vk_format: VkFormat::B8G8R8A8_UNORM,
+        drm_format: DrmFourcc::Xrgb8888,
+    });
+
+    let dmabuf = dma_buffer_pool.push_image(img.as_bytes());
     let tokio_runtime = Builder::new_multi_thread()
         .worker_threads(4)
         .thread_name("Embedded server")
@@ -35,7 +51,7 @@ pub fn run(file: Option<PathBuf>) {
 
         cx.spawn(async move |cx| {
             cx.open_window(WindowOptions::default(), move |window, cx| {
-                cx.new(|cx| ScreenCastView::new(file, window, cx))
+                cx.new(|cx| ScreenCastView::new(dmabuf, window, cx))
             })
         })
         .detach();
