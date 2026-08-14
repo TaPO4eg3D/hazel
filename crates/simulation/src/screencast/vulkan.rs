@@ -37,6 +37,9 @@ pub struct VkDmaBufferPool<const POOL_SIZE: usize> {
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
 
+    queue: vk::Queue,
+    queue_family_index: usize,
+
     width: u32,
     height: u32,
 
@@ -50,7 +53,7 @@ pub struct VkDmaBufferPool<const POOL_SIZE: usize> {
     /// Having a pool of buffer simplifies syncronization and that's
     /// how DMA-BUF streaming through pipewire works anyway
     frame_pool: ArrayVec<DMAFrame, POOL_SIZE>,
-    buf_idx: usize,
+    frame_idx: usize,
 }
 
 impl<const POOL_SIZE: usize> Drop for VkDmaBufferPool<POOL_SIZE> {
@@ -148,28 +151,36 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
                 .create_device(physical_device, &device_create_info, None)
                 .expect("Failed to create VkDevice");
 
+            let queue = device.get_device_queue(queue_family_index as u32, 0);
+
             let mut instance = Self {
                 entry,
                 instance,
                 physical_device,
                 device,
+                queue,
+                queue_family_index,
                 width: options.width,
                 height: options.height,
                 vk_format: options.vk_format,
                 drm_format: options.drm_format,
-                buf_idx: 0,
+                frame_idx: 0,
                 drm_modifier: DrmModifier::Unrecognized(0),
                 planes: ArrayVec::new(),
                 frame_pool: ArrayVec::new(),
             };
 
-            instance.init_pool(queue_family_index);
+            instance.init_pool();
             instance
         }
     }
 
     pub fn push_image(&mut self, image: &[u8]) -> gpui::DMABuffer {
-        let frame = &mut self.frame_pool[self.buf_idx];
+        let frame = &mut self.frame_pool[self.frame_idx];
+
+        // Usually here comes the fencing, aka we're waiting all GPU work for this frame is done.
+        // But I am planning to allocate a huge pool, so there should be no need in that.
+        // Buuuut I leave this comment here just in case
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -282,11 +293,16 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
                 .expect("Failed to submit GPU work")
         };
 
-        // Usually here comes the fencing but I am planning
-        // to allocate a huge ass pool, so there should be no need in that.
-        // Buuuut I leave this comment here just in case
+        let command_buffers = [frame.command_buffer];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
 
-        self.buf_idx += 1;
+        unsafe {
+            self.device
+                .queue_submit(self.queue, &[submit_info], vk::Fence::null())
+                .unwrap()
+        };
+
+        self.frame_idx += 1;
         gpui::DMABuffer::new(
             frame.fd.as_raw_fd(),
             self.width,
@@ -299,7 +315,7 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
         )
     }
 
-    fn init_pool(&mut self, queue_family_index: usize) {
+    fn init_pool(&mut self) {
         let modifier = self
             .enumerate_drm_modifiers()
             .into_iter()
@@ -448,7 +464,7 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
 
             let cmd_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                .queue_family_index(queue_family_index as u32);
+                .queue_family_index(self.queue_family_index as u32);
             let command_pool = unsafe {
                 self.device
                     .create_command_pool(&cmd_pool_create_info, None)

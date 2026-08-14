@@ -5,6 +5,7 @@ use client::gpui_tokio;
 use drm_fourcc::{DrmFormat, DrmFourcc};
 use gpui::{AppContext, Styled, WindowOptions, surface};
 use gpui_platform::application;
+use image::EncodableLayout;
 use server::{config::Config, start_server};
 use tokio::runtime::Builder;
 
@@ -19,13 +20,13 @@ mod vulkan;
 pub fn run(file: Option<PathBuf>) {
     let file = file.expect("Live capture is not yet supported for this scenario");
 
-    let img = image::open(&file).unwrap();
+    let img = image::open(&file).unwrap().to_rgba8();
     let mut dma_buffer_pool = VkDmaBufferPool::<12>::new(DmaBufferPoolOptions {
         width: img.width(),
         height: img.height(),
         // That's not a mistake. VkFormat and DrmFormat have different endianess
-        vk_format: VkFormat::B8G8R8A8_UNORM,
-        drm_format: DrmFourcc::Xrgb8888,
+        vk_format: VkFormat::R8G8B8A8_UNORM,
+        drm_format: DrmFourcc::Xbgr8888,
     });
 
     let dmabuf = dma_buffer_pool.push_image(img.as_bytes());

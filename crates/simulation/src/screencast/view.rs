@@ -23,6 +23,5 @@ impl Render for ScreenCastView {
             .flex()
             .size_full()
             .child(surface(self.file.clone()).size_full())
-            .child(div().size_full().bg(cyan(100)))
     }
 }
