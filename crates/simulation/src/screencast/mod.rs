@@ -8,9 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use client::gpui_tokio;
+use client::gpui_tokio::{self, Tokio};
 use gpui::{AppContext, DMABuffer, WindowOptions};
 use gpui_platform::application;
+use rpc::client::ClientConnection;
 use server::{config::Config, start_server};
 use smol::channel::{self, Receiver, Sender};
 use tokio::runtime::Builder;
@@ -226,8 +227,18 @@ pub fn run(file_path: Option<PathBuf>) {
         gpui_tokio::init_with_runtime(cx, tokio_runtime);
 
         cx.spawn(async move |cx| {
+            let host_connection =
+                Tokio::spawn(cx, async move { ClientConnection::new("127.0.0.1:9898") })
+                    .await
+                    .expect("todo: we currently can't fail and just hang");
+
+            let client_connection =
+                Tokio::spawn(cx, async move { ClientConnection::new("127.0.0.1:9898") })
+                    .await
+                    .expect("todo: we currently can't fail and just hang");
+
             cx.open_window(WindowOptions::default(), move |window, cx| {
-                ScreenCastView::new(streamer, window, cx)
+                ScreenCastView::new(streamer, host_connection, client_connection, window, cx)
             })
         })
         .detach();

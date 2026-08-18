@@ -7050,6 +7050,7 @@ dependencies = [
  "image",
  "log",
  "memfd",
+ "rpc",
  "server",
  "smol",
  "tokio",

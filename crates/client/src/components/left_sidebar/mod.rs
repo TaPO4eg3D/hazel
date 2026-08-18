@@ -15,7 +15,6 @@ use gpui_component::{
 use crate::{
     assets::IconName,
     components::connection_state::{NoiseReductionAlgorithm, ServerConnectionState},
-    streaming::Streaming,
 };
 
 pub mod text_channels;
@@ -373,6 +372,8 @@ impl RenderOnce for AudioDeviceControl {
             AudioDeviceType::Playback => self.connection_state.read(cx).is_playback_enabled,
         };
 
+        let streaming = self.connection_state.read(cx).streaming.clone();
+
         div()
             .id(match self.device_type {
                 AudioDeviceType::Capture => "capture-control",
@@ -465,8 +466,10 @@ impl RenderOnce for AudioDeviceControl {
                                         ),
                                     )
                                     .when(!device.is_active, |this| {
+                                        let streaming = streaming.clone();
+
                                         this.on_click(move |_, _, cx| {
-                                            let registry = Streaming::get_device_registry(cx);
+                                            let registry = streaming.get_device_registry();
 
                                             match self.device_type {
                                                 AudioDeviceType::Capture => {
