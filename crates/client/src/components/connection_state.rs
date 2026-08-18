@@ -1,4 +1,5 @@
 use std::{
+    rc::Rc,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
@@ -35,7 +36,7 @@ use rpc::{
 };
 use smol::{channel, stream::StreamExt as _};
 
-use crate::streaming::Streaming;
+use crate::streaming::StreamingState;
 
 #[derive(Clone)]
 pub struct VoiceChannel {
@@ -92,13 +93,14 @@ impl VoiceChannelMember {
 
     pub fn fetch_is_talking(
         &mut self,
-        cx: &Context<ServerConnectionState>,
         connected_user: UserId,
+        streaming: &Rc<StreamingState>,
+        cx: &Context<ServerConnectionState>,
     ) -> bool {
         let was_talking = self.is_talking;
 
         self.is_talking = if connected_user == self.id {
-            Streaming::is_talking(cx)
+            streaming.is_talking()
         } else if let Some(state) = self.shared.as_ref() {
             state.read(cx).playback.is_talking.load(Ordering::Relaxed)
         } else {
@@ -108,7 +110,11 @@ impl VoiceChannelMember {
         self.is_talking != was_talking
     }
 
-    pub fn register(&mut self, cx: &mut Context<ServerConnectionState>) {
+    pub fn register(
+        &mut self,
+        streaming: &Rc<StreamingState>,
+        cx: &mut Context<ServerConnectionState>,
+    ) {
         let playback_state = Arc::new(AudioStreamingClientSharedState::new(self.id.value));
 
         let subscription = cx.subscribe(&self.output_volume, {
@@ -136,8 +142,7 @@ impl VoiceChannelMember {
         });
 
         self.shared = Some(shared);
-
-        Streaming::add_voice_member(cx, Arc::downgrade(&playback_state));
+        streaming.add_voice_member(Arc::downgrade(&playback_state));
     }
 
     pub fn unregister(&mut self) {
@@ -183,6 +188,8 @@ pub struct ServerConnectionState {
     pub rpc: ClientConnection,
     pub user_id: UserId,
     pub rpc_info: RpcConnectionInfo,
+
+    pub streaming: Rc<StreamingState>,
 
     pub voice_channels: Vec<VoiceChannel>,
 
@@ -246,23 +253,26 @@ impl ServerConnectionState {
             is_playback_enabled: true,
             is_capture_enabled: true,
 
+            streaming: Rc::new(StreamingState::new()),
             noise_reduction: NoiseReductionAlgorithm::RNNoise,
         };
 
-        cx.subscribe(&state.capture_volume, |_, state, _, cx| {
+        cx.subscribe(&state.capture_volume, |this, state, _, cx| {
             let state = state.read(cx);
 
             if let SliderValue::Single(value) = state.value() {
-                Streaming::set_input_volume_modifier(cx, (value / 100.).powf(3.));
+                this.streaming
+                    .set_input_volume_modifier((value / 100.).powf(3.));
             }
         })
         .detach();
 
-        cx.subscribe(&state.playback_volume, |_, state, _, cx| {
+        cx.subscribe(&state.playback_volume, |this, state, _, cx| {
             let state = state.read(cx);
 
             if let SliderValue::Single(value) = state.value() {
-                Streaming::set_output_volume_modifier(cx, (value / 100.).powf(3.));
+                this.streaming
+                    .set_output_volume_modifier((value / 100.).powf(3.));
             }
         })
         .detach();
@@ -282,7 +292,7 @@ impl ServerConnectionState {
         cx: &mut Context<Self>,
     ) {
         self.noise_reduction = noise_reduction;
-        Streaming::set_noise_reduction(noise_reduction, cx);
+        self.streaming.set_noise_reduction(noise_reduction);
 
         cx.notify();
     }
@@ -349,11 +359,11 @@ impl ServerConnectionState {
         if !self.is_playback_enabled && self.is_capture_enabled {
             self.is_playback_enabled = true;
 
-            let playback = Streaming::get_playback(cx);
+            let playback = self.streaming.get_playback_controller();
             playback.set_enabled(true);
         }
 
-        let capture = Streaming::get_capture(cx);
+        let capture = self.streaming.get_capture_controller();
         capture.set_enabled(self.is_capture_enabled);
 
         self.sync_server_state(cx);
@@ -365,11 +375,11 @@ impl ServerConnectionState {
         if !self.is_playback_enabled {
             self.is_capture_enabled = false;
 
-            let capture = Streaming::get_capture(cx);
+            let capture = self.streaming.get_capture_controller();
             capture.set_enabled(false);
         }
 
-        let playback = Streaming::get_playback(cx);
+        let playback = self.streaming.get_playback_controller();
         playback.set_enabled(self.is_playback_enabled);
 
         self.sync_server_state(cx);
@@ -409,6 +419,8 @@ impl ServerConnectionState {
 
             Self::fetch_channels_inner(&this, cx).await;
             this.update(cx, |this, cx| {
+                let streaming = this.streaming.clone();
+
                 if let Some(channel) = this.get_voice_channel_mut(id) {
                     channel.is_active = true;
 
@@ -417,24 +429,21 @@ impl ServerConnectionState {
                             continue;
                         }
 
-                        member.register(cx);
+                        member.register(&streaming, cx);
                     }
                 }
 
-                cx.notify();
-            })
-            .ok();
+                this.streaming
+                    .connect(user_id, format!("{server_ip}:9899").parse().unwrap());
 
-            Streaming::connect(cx, user_id, format!("{server_ip}:9899").parse().unwrap());
-
-            this.update(cx, |this, cx| {
-                let capture = Streaming::get_capture(cx);
+                let capture = this.streaming.get_capture_controller();
                 capture.set_enabled(this.is_capture_enabled);
 
-                let playback = Streaming::get_playback(cx);
+                let playback = this.streaming.get_playback_controller();
                 playback.set_enabled(this.is_playback_enabled);
 
                 this.sync_server_state(cx);
+                cx.notify();
             })
             .ok();
         })
@@ -442,7 +451,7 @@ impl ServerConnectionState {
     }
 
     pub fn leave_voice_channel(&mut self, cx: &mut Context<Self>) {
-        let user_id = self.user_id.clone();
+        let user_id = self.user_id;
         let Some(channel) = self.get_active_channel_mut() else {
             return;
         };
@@ -450,7 +459,7 @@ impl ServerConnectionState {
         channel.is_active = false;
         channel.members.retain(|member| member.id != user_id);
 
-        Streaming::disconnect(cx);
+        self.streaming.disconnect();
 
         cx.spawn(async |this, cx| {
             let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
@@ -555,6 +564,7 @@ impl ServerConnectionState {
                         };
 
                         this.update(cx, |this, cx| {
+                            let streaming = this.streaming.clone();
                             let Some(channel) = this.get_voice_channel_mut(channel_id) else {
                                 return;
                             };
@@ -567,7 +577,7 @@ impl ServerConnectionState {
                             );
 
                             if channel.is_active {
-                                member.register(cx);
+                                member.register(&streaming, cx);
                             }
 
                             channel.members.push(member);
@@ -612,7 +622,10 @@ impl ServerConnectionState {
 
     pub fn watch_streaming_state_updates(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let mut subscription = Streaming::get_device_registry(cx).subscribe();
+            let mut subscription = this
+                .read_with(cx, |this, _cx| this.streaming.get_device_registry())
+                .unwrap()
+                .subscribe();
 
             loop {
                 let registry = subscription.recv().await;
@@ -646,12 +659,14 @@ impl ServerConnectionState {
                     let mut updated = false;
                     let capture_enabled = this.is_capture_enabled;
 
+                    let streaming = this.streaming.clone();
                     if let Some(channel) = this.get_active_channel_mut() {
                         for member in channel.members.iter_mut() {
                             if member.id == self_id && !capture_enabled {
                                 member.is_talking = false;
                             } else {
-                                updated = member.fetch_is_talking(cx, self_id) || updated;
+                                updated =
+                                    member.fetch_is_talking(self_id, &streaming, cx) || updated;
                             }
                         }
                     }
@@ -668,11 +683,14 @@ impl ServerConnectionState {
 
     pub fn start_screencast(&self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async |this, cx| {
-            let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
+            let Some((connection, streaming)) = this
+                .read_with(cx, |this, _cx| (this.rpc.clone(), this.streaming.clone()))
+                .ok()
+            else {
                 return;
             };
 
-            if let Some(preview) = Streaming::start_screencast(cx).await {
+            if let Some(preview) = streaming.start_screencast().await {
                 // Wait for the first frame to get width and height
                 // TODO: Do it properly. Portal should report the size?
                 let (width, height) = loop {
@@ -687,7 +705,7 @@ impl ServerConnectionState {
                 )
                 .await
                 else {
-                    Streaming::stop_screencast(&mut *cx).await;
+                    streaming.stop_screencast().await;
 
                     cx.window_handle()
                         .update(cx, |_, window, cx| {
@@ -723,11 +741,14 @@ impl ServerConnectionState {
             return;
         }
 
-        let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
+        let Some((connection, streaming)) = this
+            .read_with(cx, |this, _cx| (this.rpc.clone(), this.streaming.clone()))
+            .ok()
+        else {
             return;
         };
 
-        Streaming::stop_screencast(&mut *cx).await;
+        streaming.stop_screencast().await;
 
         this.update(cx, |this, _cx| {
             this.preview_frame = None;
@@ -749,8 +770,6 @@ impl ServerConnectionState {
                     );
                 })
                 .ok();
-
-            return;
         };
     }
 
@@ -779,7 +798,10 @@ impl ServerConnectionState {
         cx.spawn_in(window, async move |this, cx| {
             Self::stop_screencast_inner(&this, cx).await;
 
-            let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
+            let Some((connection, streaming)) = this
+                .read_with(cx, |this, _cx| (this.rpc.clone(), this.streaming.clone()))
+                .ok()
+            else {
                 return;
             };
 
@@ -806,7 +828,7 @@ impl ServerConnectionState {
                     _ = RequestIDRFrame::execute(&connection, &RequestIDRFramePayload { user_id })
                         .await;
 
-                    Streaming::register_video_stream(cx, user_id, frame_tx, params);
+                    streaming.register_video_stream(user_id, frame_tx, params);
                 }
                 Err(err) => {
                     println!("Error: {err:?}");
@@ -847,8 +869,6 @@ impl ServerConnectionState {
                         );
                     })
                     .ok();
-
-                return;
             };
         })
         .detach();

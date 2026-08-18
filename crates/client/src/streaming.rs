@@ -436,7 +436,8 @@ fn spawn_receiver(
     }
 }
 
-struct GlobalStreaming {
+// Managed state for both audio and video streaming
+pub struct StreamingState {
     stream_addr: UDPAddr,
 
     capture_notifier: CaptureNotifier,
@@ -457,196 +458,167 @@ struct GlobalStreaming {
     audio_shared_state: Arc<AudioStreamingSharedState>,
 }
 
-impl Global for GlobalStreaming {}
+impl StreamingState {
+    pub fn new() -> Self {
+        let stream_addr: UDPAddr = Arc::new(Mutex::new(None));
 
-pub struct Streaming {}
+        let capture_notifier = CaptureNotifier::new();
 
-impl Streaming {
-    pub fn is_talking<C: AppContext>(cx: &C) -> bool {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            stream.audio_shared_state.is_talking.load(Ordering::Relaxed)
-        })
+        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
+        let (audio_capture, mut audio_playback, audio_device_registry) =
+            audio::init(capture_notifier.clone());
+
+        let audio_shared_state = Arc::new(AudioStreamingSharedState::new());
+
+        let audio_packet_input = audio_playback.packet_input.take().unwrap();
+
+        let audio_packet_tx = audio_packet_input.command_sender.clone();
+        let audio_packet_output_state = audio_packet_input.output_state.clone();
+
+        let audio_capture_controller = audio_capture.get_controller();
+
+        let active_screencast = Arc::new(Mutex::new(None));
+
+        let video_playback = video::playback::init();
+        let video_command_tx = video_playback.get_command_tx();
+
+        thread::Builder::new()
+            .name("udp-sender".into())
+            .spawn({
+                let addr = stream_addr.clone();
+                let socket = socket.clone();
+                let shared = audio_shared_state.clone();
+                let active_screencast = active_screencast.clone();
+                let capture_notifier = capture_notifier.clone();
+
+                move || {
+                    let sender = PacketSender::new(
+                        addr,
+                        socket,
+                        AudioStreamingState::new(shared, audio_capture),
+                        ScreenStreamingData::new(active_screencast),
+                        capture_notifier,
+                    );
+
+                    sender.run();
+                }
+            })
+            .unwrap();
+
+        thread::Builder::new()
+            .name("udp-receiver".into())
+            .spawn({
+                let socket = socket.clone();
+
+                move || {
+                    spawn_receiver(socket, video_playback, audio_packet_input);
+                }
+            })
+            .unwrap();
+
+        StreamingState {
+            active_screencast,
+            capture_notifier,
+            audio_capture: audio_capture_controller,
+            audio_playback: audio_playback.controller,
+            audio_packet_command_tx: audio_packet_tx,
+            audio_playback_output_state: audio_packet_output_state,
+            video_command_tx,
+            audio_shared_state,
+            stream_addr,
+            audio_device_registry,
+        }
     }
 
-    pub fn set_noise_reduction<C: AppContext>(noise_reduction: NoiseReductionAlgorithm, cx: &C) {
-        cx.read_global(move |stream: &GlobalStreaming, _| {
-            stream
-                .audio_shared_state
-                .noise_reduction
-                .store(noise_reduction, Ordering::Relaxed);
-        });
+    pub fn is_talking(&self) -> bool {
+        self.audio_shared_state.is_talking.load(Ordering::Relaxed)
     }
 
-    pub fn set_input_volume_modifier<C: AppContext>(cx: &C, value: f32) {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            stream
-                .audio_shared_state
-                .volume_modifier
-                .store(value, Ordering::Relaxed);
-        })
+    pub fn set_noise_reduction(&self, noise_reduction: NoiseReductionAlgorithm) {
+        self.audio_shared_state
+            .noise_reduction
+            .store(noise_reduction, Ordering::Relaxed);
     }
 
-    pub fn set_output_volume_modifier<C: AppContext>(cx: &C, value: f32) {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            stream
-                .audio_playback_output_state
-                .volume
-                .store(value, Ordering::Relaxed);
-        })
+    pub fn set_input_volume_modifier(&self, value: f32) {
+        self.audio_shared_state
+            .volume_modifier
+            .store(value, Ordering::Relaxed);
     }
 
-    pub fn get_playback<C: AppContext>(cx: &C) -> AudioPlaybackController {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_playback.clone())
+    pub fn set_output_volume_modifier(&self, value: f32) {
+        self.audio_playback_output_state
+            .volume
+            .store(value, Ordering::Relaxed);
     }
 
-    pub fn get_device_registry<C: AppContext>(cx: &mut C) -> DeviceRegistry {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_device_registry.clone())
+    pub fn get_playback_controller(&self) -> AudioPlaybackController {
+        self.audio_playback.clone()
     }
 
-    pub fn get_capture<C: AppContext>(cx: &C) -> AudioCaptureController {
-        cx.read_global(|stream: &GlobalStreaming, _| stream.audio_capture.clone())
+    pub fn get_device_registry(&self) -> DeviceRegistry {
+        self.audio_device_registry.clone()
     }
 
-    pub fn connect<C: AppContext>(cx: &C, user_id: UserId, addr: SocketAddr) {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            let mut state = stream.stream_addr.lock().unwrap();
-            *state = Some((user_id, addr));
-
-            // TODO: Extremelly bad solution, fix ASAP.
-            // We have to properly ensure we're established a UDP connection
-            // + reflect the status of connection in UI
-            stream.capture_notifier.notify_ping();
-        });
+    pub fn get_capture_controller(&self) -> AudioCaptureController {
+        self.audio_capture.clone()
     }
 
-    pub async fn start_screencast(cx: &mut AsyncApp) -> Option<ScreencastPreview> {
-        let notifier =
-            cx.read_global(|stream: &GlobalStreaming, _cx| stream.capture_notifier.clone());
+    pub fn connect(&self, user_id: UserId, addr: SocketAddr) {
+        let mut state = self.stream_addr.lock().unwrap();
+        *state = Some((user_id, addr));
+
+        // TODO: Extremelly bad solution, fix ASAP.
+        // We have to properly ensure we're established a UDP connection
+        // + reflect the status of connection in UI
+        self.capture_notifier.notify_ping();
+    }
+
+    pub fn disconnect(&self) {
+        let mut state = self.stream_addr.lock().unwrap();
+        *state = None;
+    }
+
+    pub async fn start_screencast(&self) -> Option<ScreencastPreview> {
+        let notifier = self.capture_notifier.clone();
 
         let (cast, preview) = capture::video::linux::screengrab::init_screencast(notifier)
             .await
             .ok()?;
 
-        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
-            let mut active_screencast = stream.active_screencast.lock().unwrap();
-            *active_screencast = Some(cast);
-        });
+        let mut active_screencast = self.active_screencast.lock().unwrap();
+        *active_screencast = Some(cast);
 
         Some(preview)
     }
 
-    pub async fn stop_screencast(cx: &mut AsyncApp) {
-        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
-            if let Some(cast) = stream.active_screencast.lock().unwrap().take() {
-                cast.close();
-            }
-        });
+    pub async fn stop_screencast(&self) {
+        if let Some(cast) = self.active_screencast.lock().unwrap().take() {
+            cast.close();
+        }
     }
 
     pub fn register_video_stream(
-        cx: &mut AsyncApp,
+        &self,
         user_id: UserId,
         frame_tx: smol::channel::Sender<DMABuffer>,
         params: VideoSessionParams,
     ) {
-        cx.update_global(move |stream: &mut GlobalStreaming, _cx| {
-            _ = stream
-                .video_command_tx
-                .send(DecodingWorkerCommand::AddClient((
-                    user_id, frame_tx, params,
-                )));
-        });
+        _ = self
+            .video_command_tx
+            .send(DecodingWorkerCommand::AddClient((
+                user_id, frame_tx, params,
+            )));
     }
 
-    pub fn disconnect<C: AppContext>(cx: &C) {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            let mut state = stream.stream_addr.lock().unwrap();
+    pub fn add_voice_member(&self, shared: Weak<AudioStreamingClientSharedState>) {
+        let shared = shared.upgrade().unwrap();
 
-            *state = None;
-        });
+        _ = self
+            .audio_packet_command_tx
+            .send(PlaybackPacketCommand::AddClient((
+                shared.user_id,
+                Arc::downgrade(&shared),
+            )));
     }
-
-    pub fn add_voice_member<C: AppContext>(cx: &C, shared: Weak<AudioStreamingClientSharedState>) {
-        cx.read_global(|stream: &GlobalStreaming, _| {
-            let shared = shared.upgrade().unwrap();
-
-            _ = stream
-                .audio_packet_command_tx
-                .send(PlaybackPacketCommand::AddClient((
-                    shared.user_id,
-                    Arc::downgrade(&shared),
-                )));
-        });
-    }
-}
-
-pub fn init(cx: &mut App, debug: bool) {
-    let stream_addr: UDPAddr = Arc::new(Mutex::new(None));
-
-    let capture_notifier = CaptureNotifier::new();
-
-    let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
-    let (audio_capture, mut audio_playback, audio_device_registry) =
-        audio::init(debug, capture_notifier.clone());
-
-    let audio_shared_state = Arc::new(AudioStreamingSharedState::new());
-
-    let audio_packet_input = audio_playback.packet_input.take().unwrap();
-
-    let audio_packet_tx = audio_packet_input.command_sender.clone();
-    let audio_packet_output_state = audio_packet_input.output_state.clone();
-
-    let audio_capture_controller = audio_capture.get_controller();
-
-    let active_screencast = Arc::new(Mutex::new(None));
-
-    let video_playback = video::playback::init();
-    let video_command_tx = video_playback.get_command_tx();
-
-    thread::Builder::new()
-        .name("udp-sender".into())
-        .spawn({
-            let addr = stream_addr.clone();
-            let socket = socket.clone();
-            let shared = audio_shared_state.clone();
-            let active_screencast = active_screencast.clone();
-            let capture_notifier = capture_notifier.clone();
-
-            move || {
-                let sender = PacketSender::new(
-                    addr,
-                    socket,
-                    AudioStreamingState::new(shared, audio_capture),
-                    ScreenStreamingData::new(active_screencast),
-                    capture_notifier,
-                );
-
-                sender.run();
-            }
-        })
-        .unwrap();
-
-    thread::Builder::new()
-        .name("udp-receiver".into())
-        .spawn({
-            let socket = socket.clone();
-
-            move || {
-                spawn_receiver(socket, video_playback, audio_packet_input);
-            }
-        })
-        .unwrap();
-
-    cx.set_global(GlobalStreaming {
-        active_screencast,
-        capture_notifier,
-        audio_capture: audio_capture_controller,
-        audio_playback: audio_playback.controller,
-        audio_packet_command_tx: audio_packet_tx,
-        audio_playback_output_state: audio_packet_output_state,
-        video_command_tx,
-        audio_shared_state,
-        stream_addr,
-        audio_device_registry,
-    });
 }

@@ -81,9 +81,7 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
-
         gpui_tokio::init(cx);
-        streaming::init(cx, args.audio_debug);
 
         init_theme(cx);
 

@@ -20,6 +20,8 @@ smol = { workspace = true }
 tokio = { workspace = true }
 ffmpeg-next = { workspace = true }
 
+rpc = { workspace = true }
+
 ash = { version = "0.38.0", features = ["linked"] }
 drm-fourcc = "2.2.0"
 arrayvec = "0.7.8"
