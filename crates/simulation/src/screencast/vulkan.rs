@@ -5,13 +5,10 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
-use ash::{
-    prelude::VkResult,
-    vk::{self, Format, SharingMode},
-};
+use ash::vk::{self, Format, SharingMode};
 use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
-use gpui::{DMABuffer, DMABufferPlane};
-use gpui_component::kbd;
+use ffmpeg_next::ffi::VkFormat;
+use gpui::DMABufferPlane;
 
 #[derive(Debug)]
 struct DMAFrame {
@@ -30,6 +27,11 @@ struct DMAFrame {
     command_buffer: vk::CommandBuffer,
 }
 
+/// A managed pool of Vulkan textures backed by an exportable DMA-BUF.
+/// The main purpose is to simulate screencapturing via Pipewire.
+///
+/// On Pipewire it works in similar way. It cycles through a pool of
+/// pre-allocated DMA-BUFs
 pub struct VkDmaBufferPool<const POOL_SIZE: usize> {
     entry: ash::Entry,
     instance: ash::Instance,
@@ -45,13 +47,11 @@ pub struct VkDmaBufferPool<const POOL_SIZE: usize> {
 
     vk_format: vk::Format,
 
-    drm_format: DrmFourcc,
+    drm_fourcc: DrmFourcc,
     drm_modifier: DrmModifier,
 
     planes: ArrayVec<DMABufferPlane, 4>,
 
-    /// Having a pool of buffer simplifies syncronization and that's
-    /// how DMA-BUF streaming through pipewire works anyway
     frame_pool: ArrayVec<DMAFrame, POOL_SIZE>,
     frame_idx: usize,
 }
@@ -65,7 +65,6 @@ pub struct DmaBufferPoolOptions {
     pub height: u32,
 
     pub vk_format: vk::Format,
-    pub drm_format: DrmFourcc,
 }
 
 impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
@@ -153,6 +152,11 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
 
             let queue = device.get_device_queue(queue_family_index as u32, 0);
 
+            let drm_fourcc = match options.vk_format {
+                Format::R8G8B8A8_UNORM => DrmFourcc::Xbgr8888,
+                _ => panic!("Unsupported VkFormat"),
+            };
+
             let mut instance = Self {
                 entry,
                 instance,
@@ -163,9 +167,9 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
                 width: options.width,
                 height: options.height,
                 vk_format: options.vk_format,
-                drm_format: options.drm_format,
-                frame_idx: 0,
+                drm_fourcc,
                 drm_modifier: DrmModifier::Unrecognized(0),
+                frame_idx: 0,
                 planes: ArrayVec::new(),
                 frame_pool: ArrayVec::new(),
             };
@@ -302,13 +306,13 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
                 .unwrap()
         };
 
-        self.frame_idx += 1;
+        self.frame_idx = (self.frame_idx + 1) % POOL_SIZE;
         gpui::DMABuffer::new(
             frame.fd.as_raw_fd(),
             self.width,
             self.height,
             DrmFormat {
-                code: self.drm_format,
+                code: self.drm_fourcc,
                 modifier: self.drm_modifier,
             },
             &self.planes,
