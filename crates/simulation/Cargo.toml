@@ -16,9 +16,12 @@ gpui_platform = { workspace = true }
 client = { workspace = true }
 server = { workspace = true }
 
+smol = { workspace = true }
 tokio = { workspace = true }
+ffmpeg-next = { workspace = true }
 
 ash = { version = "0.38.0", features = ["linked"] }
 drm-fourcc = "2.2.0"
 arrayvec = "0.7.8"
 image = "0.25.10"
+memfd = "0.6.5"
