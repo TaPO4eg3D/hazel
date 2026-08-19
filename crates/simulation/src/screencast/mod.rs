@@ -1,23 +1,35 @@
 use std::{
     ffi::CString,
     io::Write,
+    net::SocketAddr,
     os::fd::{AsRawFd, OwnedFd},
     path::{Path, PathBuf},
+    str::FromStr,
     sync::mpsc::channel,
     thread,
     time::{Duration, Instant},
 };
 
-use client::gpui_tokio::{self, Tokio};
+use client::{
+    gpui_tokio::{self, Tokio},
+    streaming::StreamingState,
+};
 use gpui::{AppContext, DMABuffer, WindowOptions};
 use gpui_platform::application;
-use rpc::client::ClientConnection;
+use rpc::{
+    client::ClientConnection,
+    models::{
+        auth::{GetSessionKey, GetSessionKeyPayload, GetSessionKeyResponse, Login, LoginPayload},
+        common::RPCMethod,
+        markers::Id,
+    },
+};
 use server::{config::Config, start_server};
 use smol::channel::{self, Receiver, Sender};
 use tokio::runtime::Builder;
 
 use crate::screencast::{
-    view::ScreenCastView,
+    view::{ConnectionState, ScreenCastView},
     vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
 };
 
@@ -218,7 +230,10 @@ pub fn run(file_path: Option<PathBuf>) {
         udp_addr: "0.0.0.0:9899".to_string(),
 
         text_channels: vec![],
-        voice_channels: vec![],
+        voice_channels: vec![server::config::VoiceChannel {
+            name: "simulation".to_string(),
+            max_participants: 2,
+        }],
     }));
 
     let app = application();
@@ -227,15 +242,8 @@ pub fn run(file_path: Option<PathBuf>) {
         gpui_tokio::init_with_runtime(cx, tokio_runtime);
 
         cx.spawn(async move |cx| {
-            let host_connection =
-                Tokio::spawn(cx, async move { ClientConnection::new("127.0.0.1:9898") })
-                    .await
-                    .expect("todo: we currently can't fail and just hang");
-
-            let client_connection =
-                Tokio::spawn(cx, async move { ClientConnection::new("127.0.0.1:9898") })
-                    .await
-                    .expect("todo: we currently can't fail and just hang");
+            let host_connection = ConnectionState::new("host", "host", cx).await;
+            let client_connection = ConnectionState::new("client", "client", cx).await;
 
             cx.open_window(WindowOptions::default(), move |window, cx| {
                 ScreenCastView::new(streamer, host_connection, client_connection, window, cx)

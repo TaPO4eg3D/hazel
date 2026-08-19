@@ -1,20 +1,87 @@
-use std::{os::fd::OwnedFd, path::Path};
+use std::{net::SocketAddr, os::fd::OwnedFd, path::Path, str::FromStr as _};
 
-use client::gpui_tokio::Tokio;
+use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, InteractiveElement as _, ParentElement as _,
     Render, Styled as _, Window, div, prelude::FluentBuilder, surface,
 };
 use gpui_component::StyledExt as _;
-use rpc::client::ClientConnection;
+use rpc::{
+    client::ClientConnection,
+    models::{
+        auth::{
+            GetSessionKey, GetSessionKeyPayload, GetSessionKeyResponse, Login, LoginPayload,
+            SessionKey,
+        },
+        common::RPCMethod as _,
+        markers::{Id, UserId},
+    },
+};
 
 use crate::screencast::FileStreamer;
+
+pub struct ConnectionState {
+    pub rpc: ClientConnection,
+    pub streaming: StreamingState,
+
+    pub session_key: SessionKey,
+}
+
+impl ConnectionState {
+    pub async fn new(login: &str, password: &str, cx: &mut AsyncApp) -> Self {
+        let rpc = Tokio::spawn(cx, async move { ClientConnection::new("127.0.0.1:9898") })
+            .await
+            .expect("todo: we currently can't fail and just hang");
+
+        let response = GetSessionKey::execute(
+            &rpc,
+            &GetSessionKeyPayload {
+                login: login.to_string(),
+                password: password.to_string(),
+            },
+        )
+        .await
+        .expect("auth failed");
+
+        let session_key = match response {
+            GetSessionKeyResponse::NewUser(session_key) => session_key,
+            GetSessionKeyResponse::ExistingUser(session_key) => session_key,
+        };
+
+        Login::execute(
+            &rpc,
+            &LoginPayload {
+                session_key: session_key.clone(),
+            },
+        )
+        .await
+        .expect("auth failed");
+
+        let streaming = StreamingState::new();
+        streaming.connect(
+            Id::new(session_key.body.user_id),
+            SocketAddr::from_str("127.0.0.1:9899").unwrap(),
+        );
+
+        ConnectionState {
+            rpc,
+            streaming,
+            session_key,
+        }
+    }
+
+    async fn join_voice_channel() {}
+
+    async fn start_screencast() {}
+
+    async fn join_screencast(id: UserId) {}
+}
 
 pub struct ScreenCastView {
     frame: Option<gpui::DMABuffer>,
 
-    host_connection: ClientConnection,
-    client_connection: ClientConnection,
+    host: ConnectionState,
+    client: ConnectionState,
 
     _streaming_task: gpui::Task<()>,
 }
@@ -22,8 +89,8 @@ pub struct ScreenCastView {
 impl ScreenCastView {
     pub fn new(
         mut streamer: FileStreamer,
-        host_connection: ClientConnection,
-        client_connection: ClientConnection,
+        host: ConnectionState,
+        client: ConnectionState,
         _window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -42,8 +109,8 @@ impl ScreenCastView {
 
             Self {
                 frame: None,
-                host_connection,
-                client_connection,
+                host,
+                client,
                 _streaming_task: task,
             }
         })

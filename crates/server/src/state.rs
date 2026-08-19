@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
+use chrono::Utc;
 use dashmap::DashMap;
 
 use rpc::{
@@ -20,9 +21,17 @@ use rpc::{
     server::{RpcRouter, RpcWriter},
 };
 
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{ActiveValue::Set, Database, DatabaseConnection, EntityTrait};
 
-use crate::entity::user::Model as User;
+use crate::{
+    config::Config,
+    entity::{
+        user::Model as User,
+        voice_channel::{self, Entity as VoiceChannel},
+    },
+};
+
+use anyhow::Result as AResult;
 
 pub type AppRouter = RpcRouter<AppState, ConnectionState>;
 
@@ -106,6 +115,35 @@ impl AppState {
         };
 
         self.connected_clients.remove(&user_id);
+    }
+
+    pub async fn create_channels_from_config(&self, config: &Config) -> AResult<()> {
+        let channels = VoiceChannel::find().all(&self.db).await?;
+        let missing_channels = config
+            .voice_channels
+            .iter()
+            .filter(|expected| !channels.iter().any(|channel| channel.name == expected.name))
+            .collect::<Vec<_>>();
+
+        if missing_channels.is_empty() {
+            return Ok(());
+        }
+
+        let new_records = missing_channels
+            .into_iter()
+            .map(|item| voice_channel::ActiveModel {
+                name: Set(item.name.clone()),
+                max_participants: Set(item.max_participants as i32),
+                created_at: Set(Utc::now().naive_utc()),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        VoiceChannel::insert_many(new_records)
+            .exec(&self.db)
+            .await?;
+
+        Ok(())
     }
 
     pub async fn for_each_user<F, Fut>(&self, f: F)

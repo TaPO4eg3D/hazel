@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use rpc::server::{RpcRouter, serve};
+use sea_orm::EntityTrait;
 
 use crate::{
     config::Config,
@@ -16,6 +17,11 @@ pub mod streaming;
 
 pub async fn start_server(config: Config) {
     let state = init_state().await;
+    state
+        .create_channels_from_config(&config)
+        .await
+        .expect("Failed to create configured channels");
+
     let router = RpcRouter::new(state.clone(), move |writer| {
         ConnectionState(Arc::new(RwLock::new(ConnectionStateInner {
             user: None,
