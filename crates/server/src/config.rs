@@ -23,5 +23,5 @@ pub struct Config {
     pub text_channels: Vec<TextChannel>,
 
     /// List of voice channels that will be present on the server
-    pub voice_channels: Vec<TextChannel>,
+    pub voice_channels: Vec<VoiceChannel>,
 }
