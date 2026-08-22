@@ -283,7 +283,7 @@ pub fn init(notifier: CaptureNotifier) -> (AudioCapture, Playback, DeviceRegistr
     #[cfg(target_os = "linux")]
     let (capture, playback, device_registry) = linux::init(packet_input, packet_output, notifier);
     #[cfg(target_os = "windows")]
-    let (capture, playback, device_registry) = windows::init(packet_input, packet_output);
+    let (capture, playback, device_registry) = windows::init(packet_input, packet_output, notifier);
 
     (capture, playback, device_registry)
 }

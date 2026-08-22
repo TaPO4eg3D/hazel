@@ -16,14 +16,17 @@ use windows::Win32::{
 };
 use windows_core::HSTRING;
 
-use crate::audio::{DEFAULT_RATE, capture::Notifier, windows::try_get_device};
+use crate::{
+    CaptureNotifier,
+    audio::{DEFAULT_RATE, windows::try_get_device},
+};
 
 pub(crate) struct CaptureStream {
     pub(crate) event_handle: HANDLE,
     pub(crate) capture_producer: Option<HeapProd<f32>>,
     pub(crate) active_device: String,
 
-    capture_notifier: Notifier,
+    capture_notifier: CaptureNotifier,
 
     audio_client: IAudioClient,
     capture_client: IAudioCaptureClient,
@@ -59,7 +62,7 @@ fn try_activate_device(
 impl CaptureStream {
     pub(crate) fn new(
         capture_producer: HeapProd<f32>,
-        capture_notifier: Notifier,
+        capture_notifier: CaptureNotifier,
         preffered_device: Option<String>,
     ) -> windows::core::Result<Self> {
         unsafe {
@@ -160,11 +163,7 @@ impl CaptureStream {
 
                     if let Some(producer) = self.capture_producer.as_mut() {
                         producer.push_slice(samples);
-
-                        let mut ready = self.capture_notifier.0.lock().unwrap();
-                        *ready = true;
-
-                        self.capture_notifier.1.notify_all();
+                        self.capture_notifier.notify_audio();
                     }
                 }
 

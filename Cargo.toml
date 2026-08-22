@@ -39,19 +39,18 @@ reed-solomon-simd = "3.1.0"
 ffmpeg-next = "9.0.0"
 
 # UI
-gpui = { rev = "137f6c7395f3aeb57118eb6950d06c2a5f5475cf", git = "https://github.com/TaPO4eg3D/zed.git", features = [
+gpui = { branch = "linux-dma-buf-support", git = "https://github.com/TaPO4eg3D/zed.git", features = [
     "wayland",
     "windows-manifest",
     "x11",
 ] }
-gpui_platform = { rev = "137f6c7395f3aeb57118eb6950d06c2a5f5475cf", git = "https://github.com/TaPO4eg3D/zed.git", features=[
+gpui_platform = { branch = "linux-dma-buf-support", git = "https://github.com/TaPO4eg3D/zed.git", features=[
     "font-kit",
     "wayland",
     "x11"
 ] }
 
-gpui-component = { rev = "84ae29e0647486b7cc3f74f40cdc42aae0f62f7a", git = "https://github.com/TaPO4eg3D/gpui-component.git" }
-
+gpui-component = { git = "https://github.com/TaPO4eg3D/gpui-component.git" }
 
 # Quite a sophisticated profiler. Disabled by default (`enable` feature)
 [workspace.dependencies.tracy-client]
@@ -94,3 +93,7 @@ features = ["derive"]
 [profile.profiling]
 inherits = "release"
 debug = true
+
+# Fix building Opus crate on modern CMAKE
+[patch.crates-io]
+audiopus_sys = { git = 'https://github.com/sevenc-nanashi/audiopus_sys', rev = '00e9d16' }

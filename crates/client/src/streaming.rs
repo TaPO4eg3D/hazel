@@ -21,14 +21,20 @@ use capture::{
             PlaybackOutputState, PlaybackPacketCommand,
         },
     },
-    video::{
-        self,
-        linux::screengrab::{ActiveScreencast, ScreencastPreview},
-        playback::{DecodingWorkerCommand, VideoPlaybackController},
-    },
 };
+
+#[cfg(target_os = "linux")]
+use capture::video::{
+    self,
+    linux::screengrab::{ActiveScreencast, ScreencastPreview},
+    playback::{DecodingWorkerCommand, VideoPlaybackController},
+};
+
 use crossbeam::channel;
-use gpui::{App, AppContext, AsyncApp, DMABuffer, Global};
+use gpui::{App, AppContext, AsyncApp, Global};
+
+#[cfg(target_os = "linux")]
+use gpui::DMABuffer;
 
 use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
@@ -62,13 +68,16 @@ impl AudioStreamingSharedState {
     }
 }
 
+#[cfg(target_os = "linux")]
 type SharedStartedScreencast = Arc<Mutex<Option<ActiveScreencast>>>;
 
+#[cfg(target_os = "linux")]
 struct ScreenStreamingData {
     seq: u64,
     screencast: SharedStartedScreencast,
 }
 
+#[cfg(target_os = "linux")]
 impl ScreenStreamingData {
     fn new(screencast: SharedStartedScreencast) -> Self {
         Self { seq: 0, screencast }
@@ -137,6 +146,7 @@ struct PacketSender {
     notifier: CaptureNotifier,
 
     audio: AudioStreamingState,
+    #[cfg(target_os = "linux")]
     screen: ScreenStreamingData,
 
     /// Last time we've send a packet (of any kind)
@@ -151,7 +161,7 @@ impl PacketSender {
         addr: UDPAddr,
         socket: Arc<UdpSocket>,
         audio_state: AudioStreamingState,
-        screen_state: ScreenStreamingData,
+        #[cfg(target_os = "linux")] screen_state: ScreenStreamingData,
         notifier: CaptureNotifier,
     ) -> Self {
         Self {
@@ -161,6 +171,7 @@ impl PacketSender {
             notifier,
 
             audio: audio_state,
+            #[cfg(target_os = "linux")]
             screen: screen_state,
 
             addr,
@@ -269,6 +280,7 @@ impl PacketSender {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn try_send_frame(
         &mut self,
         user_id: UserId,
@@ -338,6 +350,7 @@ impl PacketSender {
         true
     }
 
+    #[cfg(target_os = "linux")]
     fn process_video_frame(&mut self) {
         let Some((user_id, addr)) = *self.addr.lock().unwrap() else {
             return;
@@ -358,6 +371,7 @@ impl PacketSender {
                     self.process_audio_samples();
                 }
 
+                #[cfg(target_os = "linux")]
                 if state.is_screen_ready {
                     self.process_video_frame();
                 }
@@ -401,7 +415,7 @@ impl PacketSender {
 
 fn spawn_receiver(
     socket: Arc<UdpSocket>,
-    mut video_controller: VideoPlaybackController,
+    #[cfg(target_os = "linux")] mut video_controller: VideoPlaybackController,
     mut audio_packet_input: AudioPlaybackPacketInput,
 ) {
     const BUF_SIZE: usize = 4096;
@@ -427,6 +441,7 @@ fn spawn_receiver(
                         }
                     }
                     UDPPayloadType::Video(chunk_bytes) => {
+                        #[cfg(target_os = "linux")]
                         video_controller.process_frame(UserId::new(user_id), chunk_bytes);
                     }
                     _ => todo!(),
@@ -442,11 +457,13 @@ pub struct StreamingState {
 
     capture_notifier: CaptureNotifier,
 
+    #[cfg(target_os = "linux")]
     active_screencast: SharedStartedScreencast,
 
     audio_capture: AudioCaptureController,
     audio_playback: AudioPlaybackController,
 
+    #[cfg(target_os = "linux")]
     video_command_tx: channel::Sender<DecodingWorkerCommand>,
 
     audio_packet_command_tx: channel::Sender<PlaybackPacketCommand>,
@@ -478,9 +495,12 @@ impl StreamingState {
 
         let audio_capture_controller = audio_capture.get_controller();
 
+        #[cfg(target_os = "linux")]
         let active_screencast = Arc::new(Mutex::new(None));
 
+        #[cfg(target_os = "linux")]
         let video_playback = video::playback::init();
+        #[cfg(target_os = "linux")]
         let video_command_tx = video_playback.get_command_tx();
 
         thread::Builder::new()
@@ -489,6 +509,7 @@ impl StreamingState {
                 let addr = stream_addr.clone();
                 let socket = socket.clone();
                 let shared = audio_shared_state.clone();
+                #[cfg(target_os = "linux")]
                 let active_screencast = active_screencast.clone();
                 let capture_notifier = capture_notifier.clone();
 
@@ -497,6 +518,7 @@ impl StreamingState {
                         addr,
                         socket,
                         AudioStreamingState::new(shared, audio_capture),
+                        #[cfg(target_os = "linux")]
                         ScreenStreamingData::new(active_screencast),
                         capture_notifier,
                     );
@@ -512,18 +534,23 @@ impl StreamingState {
                 let socket = socket.clone();
 
                 move || {
-                    spawn_receiver(socket, video_playback, audio_packet_input);
+                    cfg_select! {
+                        target_os = "linux" => spawn_receiver(socket, video_playback, audio_packet_input),
+                        _ => spawn_receiver(socket, audio_packet_input),
+                    }
                 }
             })
             .unwrap();
 
         StreamingState {
+            #[cfg(target_os = "linux")]
             active_screencast,
             capture_notifier,
             audio_capture: audio_capture_controller,
             audio_playback: audio_playback.controller,
             audio_packet_command_tx: audio_packet_tx,
             audio_playback_output_state: audio_packet_output_state,
+            #[cfg(target_os = "linux")]
             video_command_tx,
             audio_shared_state,
             stream_addr,
@@ -580,6 +607,7 @@ impl StreamingState {
         *state = None;
     }
 
+    #[cfg(target_os = "linux")]
     pub async fn start_screencast(&self) -> Option<ScreencastPreview> {
         let notifier = self.capture_notifier.clone();
 
@@ -593,14 +621,17 @@ impl StreamingState {
         Some(preview)
     }
 
+    #[cfg(target_os = "linux")]
     pub async fn start_screencast_from_file(&self) {}
 
+    #[cfg(target_os = "linux")]
     pub async fn stop_screencast(&self) {
         if let Some(cast) = self.active_screencast.lock().unwrap().take() {
             cast.close();
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub fn register_video_stream(
         &self,
         user_id: UserId,

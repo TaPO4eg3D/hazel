@@ -830,8 +830,7 @@ dependencies = [
 [[package]]
 name = "audiopus_sys"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62314a1546a2064e033665d658e88c620a62904be945f8147e6b16c3db9f8651"
+source = "git+https://github.com/sevenc-nanashi/audiopus_sys?rev=00e9d16#00e9d168493710193ee133bc7fbb50715a1f6e61"
 dependencies = [
  "cmake",
  "log",
@@ -1622,7 +1621,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "gpui_util",
  "indexmap 2.14.0",
@@ -2270,7 +2269,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3267,7 +3266,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3339,7 +3338,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.5.2"
-source = "git+https://github.com/TaPO4eg3D/gpui-component.git?rev=84ae29e0647486b7cc3f74f40cdc42aae0f62f7a#84ae29e0647486b7cc3f74f40cdc42aae0f62f7a"
+source = "git+https://github.com/TaPO4eg3D/gpui-component.git#2c133e230547ac0f4f8f385895d7a59f15194f5d"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -3371,7 +3370,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+https://github.com/TaPO4eg3D/gpui-component.git?rev=84ae29e0647486b7cc3f74f40cdc42aae0f62f7a#84ae29e0647486b7cc3f74f40cdc42aae0f62f7a"
+source = "git+https://github.com/TaPO4eg3D/gpui-component.git#2c133e230547ac0f4f8f385895d7a59f15194f5d"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3416,7 +3415,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+https://github.com/TaPO4eg3D/gpui-component.git?rev=84ae29e0647486b7cc3f74f40cdc42aae0f62f7a#84ae29e0647486b7cc3f74f40cdc42aae0f62f7a"
+source = "git+https://github.com/TaPO4eg3D/gpui-component.git#2c133e230547ac0f4f8f385895d7a59f15194f5d"
 dependencies = [
  "anyhow",
  "gpui",
@@ -3430,7 +3429,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+https://github.com/TaPO4eg3D/gpui-component.git?rev=84ae29e0647486b7cc3f74f40cdc42aae0f62f7a#84ae29e0647486b7cc3f74f40cdc42aae0f62f7a"
+source = "git+https://github.com/TaPO4eg3D/gpui-component.git#2c133e230547ac0f4f8f385895d7a59f15194f5d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3440,7 +3439,7 @@ dependencies = [
 [[package]]
 name = "gpui_apple"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "block",
@@ -3463,7 +3462,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -3509,7 +3508,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3555,7 +3554,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3566,7 +3565,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -3579,7 +3578,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "schemars",
  "serde",
@@ -3589,7 +3588,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "log",
@@ -3599,7 +3598,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3623,7 +3622,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "ash",
@@ -3652,7 +3651,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3954,7 +3953,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -4997,7 +4996,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -5962,7 +5961,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "collections",
  "serde",
@@ -6797,7 +6796,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "derive_refineable",
 ]
@@ -7306,7 +7305,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "async-task",
  "backtrace",
@@ -8308,7 +8307,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "heapless",
  "log",
@@ -9398,7 +9397,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "perf",
  "quote",
@@ -11089,7 +11088,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -11106,7 +11105,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -11117,7 +11116,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/TaPO4eg3D/zed.git?rev=137f6c7395f3aeb57118eb6950d06c2a5f5475cf#137f6c7395f3aeb57118eb6950d06c2a5f5475cf"
+source = "git+https://github.com/TaPO4eg3D/zed.git?branch=linux-dma-buf-support#85d818317e06816ad9b65abfbe7596ac21152fa2"
 
 [[package]]
 name = "zune-core"

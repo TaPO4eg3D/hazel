@@ -27,11 +27,16 @@ use windows::{
 };
 use windows_core::{HSTRING, Interface as _, PWSTR};
 
-use crate::audio::{
-    AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
-    capture::Capture,
-    playback::{Playback, PlaybackController, PlaybackPacketInput, PlaybackPacketOutput},
-    windows::{capture::CaptureStream, playback::PlaybackStream},
+use crate::{
+    CaptureNotifier,
+    audio::{
+        AudioDevice, AudioLoopCommand, DEFAULT_RATE, DeviceRegistry,
+        capture::AudioCapture,
+        playback::{
+            AudioPlaybackController, AudioPlaybackPacketInput, Playback, PlaybackPacketOutput,
+        },
+        windows::{capture::CaptureStream, playback::PlaybackStream},
+    },
 };
 
 pub mod capture;
@@ -287,21 +292,20 @@ fn chnannel<T>() -> (EventHandle, ChannelState<T>, CommandSender<T>) {
 }
 
 pub(crate) fn init(
-    packet_input: PlaybackPacketInput,
+    packet_input: AudioPlaybackPacketInput,
     packet_output: PlaybackPacketOutput,
-) -> (Capture, Playback, DeviceRegistry) {
+    capture_notifier: CaptureNotifier,
+) -> (AudioCapture, Playback, DeviceRegistry) {
     // We capture in mono and there's no point to store
     // more than 60ms
     let ring = HeapRb::<f32>::new(((DEFAULT_RATE / 1000) * 60) as usize);
     let (capture_producer, capture_consumer) = ring.split();
 
     let (command_event, command_state, sender) = chnannel::<AudioLoopCommand>();
-
-    let capture_notifier = Arc::new((Mutex::new(false), Condvar::new()));
-    let capture = Capture::new(capture_notifier.clone(), capture_consumer, sender.clone());
+    let capture = AudioCapture::new(capture_consumer, sender.clone());
 
     let playback = Playback {
-        controller: PlaybackController::new(sender.clone()),
+        controller: AudioPlaybackController::new(sender.clone()),
         packet_input: Some(packet_input),
     };
 
