@@ -459,6 +459,7 @@ pub struct StreamingState {
 }
 
 impl StreamingState {
+    #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
         let stream_addr: UDPAddr = Arc::new(Mutex::new(None));
 
@@ -591,6 +592,8 @@ impl StreamingState {
 
         Some(preview)
     }
+
+    pub async fn start_screencast_from_file(&self) {}
 
     pub async fn stop_screencast(&self) {
         if let Some(cast) = self.active_screencast.lock().unwrap().take() {

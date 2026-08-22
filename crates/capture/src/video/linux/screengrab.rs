@@ -543,7 +543,6 @@ impl FramePool {
     }
 }
 
-#[allow(dead_code)]
 pub struct ActiveScreencast {
     pw_tx: pipewire::channel::Sender<()>,
     pub frame_pool: FramePool,

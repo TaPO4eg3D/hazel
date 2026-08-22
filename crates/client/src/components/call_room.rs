@@ -13,7 +13,7 @@ use gpui_component::{
 
 use crate::{assets::IconName, components::connection_state::ServerConnectionState};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamingQuality {
     LowLatency,
     HighQuality,

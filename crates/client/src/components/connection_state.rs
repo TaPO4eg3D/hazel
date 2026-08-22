@@ -121,14 +121,15 @@ impl VoiceChannelMember {
             let playback_state = playback_state.clone();
 
             move |_, _, ev, _| {
-                let SliderEvent::Change(value) = ev;
-                let SliderValue::Single(value) = value else {
-                    return;
+                let value = match ev {
+                    SliderEvent::Change(SliderValue::Single(value)) => *value,
+                    SliderEvent::Release(SliderValue::Single(value)) => *value,
+                    _ => return,
                 };
 
                 playback_state
                     .volume
-                    .store((*value / 100.).powf(3.), Ordering::Relaxed);
+                    .store((value / 100.).powf(3.), Ordering::Relaxed);
             }
         });
 
@@ -466,7 +467,7 @@ impl ServerConnectionState {
                 return;
             };
 
-            let _ = LeaveVoiceChannel::execute(&connection, &Empty {}).await;
+            let _ = LeaveVoiceChannel::execute(&connection, &Empty).await;
         })
         .detach();
     }
@@ -476,7 +477,7 @@ impl ServerConnectionState {
             return;
         };
 
-        let response = GetVoiceChannels::execute(&connection, &Empty {}).await;
+        let response = GetVoiceChannels::execute(&connection, &Empty).await;
 
         let Ok(channels) = response else {
             // TODO: Send notification with an error
@@ -756,10 +757,7 @@ impl ServerConnectionState {
         })
         .ok();
 
-        if StopScreenCast::execute(&connection, &Empty::default())
-            .await
-            .is_err()
-        {
+        if StopScreenCast::execute(&connection, &Empty).await.is_err() {
             cx.window_handle()
                 .update(cx, |_, window, cx| {
                     window.push_notification(

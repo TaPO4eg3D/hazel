@@ -1,13 +1,15 @@
-use std::{net::SocketAddr, os::fd::OwnedFd, path::Path, str::FromStr as _};
+use std::{net::SocketAddr, str::FromStr as _};
 
+use capture::video::linux::file::FileStreamer;
 use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, InteractiveElement as _, ParentElement as _,
-    Render, Styled as _, Window, div, prelude::FluentBuilder, surface,
+    App, AppContext, AsyncApp, Entity, ParentElement as _, Render, Styled as _, Window, div,
+    prelude::FluentBuilder, surface,
 };
 use gpui_component::StyledExt as _;
 use rpc::{
     client::ClientConnection,
+    common::Empty,
     models::{
         auth::{
             GetSessionKey, GetSessionKeyPayload, GetSessionKeyResponse, Login, LoginPayload,
@@ -15,10 +17,9 @@ use rpc::{
         },
         common::RPCMethod as _,
         markers::{Id, UserId},
+        voice_channels::{GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload},
     },
 };
-
-use crate::screencast::FileStreamer;
 
 pub struct ConnectionState {
     pub rpc: ClientConnection,
@@ -70,11 +71,23 @@ impl ConnectionState {
         }
     }
 
-    async fn join_voice_channel() {}
+    pub async fn join_voice_channel(&self) {
+        let channels = GetVoiceChannels::execute(&self.rpc, &Empty).await.unwrap();
+        let channel = channels.first().unwrap();
 
-    async fn start_screencast() {}
+        JoinVoiceChannel::execute(
+            &self.rpc,
+            &JoinVoiceChannelPayload {
+                channel_id: channel.id,
+            },
+        )
+        .await
+        .unwrap();
+    }
 
-    async fn join_screencast(id: UserId) {}
+    pub async fn start_screencast(&self) {}
+
+    pub async fn join_screencast(id: UserId) {}
 }
 
 pub struct ScreenCastView {

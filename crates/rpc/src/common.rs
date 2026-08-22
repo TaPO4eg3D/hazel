@@ -22,7 +22,7 @@ pub enum RpcError {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Default)]
-pub struct Empty {}
+pub struct Empty;
 
 pub async fn parse_rpc_method<T: AsyncReadExt + Unpin>(
     buf: &mut BytesMut,

@@ -5,9 +5,9 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, Disableable, Icon, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
-    divider::Divider,
     input::{Input, InputEvent, InputState},
     label::Label,
+    separator::Separator,
 };
 use rpc::{
     client::ClientConnection,
@@ -297,7 +297,7 @@ impl Render for LoginScreen {
                                     .child(Label::new("Password").text_xs())
                                     .child(self.create_input(&self.password)),
                             )
-                            .child(Divider::horizontal().mt_4().mb_4())
+                            .child(Separator::horizontal().mt_4().mb_4())
                             .child(
                                 div()
                                     .mb_2()

@@ -6,9 +6,9 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, ElementExt, Icon, StyledExt,
     button::{Button, ButtonVariants},
-    divider::Divider,
     label::Label,
     popover::Popover,
+    separator::Separator,
     slider::Slider,
 };
 
@@ -282,7 +282,7 @@ impl RenderOnce for NoiseReductionSelector {
                                             });
                                         })
                                 }))
-                                .child(Divider::horizontal())
+                                .child(Separator::horizontal())
                                 .child(
                                     div()
                                         .v_flex()
@@ -405,7 +405,7 @@ impl RenderOnce for AudioDeviceControl {
                             },
                         ),
                     )
-                    .flex_grow(),
+                    .flex_grow_1(),
             )
             .child(
                 Popover::new("popover")
@@ -512,7 +512,7 @@ impl RenderOnce for AudioDeviceControl {
                                 .p_2()
                                 .text_sm(),
                             )
-                            .child(Divider::horizontal())
+                            .child(Separator::horizontal())
                             .child(
                                 div()
                                     .id("devices-list")
@@ -522,7 +522,7 @@ impl RenderOnce for AudioDeviceControl {
                                     .p_2()
                                     .children(available_devices),
                             )
-                            .child(Divider::horizontal())
+                            .child(Separator::horizontal())
                             .when(
                                 matches!(self.device_type, AudioDeviceType::Capture),
                                 |this| {
@@ -530,7 +530,7 @@ impl RenderOnce for AudioDeviceControl {
                                         self.connection_state.clone(),
                                         capture_state.clone(),
                                     )))
-                                    .child(Divider::horizontal())
+                                    .child(Separator::horizontal())
                                 },
                             )
                             .child(
@@ -567,6 +567,6 @@ impl RenderOnce for AudioDeviceControl {
                             )
                     }),
             )
-            .flex_grow()
+            .flex_grow_1()
     }
 }

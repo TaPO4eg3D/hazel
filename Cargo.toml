@@ -39,18 +39,18 @@ reed-solomon-simd = "3.1.0"
 ffmpeg-next = "9.0.0"
 
 # UI
-gpui = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui", features = [
+gpui = { rev = "137f6c7395f3aeb57118eb6950d06c2a5f5475cf", git = "https://github.com/TaPO4eg3D/zed.git", features = [
     "wayland",
     "windows-manifest",
     "x11",
 ] }
-gpui_platform = { path = "/home/tapo4eg3d/Projects/zed/crates/gpui_platform", features=[
+gpui_platform = { rev = "137f6c7395f3aeb57118eb6950d06c2a5f5475cf", git = "https://github.com/TaPO4eg3D/zed.git", features=[
     "font-kit",
     "wayland",
     "x11"
 ] }
 
-gpui-component = { path = "/home/tapo4eg3d/AUR/gpui-component/crates/ui" }
+gpui-component = { rev = "84ae29e0647486b7cc3f74f40cdc42aae0f62f7a", git = "https://github.com/TaPO4eg3D/gpui-component.git" }
 
 
 # Quite a sophisticated profiler. Disabled by default (`enable` feature)
