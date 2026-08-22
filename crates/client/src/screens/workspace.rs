@@ -4,8 +4,8 @@ use gpui::{
 };
 use gpui_component::{
     StyledExt,
-    divider::Divider,
     resizable::{h_resizable, resizable_panel},
+    separator::Separator,
 };
 use rpc::{client::ClientConnection, models::markers::UserId};
 
@@ -78,12 +78,12 @@ impl Render for WorkspaceScreen {
                         .size_full()
                         .v_flex()
                         .child(TextChannelsComponent::new(&self.text_card, &self.chat))
-                        .child(Divider::horizontal().mx_3())
+                        .child(Separator::horizontal().mx_3())
                         .child(VoiceChannelsComponent::new(
                             &self.voice_card,
                             &self.streaming,
                         ))
-                        .child(Divider::horizontal().mx_3().mt_auto())
+                        .child(Separator::horizontal().mx_3().mt_auto())
                         .child(ControlPanel::new(&self.streaming)),
                 ),
             )

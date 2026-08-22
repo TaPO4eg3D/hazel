@@ -6,7 +6,7 @@ use gpui::{
     ParentElement, Pixels, Point, RenderOnce, SharedString, StatefulInteractiveElement,
     StyleRefinement, Styled, Window, anchored, deferred, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, label::Label};
+use gpui_component::{ActiveTheme, Icon, Sizable, Size, StyledExt, ThemeStyled as _, label::Label};
 
 use crate::assets::IconName;
 
