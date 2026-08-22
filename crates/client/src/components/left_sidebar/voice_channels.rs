@@ -82,7 +82,10 @@ impl RenderOnce for VoiceMemberComponent {
             (
                 !state.is_capture_enabled,
                 !state.is_playback_enabled,
-                state.preview_frame.is_some(),
+                cfg_select! {
+                    target_os = "linux" => state.preview_frame.is_some(),
+                    _ => false,
+                },
             )
         };
 
@@ -195,6 +198,7 @@ impl RenderOnce for VoiceMemberComponent {
                                         .on_click(window.listener_for(
                                             &self.connection_state,
                                             move |this, _, window, cx| {
+                                                #[cfg(target_os = "linux")]
                                                 this.join_screencast(user_id, window, cx);
                                             },
                                         )),

@@ -5,14 +5,19 @@ use std::{
 };
 
 use atomic_enum::atomic_enum;
-use capture::{
-    audio::{AudioDevice, playback::AudioStreamingClientSharedState},
-    video::linux::screengrab::ScreencastPreview,
-};
+use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
+
+#[cfg(target_os = "linux")]
+use capture::video::linux::screengrab::ScreencastPreview;
+
 use gpui::{
-    AppContext, AsyncApp, AsyncWindowContext, Context, DMABuffer, Entity, SharedString,
-    Subscription, Task, WeakEntity, Window,
+    AppContext, AsyncApp, AsyncWindowContext, Context, Entity, SharedString, Subscription, Task,
+    WeakEntity, Window,
 };
+
+#[cfg(target_os = "linux")]
+use gpui::DMABuffer;
+
 use gpui_component::{
     WindowExt,
     notification::Notification,
@@ -208,7 +213,9 @@ pub struct ServerConnectionState {
     screencast_preview_task: Option<Task<()>>,
     watching_frame_task: Option<Task<()>>,
 
+    #[cfg(target_os = "linux")]
     pub preview_frame: Option<DMABuffer>,
+    #[cfg(target_os = "linux")]
     pub watching_frame: Option<DMABuffer>,
 }
 
@@ -228,7 +235,9 @@ impl ServerConnectionState {
             screencast_preview_task: None,
             watching_frame_task: None,
 
+            #[cfg(target_os = "linux")]
             preview_frame: None,
+            #[cfg(target_os = "linux")]
             watching_frame: None,
 
             voice_channels: vec![],
@@ -333,7 +342,10 @@ impl ServerConnectionState {
                     (
                         !this.is_playback_enabled,
                         !this.is_capture_enabled,
-                        this.preview_frame.is_some(),
+                        cfg_select! {
+                            target_os = "linux" => this.preview_frame.is_some(),
+                            _ => false
+                        },
                     )
                 })
                 .ok()
@@ -682,6 +694,7 @@ impl ServerConnectionState {
         .detach();
     }
 
+    #[cfg(target_os = "linux")]
     pub fn start_screencast(&self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async |this, cx| {
             let Some((connection, streaming)) = this
@@ -733,6 +746,7 @@ impl ServerConnectionState {
         .detach();
     }
 
+    #[cfg(target_os = "linux")]
     async fn stop_screencast_inner(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext) {
         let is_streaming = this
             .read_with(cx, |this, _cx| this.screencast_preview_task.is_some())
@@ -771,6 +785,7 @@ impl ServerConnectionState {
         };
     }
 
+    #[cfg(target_os = "linux")]
     pub fn stop_screencast(&self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async |this, cx| {
             Self::stop_screencast_inner(&this, cx).await
@@ -778,6 +793,7 @@ impl ServerConnectionState {
         .detach();
     }
 
+    #[cfg(target_os = "linux")]
     pub fn set_screencast_preview(&mut self, preview: ScreencastPreview, cx: &mut Context<Self>) {
         self.screencast_preview_task = Some(cx.spawn(async move |this, cx| {
             while let Some(frame) = preview.recv().await {
@@ -792,6 +808,7 @@ impl ServerConnectionState {
         }));
     }
 
+    #[cfg(target_os = "linux")]
     pub fn join_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             Self::stop_screencast_inner(&this, cx).await;
@@ -847,6 +864,7 @@ impl ServerConnectionState {
         .detach();
     }
 
+    #[cfg(target_os = "linux")]
     pub fn leave_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
@@ -872,6 +890,7 @@ impl ServerConnectionState {
         .detach();
     }
 
+    #[cfg(target_os = "linux")]
     pub fn is_stream_playing(&self) -> bool {
         self.screencast_preview_task.is_some() || self.watching_frame_task.is_some()
     }

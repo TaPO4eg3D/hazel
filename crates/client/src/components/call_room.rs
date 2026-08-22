@@ -2,8 +2,12 @@ use std::rc::Rc;
 
 use gpui::{
     App, AppContext, ClickEvent, Entity, IntoElement, ParentElement, RenderOnce, SharedString,
-    Styled, Window, div, prelude::FluentBuilder, surface,
+    Styled, Window, div, prelude::FluentBuilder,
 };
+
+#[cfg(target_os = "linux")]
+use gpui::surface;
+
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, Size, StyledExt as _,
     button::{Button, ButtonVariants},
@@ -93,6 +97,7 @@ impl RenderOnce for CallRoom {
                                 });
 
                                 if config.is_some() {
+                                    #[cfg(target_os = "linux")]
                                     connection_state.start_screencast(window, cx);
                                 }
                             },
@@ -221,13 +226,22 @@ impl RenderOnce for ScreenSpace {
                 },
                 |this| {
                     // When we do not display configuration
-                    this.when_some(state.preview_frame.as_ref(), |this, frame| {
-                        this.child(surface(frame.clone()).size_full())
-                    })
-                    .when_some(state.watching_frame.as_ref(), |this, frame| {
-                        this.child(surface(frame.clone()).size_full())
-                    })
-                    .when(!state.is_stream_playing(), |this| {
+                    #[cfg(target_os = "linux")]
+                    let this = {
+                        this.when_some(state.preview_frame.as_ref(), |this, frame| {
+                            this.child(surface(frame.clone()).size_full())
+                        })
+                        .when_some(state.watching_frame.as_ref(), |this, frame| {
+                            this.child(surface(frame.clone()).size_full())
+                        })
+                    };
+
+                    let is_stream_playing = cfg_select! {
+                        target_os = "linux" => state.is_stream_playing(),
+                        _ => false,
+                    };
+
+                    this.when(!is_stream_playing, |this| {
                         this.child(
                             div()
                                 .v_flex()
@@ -306,7 +320,10 @@ impl RenderOnce for ControlPanel {
         let (can_stream, is_streaming) = self.streaming.read_with(cx, |state, _| {
             (
                 state.get_active_channel().is_some(),
-                state.preview_frame.is_some(),
+                cfg_select! {
+                    target_os = "linux" => state.preview_frame.is_some(),
+                    _ => false,
+                },
             )
         });
 
@@ -331,6 +348,7 @@ impl RenderOnce for ControlPanel {
                             .on_click(window.listener_for(
                                 &self.streaming,
                                 |this, _, window, cx| {
+                                    #[cfg(target_os = "linux")]
                                     this.stop_screencast(window, cx);
                                 },
                             )),
