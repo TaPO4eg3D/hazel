@@ -244,7 +244,7 @@ pub(crate) struct BufferFilterBuilder {
     params: *mut AVBufferSrcParameters,
 }
 
-impl<'a> BufferFilterBuilder {
+impl BufferFilterBuilder {
     pub(crate) fn new(filter: Filter) -> Option<Self> {
         unsafe {
             let params = av_buffersrc_parameters_alloc();
@@ -544,15 +544,8 @@ pub struct DrmInfo {
     pub plane_stride: i32,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DrmPlane {
-    pub offset: isize,
-    pub stride: isize,
-}
-
 pub struct DrmFrame {
     pub fd: i64,
-    pub size: usize,
 
     _av_desc: *mut AVDRMFrameDescriptor,
     av_frame: *mut AVFrame,
@@ -614,7 +607,6 @@ impl DrmFrame {
 
             Self {
                 fd,
-                size,
                 _av_desc: desc,
                 av_frame: drm_frame,
             }

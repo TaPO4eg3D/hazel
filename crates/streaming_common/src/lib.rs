@@ -184,7 +184,7 @@ impl<'a> IntoUDPPayload for BorrowedEncodedVideoFrameChunk<'a> {
         self.header.to_bytes(buf);
 
         buf.put_u32_le(self.data.len() as u32);
-        buf.put(&self.data[..]);
+        buf.put(self.data);
     }
 }
 

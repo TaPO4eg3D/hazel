@@ -17,7 +17,7 @@ use rpc::{
             LoginError, LoginPayload,
         },
         common::{APIError, RPCMethod},
-        markers::{Id, UserId},
+        markers::UserId,
     },
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};

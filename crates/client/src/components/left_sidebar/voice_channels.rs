@@ -115,7 +115,7 @@ impl RenderOnce for VoiceMemberComponent {
         let is_talking = self.member.is_talking && (!is_mic_off && !is_sound_off);
 
         let is_selected = window.use_keyed_state(
-            format!("voice-member-{}-selected", self.member.id.value),
+            ElementId::named_usize("voice-member", self.member.id.value as usize),
             cx,
             |_, _| false,
         );
@@ -181,32 +181,35 @@ impl RenderOnce for VoiceMemberComponent {
 
         if !is_me {
             element
-                .context_popover(format!("context-voice-{}", self.member.id.value), {
-                    let user_id = self.member.id;
-                    let output_volume = self.member.output_volume.clone();
+                .context_popover(
+                    ElementId::named_usize("context-voice", self.member.id.value as usize),
+                    {
+                        let user_id = self.member.id;
+                        let output_volume = self.member.output_volume.clone();
 
-                    move |this, window, _cx| {
-                        this.v_flex()
-                            .w_48()
-                            .p_2()
-                            .gap_2()
-                            .when(self.member.state.is_streaming, |this| {
-                                this.child(
-                                    CtxPopoverButton::new("watch-stream")
-                                        .label("Watch stream")
-                                        .icon(IconName::ScreenShare)
-                                        .on_click(window.listener_for(
-                                            &self.connection_state,
-                                            move |this, _, window, cx| {
-                                                #[cfg(target_os = "linux")]
-                                                this.join_screencast(user_id, window, cx);
-                                            },
-                                        )),
-                                )
-                            })
-                            .child(VolumeSlider::new(output_volume.clone()))
-                    }
-                })
+                        move |this, window, _cx| {
+                            this.v_flex()
+                                .w_48()
+                                .p_2()
+                                .gap_2()
+                                .when(self.member.state.is_streaming, |this| {
+                                    this.child(
+                                        CtxPopoverButton::new("watch-stream")
+                                            .label("Watch stream")
+                                            .icon(IconName::ScreenShare)
+                                            .on_click(window.listener_for(
+                                                &self.connection_state,
+                                                move |this, _, window, cx| {
+                                                    #[cfg(target_os = "linux")]
+                                                    this.join_screencast(user_id, window, cx);
+                                                },
+                                            )),
+                                    )
+                                })
+                                .child(VolumeSlider::new(output_volume.clone()))
+                        }
+                    },
+                )
                 .on_toggle(move |&opened, _, cx| {
                     is_selected.update(cx, |this, _| {
                         *this = opened;

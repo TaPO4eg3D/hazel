@@ -31,6 +31,7 @@ pub enum WaitResult {
 }
 
 impl CaptureNotifier {
+    #[expect(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             inner: Arc::new(CaptureNotifierInner::default()),

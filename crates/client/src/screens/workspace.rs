@@ -1,5 +1,5 @@
 use gpui::{
-    AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled, Task,
+    AppContext, Context, Entity, IntoElement as _, ParentElement as _, Render, Styled,
     Window, div, px,
 };
 use gpui_component::{

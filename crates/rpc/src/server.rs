@@ -175,8 +175,7 @@ where
     loop {
         if buf.is_empty() {
             match reader.read_buf(&mut buf).await {
-                Err(_) => return Ok(conn_state),
-                Ok(bytes_read) if bytes_read == 0 => return Ok(conn_state),
+                Ok(0) | Err(_) => return Ok(conn_state),
                 _ => {}
             }
         }

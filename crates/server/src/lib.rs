@@ -1,7 +1,6 @@
 use std::sync::{Arc, RwLock};
 
 use rpc::server::{RpcRouter, serve};
-use sea_orm::EntityTrait;
 
 use crate::{
     config::Config,

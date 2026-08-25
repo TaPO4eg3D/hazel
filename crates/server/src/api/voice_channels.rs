@@ -302,7 +302,7 @@ impl RPCHandle for StartScreenCast {
                 }
 
                 VoiceChannelUpdate {
-                    channel_id: channel_id,
+                    channel_id,
                     message: VoiceChannelUpdateMessage::UserStateUpdated((host_id, host_state)),
                 }
                 .notify(&client.writer)
@@ -373,7 +373,7 @@ impl RPCHandle for StopScreenCast {
                 }
 
                 VoiceChannelUpdate {
-                    channel_id: channel_id,
+                    channel_id,
                     message: VoiceChannelUpdateMessage::UserStateUpdated((
                         host_id,
                         host_state.state,
