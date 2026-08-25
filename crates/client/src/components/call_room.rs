@@ -118,12 +118,14 @@ impl RenderOnce for CallRoom {
     }
 }
 
+type OnConfigCallback = Rc<dyn Fn(&Option<StreamingQuality>, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 struct ScreenSpace {
     streaming: Entity<ServerConnectionState>,
     show_configuration: bool,
     select_state: Entity<SelectState<Vec<StreamingQuality>>>,
-    on_config: Option<Rc<dyn Fn(&Option<StreamingQuality>, &mut Window, &mut App)>>,
+    on_config: Option<OnConfigCallback>,
 }
 
 impl ScreenSpace {
@@ -288,11 +290,13 @@ impl RenderOnce for ScreenSpace {
     }
 }
 
+type OnClickCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 struct ControlPanel {
     streaming: Entity<ServerConnectionState>,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    on_click: Option<OnClickCallback>,
 }
 
 impl ControlPanel {

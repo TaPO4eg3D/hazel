@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Weak,
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,

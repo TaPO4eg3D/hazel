@@ -31,7 +31,6 @@ use capture::video::{
 };
 
 use crossbeam::channel;
-use gpui::{App, AppContext, AsyncApp, Global};
 
 #[cfg(target_os = "linux")]
 use gpui::DMABuffer;
@@ -112,6 +111,7 @@ impl AudioStreamingState {
     }
 }
 
+#[expect(clippy::large_enum_variant)]
 enum DenoiserState {
     Disabled,
     RNNoise(RNNoiseState),
@@ -303,9 +303,8 @@ impl PacketSender {
 
         let data_size = ready_frame.len();
         let padding = (data_shards_len * shard_len) - ready_frame.len();
-        for _ in 0..padding {
-            ready_frame.push(0);
-        }
+
+        ready_frame.extend(std::iter::repeat_n(0, padding));
 
         // TODO: Fork this library? It allocates memory on every invocation,
         // this kinda defeats the purpose of the dedicated frame pool

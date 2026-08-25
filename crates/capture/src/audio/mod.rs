@@ -2,8 +2,6 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
     task::{Poll, Waker},
-    thread::{self},
-    time::Duration,
 };
 
 use crate::audio::playback::{Playback, init_packet_processing};

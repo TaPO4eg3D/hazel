@@ -14,7 +14,7 @@ use rpc::{
     models::{
         auth::{Login, LoginPayload, SessionKey},
         common::RPCMethod,
-        markers::{Id, UserId},
+        markers::UserId,
     },
 };
 
@@ -24,7 +24,6 @@ use client::{
     db::{self, DBConnectionManager},
     gpui_tokio::{self, Tokio},
     screens::{login::LoginScreen, workspace::WorkspaceScreen},
-    streaming,
 };
 
 pub struct MainWindow {

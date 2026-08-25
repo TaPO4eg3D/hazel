@@ -19,6 +19,7 @@ impl DbErrReponseCompat for DbErr {
 }
 
 pub trait RPCHandle: RPCMethod {
+    #[expect(async_fn_in_trait)]
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
@@ -31,6 +32,7 @@ pub trait RPCHandle: RPCMethod {
             .expect("Safe because RPCHandle ensure auth")
     }
 
+    #[expect(async_fn_in_trait)]
     async fn build(
         app_state: AppState,
         connection_state: ConnectionState,
@@ -49,12 +51,14 @@ pub trait RPCHandle: RPCMethod {
 }
 
 pub trait NoAuthRPCHandle: RPCMethod {
+    #[expect(async_fn_in_trait)]
     async fn handle(
         app_state: AppState,
         connection_state: ConnectionState,
         req: Self::Request,
     ) -> APIResult<Self::Response, Self::ResponseError>;
 
+    #[expect(async_fn_in_trait)]
     async fn build(
         app_state: AppState,
         connection_state: ConnectionState,

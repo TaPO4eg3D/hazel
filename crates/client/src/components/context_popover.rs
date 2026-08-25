@@ -14,7 +14,7 @@ use crate::assets::IconName;
 pub trait ContextPopover: ParentElement + Styled {
     /// Add a context menu to the element.
     ///
-    /// This will changed the element to be `relative` positioned, and add a child `ContextMenu` element.
+    /// This will change the element to be `relative` positioned, and add a child `ContextMenu` element.
     /// Because the `ContextMenu` element is positioned `absolute`, it will not affect the layout of the parent element.
     fn context_popover(
         self,
@@ -75,12 +75,15 @@ impl RenderOnce for ContextMenuItem {
 
 impl<E: ParentElement + Styled> ContextPopover for E {}
 
+type OnToggleCallback = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
+type ContentBuilderFn = Rc<dyn Fn(ContextMenuItem, &mut Window, &mut App) -> ContextMenuItem>;
+
 /// A context menu that can be shown on right-click.
 pub struct ContextMenu<E: ParentElement + Styled + Sized> {
     id: ElementId,
     element: Option<E>,
-    on_toggle: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
-    content: Option<Rc<dyn Fn(ContextMenuItem, &mut Window, &mut App) -> ContextMenuItem>>,
+    on_toggle: Option<OnToggleCallback>,
+    content: Option<ContentBuilderFn>,
     // This is not in use, just for style refinement forwarding.
     _ignore_style: StyleRefinement,
     anchor: Anchor,
@@ -344,12 +347,14 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for ContextMenu<
     }
 }
 
+type OnClickCallback = Box<dyn Fn(&(), &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct CtxPopoverButton {
     id: ElementId,
     label: Option<SharedString>,
     icon: Option<IconName>,
-    on_click: Option<Box<dyn Fn(&(), &mut Window, &mut App)>>,
+    on_click: Option<OnClickCallback>,
 }
 
 impl CtxPopoverButton {

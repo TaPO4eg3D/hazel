@@ -468,7 +468,7 @@ impl RenderOnce for AudioDeviceControl {
                                     .when(!device.is_active, |this| {
                                         let streaming = streaming.clone();
 
-                                        this.on_click(move |_, _, cx| {
+                                        this.on_click(move |_, _, _cx| {
                                             let registry = streaming.get_device_registry();
 
                                             match self.device_type {
