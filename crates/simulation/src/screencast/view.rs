@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, str::FromStr as _};
 
-use capture::video::linux::file::FileStreamer;
 use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
     App, AppContext, AsyncApp, Entity, ParentElement as _, Render, Styled as _, Window, div,
@@ -16,7 +15,7 @@ use rpc::{
             SessionKey,
         },
         common::RPCMethod as _,
-        markers::{Id, UserId},
+        markers::{Id, UserId, VoiceChannelId},
         voice_channels::{GetVoiceChannels, JoinVoiceChannel, JoinVoiceChannelPayload},
     },
 };
@@ -26,6 +25,7 @@ pub struct ConnectionState {
     pub streaming: StreamingState,
 
     pub session_key: SessionKey,
+    pub active_voice_channel: Option<VoiceChannelId>,
 }
 
 impl ConnectionState {
@@ -68,10 +68,11 @@ impl ConnectionState {
             rpc,
             streaming,
             session_key,
+            active_voice_channel: None,
         }
     }
 
-    pub async fn join_voice_channel(&self) {
+    pub async fn join_voice_channel(&mut self) {
         let channels = GetVoiceChannels::execute(&self.rpc, &Empty).await.unwrap();
         let channel = channels.first().unwrap();
 
@@ -82,7 +83,9 @@ impl ConnectionState {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to join a voice channel");
+
+        self.active_voice_channel = Some(channel.id);
     }
 
     pub async fn start_screencast(&self) {}
@@ -101,24 +104,13 @@ pub struct ScreenCastView {
 
 impl ScreenCastView {
     pub fn new(
-        mut streamer: FileStreamer,
         host: ConnectionState,
         client: ConnectionState,
         _window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let task = cx.spawn(async move |this, cx| {
-                loop {
-                    let frame = streamer.recv_frame().await;
-
-                    this.update(cx, |this: &mut ScreenCastView, cx| {
-                        this.frame = Some(frame);
-                        cx.notify();
-                    })
-                    .unwrap();
-                }
-            });
+            let task = cx.spawn(async move |this, cx| {});
 
             Self {
                 frame: None,

@@ -704,7 +704,7 @@ impl ServerConnectionState {
                 return;
             };
 
-            if let Some(preview) = streaming.start_screencast().await {
+            if let Some(mut preview) = streaming.start_screencast().await {
                 // Wait for the first frame to get width and height
                 // TODO: Do it properly. Portal should report the size?
                 let (width, height) = loop {
@@ -794,7 +794,11 @@ impl ServerConnectionState {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn set_screencast_preview(&mut self, preview: ScreencastPreview, cx: &mut Context<Self>) {
+    pub fn set_screencast_preview(
+        &mut self,
+        mut preview: ScreencastPreview,
+        cx: &mut Context<Self>,
+    ) {
         self.screencast_preview_task = Some(cx.spawn(async move |this, cx| {
             while let Some(frame) = preview.recv().await {
                 this.update(cx, |this, cx| {

@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use capture::video::linux::file::FileStreamer;
 use client::gpui_tokio::{self};
 use gpui::WindowOptions;
 use gpui_platform::application;
@@ -15,7 +14,6 @@ mod vulkan;
 pub fn run(file_path: Option<PathBuf>) {
     let file_path = file_path.expect("Live capture is not yet supported for this scenario");
 
-    let streamer = FileStreamer::new(&file_path, 60.);
     let tokio_runtime = Builder::new_multi_thread()
         .worker_threads(4)
         .thread_name("Embedded server")
@@ -40,14 +38,14 @@ pub fn run(file_path: Option<PathBuf>) {
         gpui_tokio::init_with_runtime(cx, tokio_runtime);
 
         cx.spawn(async move |cx| {
-            let host_connection = ConnectionState::new("host", "host", cx).await;
-            let client_connection = ConnectionState::new("client", "client", cx).await;
+            let mut host_connection = ConnectionState::new("host", "host", cx).await;
+            let mut client_connection = ConnectionState::new("client", "client", cx).await;
 
             host_connection.join_voice_channel().await;
             client_connection.join_voice_channel().await;
 
             cx.open_window(WindowOptions::default(), move |window, cx| {
-                ScreenCastView::new(streamer, host_connection, client_connection, window, cx)
+                ScreenCastView::new(host_connection, client_connection, window, cx)
             })
         })
         .detach();

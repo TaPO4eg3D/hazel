@@ -293,25 +293,25 @@ impl PacketSender {
             return false;
         };
 
-        let Some(mut ready_frame) = screencast.frame_pool.get_ready_frame() else {
+        let Some(mut frame) = screencast.frame_pool.try_get_frame() else {
             return false;
         };
 
-        let data_shards_len = ((ready_frame.len() as f32) / shard_len as f32).ceil() as usize;
+        let data_shards_len = ((frame.len() as f32) / shard_len as f32).ceil() as usize;
         let rec_shards_len =
             ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
 
-        let data_size = ready_frame.len();
-        let padding = (data_shards_len * shard_len) - ready_frame.len();
+        let data_size = frame.len();
+        let padding = (data_shards_len * shard_len) - frame.len();
 
-        ready_frame.extend(std::iter::repeat_n(0, padding));
+        frame.extend(std::iter::repeat_n(0, padding));
 
         // TODO: Fork this library? It allocates memory on every invocation,
         // this kinda defeats the purpose of the dedicated frame pool
         let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
             .expect("Failed to initialize Reed Solomon Encoder");
 
-        ready_frame.chunks_exact(shard_len).for_each(|chunk| {
+        frame.chunks_exact(shard_len).for_each(|chunk| {
             encoder
                 .add_original_shard(chunk)
                 .expect("All preparations done above, should not fail");
@@ -319,7 +319,7 @@ impl PacketSender {
 
         let encoded = encoder.encode().expect("Should not fail");
 
-        let frame_chunks = ready_frame
+        let frame_chunks = frame
             .chunks_exact(shard_len)
             .chain(encoded.recovery_iter())
             .enumerate()
@@ -343,8 +343,6 @@ impl PacketSender {
             _ = self.socket.send_to(&self.buf, addr);
             self.last_send = Instant::now();
         }
-
-        screencast.frame_pool.push_emtpy_frame(ready_frame);
 
         true
     }
