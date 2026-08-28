@@ -7,7 +7,10 @@ use std::{
 };
 
 use gpui::DMABuffer;
-use ringbuf::{HeapCons, HeapProd};
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb,
+    traits::{Producer as _, Split as _},
+};
 use smol::channel::{self, Receiver, Sender};
 
 use ffmpeg_next::{
@@ -18,7 +21,8 @@ use ffmpeg_next::{
 use crate::{
     CaptureNotifier,
     video::{
-        frames::{FramePool, FrameRecv, FrameSender},
+        encode::{VAAPIEncoder, VAAPIEncoderParams},
+        frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::{
             file::vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
             screengrab::ScreencastPreview,
@@ -28,6 +32,9 @@ use crate::{
 
 mod vulkan;
 
+const DEFAULT_FRAMERATE: u32 = 60;
+const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
+
 // Streams a video file as a sequence of DMA-BUFs.
 // Main purpose is an emulation of zero-copy screencapturing
 // in a predictable way.
@@ -35,28 +42,29 @@ mod vulkan;
 // It loads the encoded file in memory (via memfd) and replays it with
 // a specified FPS in a loop
 pub struct FileStreamer {
+    mfd: memfd::Memfd,
+    params: FileStreamerParams,
     frametime: Duration,
 }
 
 struct FileStreamerParams {
     fps: f64,
 
-    empty_frames_cons: HeapCons<Vec<u8>>,
-    ready_frames_prod: HeapProd<Vec<u8>>,
+    notifier: CaptureNotifier,
+
+    empty_frames_cons: Option<HeapCons<Vec<u8>>>,
+    ready_frames_prod: Option<HeapProd<Vec<u8>>>,
 
     preview_tx: FrameSender<gpui::DMABuffer>,
 }
 
 struct PlayingContext<const N: usize> {
     path: String,
-
     dma_pool: VkDmaBufferPool<N>,
+
     scaler: ScalingContext,
-
-    frametime: Duration,
     next_frame: Instant,
-
-    preview_tx: FrameSender<gpui::DMABuffer>,
+    encoder: VAAPIEncoder,
 }
 
 impl FileStreamer {
@@ -78,10 +86,11 @@ impl FileStreamer {
 
         let frametime = Duration::from_secs_f64(1.0 / params.fps);
 
-        let instance = Self { frametime };
-        instance.start_streaming_thread(mfd, frametime, params);
-
-        instance
+        Self {
+            frametime,
+            mfd,
+            params,
+        }
     }
 
     fn rgba_tightly_packed(frame: &frame::Video) -> Vec<u8> {
@@ -108,7 +117,7 @@ impl FileStreamer {
         dst
     }
 
-    fn play<const N: usize>(ctx: &mut PlayingContext<N>) {
+    fn play<const N: usize>(&self, ctx: &mut PlayingContext<N>) {
         let mut input = format::input(&ctx.path).expect("Failed to load memfile");
 
         let stream = input.streams().best(media::Type::Video).unwrap();
@@ -142,74 +151,77 @@ impl FileStreamer {
                 ctx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
                 let data = Self::rgba_tightly_packed(&rgba_frame);
                 let buff = ctx.dma_pool.push_image(&data);
-                ctx.preview_tx.send(buff);
+                self.params.preview_tx.send(buff);
 
                 let now = Instant::now();
-                ctx.next_frame = now + ctx.frametime;
+                ctx.next_frame = now + self.frametime;
             }
         }
     }
 
-    fn start_streaming_thread(
-        &self,
-        mfd: memfd::Memfd,
-        frametime: Duration,
-        params: FileStreamerParams,
-    ) {
-        thread::spawn(move || {
-            ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
+    fn start_streaming(&mut self) {
+        ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
 
-            let path = format!("/proc/self/fd/{}", mfd.as_raw_fd());
-            let input = format::input(&path).expect("Failed to load memfile");
+        let path = format!("/proc/self/fd/{}", self.mfd.as_raw_fd());
+        let input = format::input(&path).expect("Failed to load memfile");
 
-            let stream = input.streams().best(media::Type::Video).unwrap();
-            let context = codec::context::Context::from_parameters(stream.parameters()).unwrap();
+        let stream = input.streams().best(media::Type::Video).unwrap();
+        let context = codec::context::Context::from_parameters(stream.parameters()).unwrap();
 
-            let decoder = context.decoder().video().unwrap();
+        let decoder = context.decoder().video().unwrap();
 
-            let width = decoder.width();
-            let height = decoder.height();
+        let width = decoder.width();
+        let height = decoder.height();
 
-            let format = decoder.format();
+        let format = decoder.format();
 
-            // Most common anyway, no point in making it generic right now
-            assert!(format == format::Pixel::YUV420P);
+        // Most common anyway, no point in making it generic right now
+        assert!(format == format::Pixel::YUV420P);
 
-            let scaler = ScalingContext::get(
-                decoder.format(),
-                width,
-                height,
-                format::Pixel::RGBA,
-                width,
-                height,
-                ScalingFlags::BILINEAR,
-            )
-            .expect("Failed to create scaling context");
+        let scaler = ScalingContext::get(
+            decoder.format(),
+            width,
+            height,
+            format::Pixel::RGBA,
+            width,
+            height,
+            ScalingFlags::BILINEAR,
+        )
+        .expect("Failed to create scaling context");
 
-            let dma_pool = VkDmaBufferPool::<12>::new(DmaBufferPoolOptions {
-                width,
-                height,
-                vk_format: ash::vk::Format::R8G8B8A8_UNORM,
-            });
-
-            let mut ctx = PlayingContext {
-                path,
-                scaler,
-                dma_pool,
-                frametime,
-                preview_tx: params.preview_tx,
-                next_frame: Instant::now(),
-            };
-
-            loop {
-                Self::play(&mut ctx);
-            }
+        let dma_pool = VkDmaBufferPool::<12>::new(DmaBufferPoolOptions {
+            width,
+            height,
+            vk_format: ash::vk::Format::R8G8B8A8_UNORM,
         });
+
+        let encoder = VAAPIEncoder::new(VAAPIEncoderParams {
+            height,
+            width,
+
+            framerate: DEFAULT_FRAMERATE,
+            bitrate: DEFAULT_BITRATE,
+
+            empty_frame_queue: self.params.empty_frames_cons.take().unwrap(),
+            ready_frame_queue: self.params.ready_frames_prod.take().unwrap(),
+        });
+
+        let mut ctx = PlayingContext {
+            path,
+            scaler,
+            dma_pool,
+            encoder,
+            next_frame: Instant::now(),
+        };
+
+        loop {
+            self.play(&mut ctx);
+        }
     }
 }
 
-pub(crate) struct ActiveScreencast {
-    pub(crate) frame_pool: FramePool,
+pub struct ActiveScreencast {
+    pub frame_pool: FramePool,
 }
 
 impl ActiveScreencast {
@@ -218,7 +230,41 @@ impl ActiveScreencast {
     }
 }
 
-// pub async fn init_screencast(
-//     notifier: CaptureNotifier,
-// ) -> anyhow::Result<(ActiveScreencast, ScreencastPreview)> {
-// }
+pub async fn init_screencast(
+    file_path: impl AsRef<Path>,
+    notifier: CaptureNotifier,
+) -> anyhow::Result<(ActiveScreencast, ScreencastPreview)> {
+    let (preview_tx, preview_rx) = frame_channel();
+
+    let ring = HeapRb::new(4);
+    let (mut empty_frames_prod, empty_frames_cons) = ring.split();
+
+    let ring = HeapRb::new(4);
+    let (ready_frames_prod, ready_frames_cons) = ring.split();
+
+    for _ in 0..4 {
+        _ = empty_frames_prod.try_push(vec![]);
+    }
+
+    let mut streamer = FileStreamer::new(
+        file_path,
+        FileStreamerParams {
+            fps: DEFAULT_BITRATE as f64,
+            notifier,
+            empty_frames_cons: Some(empty_frames_cons),
+            ready_frames_prod: Some(ready_frames_prod),
+            preview_tx,
+        },
+    );
+
+    thread::spawn(move || {
+        streamer.start_streaming();
+    });
+
+    Ok((
+        ActiveScreencast {
+            frame_pool: FramePool::new(empty_frames_prod, ready_frames_cons),
+        },
+        preview_rx,
+    ))
+}
