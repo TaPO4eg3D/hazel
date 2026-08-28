@@ -7,6 +7,7 @@ use std::{
 };
 
 use gpui::DMABuffer;
+use ringbuf::{HeapCons, HeapProd};
 use smol::channel::{self, Receiver, Sender};
 
 use ffmpeg_next::{
@@ -14,7 +15,16 @@ use ffmpeg_next::{
     software::scaling::{Context as ScalingContext, flag::Flags as ScalingFlags},
 };
 
-use crate::video::linux::file::vulkan::{DmaBufferPoolOptions, VkDmaBufferPool};
+use crate::{
+    CaptureNotifier,
+    video::{
+        frames::{FramePool, FrameRecv, FrameSender},
+        linux::{
+            file::vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
+            screengrab::ScreencastPreview,
+        },
+    },
+};
 
 mod vulkan;
 
@@ -26,25 +36,36 @@ mod vulkan;
 // a specified FPS in a loop
 pub struct FileStreamer {
     frametime: Duration,
-    frame_rx: Receiver<gpui::DMABuffer>,
+}
+
+struct FileStreamerParams {
+    fps: f64,
+
+    empty_frames_cons: HeapCons<Vec<u8>>,
+    ready_frames_prod: HeapProd<Vec<u8>>,
+
+    preview_tx: FrameSender<gpui::DMABuffer>,
 }
 
 struct PlayingContext<const N: usize> {
     path: String,
+
     dma_pool: VkDmaBufferPool<N>,
     scaler: ScalingContext,
-    frame_tx: Sender<gpui::DMABuffer>,
+
     frametime: Duration,
     next_frame: Instant,
+
+    preview_tx: FrameSender<gpui::DMABuffer>,
 }
 
 impl FileStreamer {
-    pub fn new(file_path: impl AsRef<Path>, fps: f64) -> Self {
+    fn new(file_path: impl AsRef<Path>, params: FileStreamerParams) -> Self {
         if !file_path.as_ref().exists() {
             panic!("Invalid file path");
         }
 
-        let content = std::fs::read(file_path).expect("Failed to read the file");
+        let content = std::fs::read(file_path.as_ref()).expect("Failed to read the file");
 
         let mfd_options = memfd::MemfdOptions::default();
         let mfd = mfd_options
@@ -55,14 +76,10 @@ impl FileStreamer {
             .write_all(&content)
             .expect("Failed to write data");
 
-        let (frame_tx, frame_rx) = channel::bounded(1);
-        let frametime = Duration::from_secs_f64(1.0 / fps);
+        let frametime = Duration::from_secs_f64(1.0 / params.fps);
 
-        let instance = Self {
-            frametime,
-            frame_rx,
-        };
-        instance.start_streaming_thread(mfd, frametime, frame_tx);
+        let instance = Self { frametime };
+        instance.start_streaming_thread(mfd, frametime, params);
 
         instance
     }
@@ -112,6 +129,10 @@ impl FileStreamer {
             let mut decoded_frame = frame::Video::empty();
             let mut rgba_frame = frame::Video::empty();
 
+            // TODO: Fix this shitty loop.
+            // It don't yet know if it's okay for testing purposes
+            // but it feels very wrong to rely on CPU so heavily
+            // when in the real pipeline we do GPU processing End-to-End
             while decoder.receive_frame(&mut decoded_frame).is_ok() {
                 let now = Instant::now();
                 if ctx.next_frame > now {
@@ -121,7 +142,7 @@ impl FileStreamer {
                 ctx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
                 let data = Self::rgba_tightly_packed(&rgba_frame);
                 let buff = ctx.dma_pool.push_image(&data);
-                ctx.frame_tx.send_blocking(buff).unwrap();
+                ctx.preview_tx.send(buff);
 
                 let now = Instant::now();
                 ctx.next_frame = now + ctx.frametime;
@@ -133,7 +154,7 @@ impl FileStreamer {
         &self,
         mfd: memfd::Memfd,
         frametime: Duration,
-        frame_tx: Sender<DMABuffer>,
+        params: FileStreamerParams,
     ) {
         thread::spawn(move || {
             ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
@@ -176,7 +197,7 @@ impl FileStreamer {
                 scaler,
                 dma_pool,
                 frametime,
-                frame_tx,
+                preview_tx: params.preview_tx,
                 next_frame: Instant::now(),
             };
 
@@ -185,8 +206,19 @@ impl FileStreamer {
             }
         });
     }
+}
 
-    pub async fn recv_frame(&mut self) -> DMABuffer {
-        self.frame_rx.recv().await.unwrap()
+pub(crate) struct ActiveScreencast {
+    pub(crate) frame_pool: FramePool,
+}
+
+impl ActiveScreencast {
+    pub fn close(self) {
+        todo!()
     }
 }
+
+// pub async fn init_screencast(
+//     notifier: CaptureNotifier,
+// ) -> anyhow::Result<(ActiveScreencast, ScreencastPreview)> {
+// }

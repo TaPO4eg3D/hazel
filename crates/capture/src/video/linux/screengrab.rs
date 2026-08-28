@@ -52,6 +52,7 @@ use crate::{
     CaptureNotifier,
     video::{
         encode::{VAAPIEncoder, VAAPIEncoderParams},
+        frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         wrapper::{DrmFrame, DrmInfo},
     },
 };
@@ -432,116 +433,7 @@ impl ScreencastStream {
     }
 }
 
-struct FrameChannelInner<T> {
-    frame: Option<T>,
-    waker: Option<Waker>,
-
-    closed: bool,
-}
-
-struct FrameSender<T> {
-    inner: Arc<Mutex<FrameChannelInner<T>>>,
-}
-
-impl<T> Drop for FrameSender<T> {
-    fn drop(&mut self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.closed = true;
-    }
-}
-
-impl<T> FrameSender<T> {
-    fn send(&self, frame: T) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.frame = Some(frame);
-
-        if let Some(waker) = inner.waker.take() {
-            waker.wake();
-        }
-    }
-}
-
-pub struct FrameRecvFuture<T> {
-    inner: Arc<Mutex<FrameChannelInner<T>>>,
-}
-
-impl<T> Future for FrameRecvFuture<T> {
-    type Output = Option<T>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.closed {
-            return Poll::Ready(None);
-        }
-
-        if inner.frame.is_none() {
-            inner.waker = Some(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-
-        Poll::Ready(inner.frame.take())
-    }
-}
-
-pub struct FrameRecv<T> {
-    inner: Arc<Mutex<FrameChannelInner<T>>>,
-}
-
-impl<T> FrameRecv<T> {
-    pub fn recv(&self) -> FrameRecvFuture<T> {
-        FrameRecvFuture {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
-    let inner = Arc::new(Mutex::new(FrameChannelInner {
-        frame: None,
-        waker: None,
-
-        closed: false,
-    }));
-
-    (
-        FrameSender {
-            inner: inner.clone(),
-        },
-        FrameRecv {
-            inner: inner.clone(),
-        },
-    )
-}
-
 pub type ScreencastPreview = FrameRecv<gpui::DMABuffer>;
-
-pub struct FramePool {
-    empty_frame_queue: HeapProd<Vec<u8>>,
-    ready_frame_queue: HeapCons<Vec<u8>>,
-}
-
-impl FramePool {
-    fn new(empty_queue: HeapProd<Vec<u8>>, ready_queue: HeapCons<Vec<u8>>) -> Self {
-        Self {
-            empty_frame_queue: empty_queue,
-            ready_frame_queue: ready_queue,
-        }
-    }
-
-    pub fn push_emtpy_frame(&mut self, frame: Vec<u8>) {
-        if self.empty_frame_queue.try_push(frame).is_err() {
-            todo!("handle the case");
-        }
-    }
-
-    pub fn get_ready_frame(&mut self) -> Option<Vec<u8>> {
-        self.ready_frame_queue.try_pop()
-    }
-}
 
 pub struct ActiveScreencast {
     pw_tx: pipewire::channel::Sender<()>,
