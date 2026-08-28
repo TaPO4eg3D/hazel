@@ -53,7 +53,7 @@ use crate::{
     video::{
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
-        wrapper::{DrmFrame, DrmInfo},
+        wrapper::{DrmFrame, DrmInfo, VAAPIFrame},
     },
 };
 
@@ -108,6 +108,8 @@ struct ScreencastStreamData {
 
     empty_frame_queue: Option<HeapCons<Vec<u8>>>,
     ready_frame_queue: Option<HeapProd<Vec<u8>>>,
+
+    vaapi_cache: Vec<(DrmInfo, VAAPIFrame)>,
 }
 
 struct ScreencastStream {
@@ -158,6 +160,8 @@ impl ScreencastStream {
                 format: Default::default(),
                 empty_frame_queue: Some(empty_frame_queue),
                 ready_frame_queue: Some(ready_frame_queue),
+
+                vaapi_cache: vec![],
             })
             .param_changed(Self::on_param_changed)
             .process(Self::on_process)
@@ -314,7 +318,7 @@ impl ScreencastStream {
         stream.update_params(&mut params).unwrap()
     }
 
-    fn build_drm_frame(data: &mut Data, this: &ScreencastStreamData) -> (DrmFrame, DrmInfo) {
+    fn get_drm_frame_info(data: &mut Data, this: &ScreencastStreamData) -> DrmInfo {
         let data_raw = data.as_raw();
         let fd = data_raw.fd;
 
@@ -332,38 +336,30 @@ impl ScreencastStream {
             format => todo!("Unimplemented: {format:?}"),
         };
 
-        let format = DrmInfo {
+        DrmInfo {
+            fd,
             width: width as i32,
             height: height as i32,
             format,
             modifier: DrmModifier::from(this.format.modifier()),
             plane_offset: offset,
             plane_stride: stride,
-        };
-
-        // TODO: Pipewire cycles a set of DMA-bufs, in theory we can cache
-        // it using the file descriptor
-        (
-            DrmFrame::new(fd, (stride * height as i32) as usize, format),
-            format,
-        )
+        }
     }
 
     fn process_dmabuf(mut buffer: Buffer, this: &mut ScreencastStreamData) {
         let data = &mut buffer.datas_mut()[0];
-        let (drm_frame, drm_info) = Self::build_drm_frame(data, this);
+        let drm_info = Self::get_drm_frame_info(data, this);
 
-        let drm_fd = drm_frame.fd;
-        match this.encoder.as_mut() {
-            Some(encoder) => encoder.update_frame(drm_frame),
+        let width = this.format.size().width;
+        let height = this.format.size().height;
+
+        let encoder = match this.encoder.as_mut() {
+            Some(encoder) => encoder,
             None => {
-                let width = this.format.size().width;
-                let height = this.format.size().height;
-
                 this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
                     height,
                     width,
-                    drm_frame,
 
                     framerate: DEFAULT_FRAMERATE,
                     bitrate: DEFAULT_BITRATE,
@@ -371,11 +367,26 @@ impl ScreencastStream {
                     empty_frame_queue: this.empty_frame_queue.take().unwrap(),
                     ready_frame_queue: this.ready_frame_queue.take().unwrap(),
                 }));
+
+                this.encoder.as_mut().unwrap()
             }
-        }
+        };
+
+        let idx = this
+            .vaapi_cache
+            .iter()
+            .position(|(info, _)| info == &drm_info)
+            .unwrap_or_else(|| {
+                let vaapi_frame = encoder.alloc_frame(&drm_info);
+                this.vaapi_cache.push((drm_info.clone(), vaapi_frame));
+
+                this.vaapi_cache.len() - 1
+            });
+
+        let vaapi_frame = &mut this.vaapi_cache[idx].1;
 
         this.preview_tx.send(DMABuffer {
-            fd: drm_fd as i32,
+            fd: drm_info.fd as i32,
             width: drm_info.width as u32,
             height: drm_info.height as u32,
             format: DrmFormat {
@@ -391,9 +402,7 @@ impl ScreencastStream {
         // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
-            let encoder = this.encoder.as_mut().unwrap();
-
-            encoder.encode(header.seq() as i64);
+            encoder.encode(vaapi_frame, header.seq() as i64);
 
             this.notifier.notify_screen();
         }

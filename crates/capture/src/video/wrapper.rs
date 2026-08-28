@@ -531,8 +531,10 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DrmInfo {
+    pub fd: i64,
+
     pub width: i32,
     pub height: i32,
 
@@ -561,7 +563,7 @@ impl Drop for DrmFrame {
 }
 
 impl DrmFrame {
-    pub fn new(fd: i64, size: usize, drm_info: DrmInfo) -> Self {
+    pub fn new(drm_info: &DrmInfo) -> Self {
         unsafe {
             let desc = av_mallocz(std::mem::size_of::<AVDRMFrameDescriptor>())
                 as *mut AVDRMFrameDescriptor;
@@ -570,8 +572,8 @@ impl DrmFrame {
             }
 
             (*desc).nb_objects = 1;
-            (*desc).objects[0].fd = fd as i32;
-            (*desc).objects[0].size = size;
+            (*desc).objects[0].fd = drm_info.fd as i32;
+            (*desc).objects[0].size = (drm_info.plane_stride * drm_info.height) as usize;
             (*desc).objects[0].format_modifier = drm_info.modifier.into();
 
             (*desc).nb_layers = 1;
@@ -606,7 +608,7 @@ impl DrmFrame {
             }
 
             Self {
-                fd,
+                fd: drm_info.fd,
                 _av_desc: desc,
                 av_frame: drm_frame,
             }
@@ -629,7 +631,7 @@ impl Drop for VAAPIFrame {
 }
 
 impl VAAPIFrame {
-    pub fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
+    pub(crate) fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
         unsafe {
             let vaapi_frame = av_frame_alloc();
             if vaapi_frame.is_null() {

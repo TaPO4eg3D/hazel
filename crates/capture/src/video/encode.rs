@@ -17,7 +17,8 @@ use ringbuf::{
 };
 
 use crate::video::wrapper::{
-    DrmFrame, Filter, GPUDevice, Graph, HWFrameContext, HWFrameContextBuilder, Parser, VAAPIFrame,
+    DrmFrame, DrmInfo, Filter, GPUDevice, Graph, HWFrameContext, HWFrameContextBuilder, Parser,
+    VAAPIFrame,
 };
 
 pub struct VAAPIEncoderParams {
@@ -29,8 +30,6 @@ pub struct VAAPIEncoderParams {
 
     pub empty_frame_queue: HeapCons<Vec<u8>>,
     pub ready_frame_queue: HeapProd<Vec<u8>>,
-
-    pub drm_frame: DrmFrame,
 }
 
 pub struct VAAPIEncoder {
@@ -40,7 +39,6 @@ pub struct VAAPIEncoder {
     sink_filter: Filter,
     source_filter: Filter,
 
-    hw_frame: VAAPIFrame,
     hw_frame_ctx: HWFrameContext,
     out_frame: *mut AVFrame,
 
@@ -60,17 +58,18 @@ impl Drop for VAAPIEncoder {
 }
 
 impl VAAPIEncoder {
-    pub fn update_frame(&mut self, drm_frame: DrmFrame) {
-        self.hw_frame = VAAPIFrame::new(drm_frame, self.hw_frame_ctx.clone());
+    pub fn alloc_frame(&self, drm_info: &DrmInfo) -> VAAPIFrame {
+        let drm_frame = DrmFrame::new(drm_info);
+        VAAPIFrame::new(drm_frame, self.hw_frame_ctx.clone())
     }
 
-    pub fn encode(&mut self, pts: i64) {
+    pub fn encode(&mut self, hw_frame: &mut VAAPIFrame, pts: i64) {
         unsafe {
-            (*self.hw_frame.av_frame).pts = pts;
+            (*hw_frame.av_frame).pts = pts;
 
             let err = av_buffersrc_add_frame_flags(
                 self.source_filter.ctx,
-                self.hw_frame.av_frame,
+                hw_frame.av_frame,
                 AV_BUFFERSRC_FLAG_KEEP_REF as i32,
             );
 
@@ -131,7 +130,6 @@ impl VAAPIEncoder {
             framerate,
             empty_frame_queue,
             ready_frame_queue,
-            drm_frame,
         }: VAAPIEncoderParams,
     ) -> Self {
         let codec = encoder::find_by_name("h264_vaapi").expect("Failed to find Video Codec");
@@ -237,8 +235,6 @@ impl VAAPIEncoder {
             panic!("Failed to alloc encoder packet");
         }
 
-        let hw_frame = VAAPIFrame::new(drm_frame, hw_frame_ctx.clone());
-
         let mut encoder_options = Dictionary::new();
         // Disable internal buffering in GPU
         encoder_options.set("async_depth", "1");
@@ -254,7 +250,6 @@ impl VAAPIEncoder {
             sink_filter,
             source_filter,
             _graph: graph,
-            hw_frame,
             hw_frame_ctx,
             out_frame,
             packet,
