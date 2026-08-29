@@ -1,8 +1,12 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf, str::FromStr as _};
 
-use client::gpui_tokio::{self};
+use client::{
+    gpui_tokio::{self},
+    streaming::StreamingState,
+};
 use gpui::WindowOptions;
 use gpui_platform::application;
+use rpc::models::markers::Id;
 use server::{config::Config, start_server};
 use tokio::runtime::Builder;
 
@@ -45,7 +49,7 @@ pub fn run(file_path: Option<PathBuf>) {
             client_connection.join_voice_channel().await;
 
             cx.open_window(WindowOptions::default(), move |window, cx| {
-                ScreenCastView::new(host_connection, client_connection, window, cx)
+                ScreenCastView::new(file_path, host_connection, client_connection, window, cx)
             })
         })
         .detach();

@@ -546,17 +546,30 @@ pub struct DrmInfo {
     pub plane_stride: i32,
 }
 
-pub struct DrmFrame {
-    pub fd: i64,
+impl From<gpui::DMABuffer> for DrmInfo {
+    fn from(value: gpui::DMABuffer) -> Self {
+        // Should be one plane since we expect RGBA
+        assert!(value.planes.len() == 1);
 
-    _av_desc: *mut AVDRMFrameDescriptor,
+        Self {
+            fd: value.fd as i64,
+            width: value.width as i32,
+            height: value.height as i32,
+            format: value.format.code,
+            modifier: value.format.modifier,
+            plane_offset: value.planes[0].offset as u32,
+            plane_stride: value.planes[0].stride as i32,
+        }
+    }
+}
+
+pub struct DrmFrame {
     av_frame: *mut AVFrame,
 }
 
 impl Drop for DrmFrame {
     fn drop(&mut self) {
         unsafe {
-            // av_frame_free unrefs buf[0] as well
             av_frame_free(&raw mut self.av_frame);
         }
     }
@@ -608,8 +621,6 @@ impl DrmFrame {
             }
 
             Self {
-                fd: drm_info.fd,
-                _av_desc: desc,
                 av_frame: drm_frame,
             }
         }

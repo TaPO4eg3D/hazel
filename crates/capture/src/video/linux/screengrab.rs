@@ -53,6 +53,7 @@ use crate::{
     video::{
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
+        linux::ActiveVideoStream,
         wrapper::{DrmFrame, DrmInfo, VAAPIFrame},
     },
 };
@@ -372,18 +373,20 @@ impl ScreencastStream {
             }
         };
 
-        let idx = this
+        let vaapi_frame = match this
             .vaapi_cache
             .iter()
             .position(|(info, _)| info == &drm_info)
-            .unwrap_or_else(|| {
+        {
+            Some(idx) => &mut this.vaapi_cache[idx].1,
+            None => {
+                let idx = this.vaapi_cache.len();
                 let vaapi_frame = encoder.alloc_frame(&drm_info);
-                this.vaapi_cache.push((drm_info.clone(), vaapi_frame));
 
-                this.vaapi_cache.len() - 1
-            });
-
-        let vaapi_frame = &mut this.vaapi_cache[idx].1;
+                this.vaapi_cache.push((drm_info, vaapi_frame));
+                &mut this.vaapi_cache[idx].1
+            }
+        };
 
         this.preview_tx.send(DMABuffer {
             fd: drm_info.fd as i32,
@@ -442,22 +445,20 @@ impl ScreencastStream {
     }
 }
 
-pub type ScreencastPreview = FrameRecv<gpui::DMABuffer>;
-
-pub struct ActiveScreencast {
+pub struct ScreenVideoStream {
     pw_tx: pipewire::channel::Sender<()>,
     pub frame_pool: FramePool,
 }
 
-impl ActiveScreencast {
-    pub fn close(self) {
+impl ScreenVideoStream {
+    pub(crate) fn close(self) {
         _ = self.pw_tx.send(());
     }
 }
 
 pub async fn init_screencast(
     notifier: CaptureNotifier,
-) -> AResult<(ActiveScreencast, ScreencastPreview)> {
+) -> AResult<(ActiveVideoStream, FrameRecv<gpui::DMABuffer>)> {
     let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
 
     let (pw_tx, pw_rx) = pipewire::channel::channel::<()>();
@@ -506,10 +507,10 @@ pub async fn init_screencast(
         });
 
     Ok((
-        ActiveScreencast {
+        ActiveVideoStream::Screen(ScreenVideoStream {
             pw_tx,
             frame_pool: FramePool::new(empty_frame_queue_prod, ready_frame_queue_cons),
-        },
+        }),
         preview_rx,
     ))
 }

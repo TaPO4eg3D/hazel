@@ -8,7 +8,7 @@ use atomic_enum::atomic_enum;
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 
 #[cfg(target_os = "linux")]
-use capture::video::linux::screengrab::ScreencastPreview;
+use capture::video::frames::FrameRecv;
 
 use gpui::{
     AppContext, AsyncApp, AsyncWindowContext, Context, Entity, SharedString, Subscription, Task,
@@ -796,7 +796,7 @@ impl ServerConnectionState {
     #[cfg(target_os = "linux")]
     pub fn set_screencast_preview(
         &mut self,
-        mut preview: ScreencastPreview,
+        mut preview: FrameRecv<gpui::DMABuffer>,
         cx: &mut Context<Self>,
     ) {
         self.screencast_preview_task = Some(cx.spawn(async move |this, cx| {
