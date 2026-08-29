@@ -11,7 +11,7 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, ParentElement as _, Render, Styled as _, Window,
     div, prelude::FluentBuilder, surface,
 };
-use gpui_component::StyledExt as _;
+use gpui_component::{StyledExt as _, white};
 use rpc::{
     client::ClientConnection,
     common::Empty,
@@ -29,6 +29,7 @@ use rpc::{
         },
     },
 };
+use tokio::time::Instant;
 
 pub struct ConnectionState {
     pub rpc: ClientConnection,
@@ -168,6 +169,9 @@ pub struct ScreenCastView {
     preview: Option<gpui::DMABuffer>,
     watch: Option<gpui::DMABuffer>,
 
+    last_frame: Instant,
+    frametime: f64,
+
     _streaming_task: gpui::Task<()>,
 }
 
@@ -197,21 +201,20 @@ impl ScreenCastView {
                     .unwrap()
                     .await;
 
-                cx.spawn({
-                    let this = this.clone();
+                // cx.spawn({
+                //     let this = this.clone();
 
-                    async move |cx| {
-                        while let Some(frame) = preview.recv().await {
-                            this.update(cx, |this, cx| {
-                                this.preview = Some(frame);
-
-                                cx.notify();
-                            })
-                            .ok();
-                        }
-                    }
-                })
-                .detach();
+                //     async move |cx| {
+                //         while let Some(frame) = preview.recv().await {
+                //             this.update(cx, |this, cx| {
+                //                 this.preview = Some(frame);
+                //                 cx.notify();
+                //             })
+                //             .ok();
+                //         }
+                //     }
+                // })
+                // .detach();
 
                 cx.spawn({
                     let this = this.clone();
@@ -220,6 +223,12 @@ impl ScreenCastView {
                         while let Ok(frame) = watch.recv().await {
                             this.update(cx, |this, cx| {
                                 this.watch = Some(frame);
+
+                                let now = Instant::now();
+
+                                this.frametime = (now - this.last_frame).as_secs_f64() * 1000.;
+                                this.last_frame = now;
+
                                 cx.notify();
                             })
                             .ok();
@@ -234,6 +243,8 @@ impl ScreenCastView {
                 client,
                 preview: None,
                 watch: None,
+                last_frame: Instant::now(),
+                frametime: 0.,
                 _streaming_task: task,
             }
         })
@@ -246,6 +257,8 @@ impl Render for ScreenCastView {
         _window: &mut gpui::Window,
         _cx: &mut gpui::prelude::Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
+        let fps = 1000. / self.frametime;
+
         div()
             .v_flex()
             .size_full()
@@ -255,17 +268,24 @@ impl Render for ScreenCastView {
                     .flex()
                     .size_full()
                     // Preview of screen capture
-                    .child(
-                        div()
-                            .size_full()
-                            .when_some(self.preview.clone(), |this, frame| {
-                                this.child(surface(frame).size_full())
-                            }),
-                    )
+                    // .child(
+                    //     div()
+                    //         .size_full()
+                    //         .flex_col()
+                    //         .text_color(white())
+                    //         .child("HOST")
+                    //         .when_some(self.preview.clone(), |this, frame| {
+                    //             // this.child(surface(frame).size_full())
+                    //             this
+                    //         }),
+                    // )
                     // Reciever
                     .child(
                         div()
                             .size_full()
+                            .flex_col()
+                            .text_color(white())
+                            .child(format!("FPS: {fps} [{}]", self.frametime))
                             .when_some(self.watch.clone(), |this, frame| {
                                 this.child(surface(frame).size_full())
                             }),
