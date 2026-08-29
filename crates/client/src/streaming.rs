@@ -363,6 +363,8 @@ impl PacketSender {
     }
 
     fn run(mut self) {
+        self.send_ping();
+
         loop {
             let result = self.notifier.wait(Duration::from_millis(80));
 

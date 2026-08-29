@@ -31,7 +31,7 @@ use crate::{
 
 mod vulkan;
 
-const DEFAULT_FRAMERATE: u32 = 60;
+const DEFAULT_FRAMERATE: u32 = 30;
 const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
 
 // Streams a video file as a sequence of DMA-BUFs.
@@ -58,7 +58,7 @@ struct FileStreamerParams {
 }
 
 struct PlayingContext<const N: usize> {
-    seq: i64,
+    pts: i64,
 
     path: String,
     dma_pool: VkDmaBufferPool<N>,
@@ -151,6 +151,7 @@ impl FileStreamer {
                 if cx.next_frame > now {
                     thread::sleep(cx.next_frame - now);
                 }
+                let now = Instant::now();
 
                 cx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
                 let data = Self::rgba_tightly_packed(&rgba_frame);
@@ -170,11 +171,11 @@ impl FileStreamer {
                 };
 
                 self.params.preview_tx.send(buff);
-                cx.encoder.encode(vaapi_frame, cx.seq);
+                cx.encoder.encode(vaapi_frame, cx.pts);
+                cx.pts += 1;
 
                 self.params.notifier.notify_screen();
 
-                let now = Instant::now();
                 cx.next_frame = now + self.frametime;
             }
         }
@@ -228,7 +229,7 @@ impl FileStreamer {
         });
 
         let mut ctx = PlayingContext {
-            seq: 0,
+            pts: 0,
             path,
             scaler,
             dma_pool,
@@ -272,7 +273,7 @@ pub async fn init_screencast(
     let mut streamer = FileStreamer::new(
         file_path,
         FileStreamerParams {
-            fps: DEFAULT_BITRATE as f64,
+            fps: DEFAULT_FRAMERATE as f64,
             notifier,
             empty_frames_cons: Some(empty_frames_cons),
             ready_frames_prod: Some(ready_frames_prod),
