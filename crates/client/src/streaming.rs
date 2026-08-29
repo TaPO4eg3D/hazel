@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::path::Path;
 use std::{
     net::{SocketAddr, UdpSocket},
     sync::{
@@ -26,7 +28,8 @@ use capture::{
 #[cfg(target_os = "linux")]
 use capture::video::{
     self,
-    linux::screengrab::{ActiveScreencast, ScreencastPreview},
+    frames::FrameRecv,
+    linux::ActiveVideoStream,
     playback::{DecodingWorkerCommand, VideoPlaybackController},
 };
 
@@ -68,7 +71,7 @@ impl AudioStreamingSharedState {
 }
 
 #[cfg(target_os = "linux")]
-type SharedStartedScreencast = Arc<Mutex<Option<ActiveScreencast>>>;
+type SharedStartedScreencast = Arc<Mutex<Option<ActiveVideoStream>>>;
 
 #[cfg(target_os = "linux")]
 struct ScreenStreamingData {
@@ -293,7 +296,7 @@ impl PacketSender {
             return false;
         };
 
-        let Some(mut frame) = screencast.frame_pool.try_get_frame() else {
+        let Some(mut frame) = screencast.get_frame_pool().try_get_frame() else {
             return false;
         };
 
@@ -605,7 +608,7 @@ impl StreamingState {
     }
 
     #[cfg(target_os = "linux")]
-    pub async fn start_screencast(&self) -> Option<ScreencastPreview> {
+    pub async fn start_screencast(&self) -> Option<FrameRecv<gpui::DMABuffer>> {
         let notifier = self.capture_notifier.clone();
 
         let (cast, preview) = capture::video::linux::screengrab::init_screencast(notifier)
@@ -619,7 +622,21 @@ impl StreamingState {
     }
 
     #[cfg(target_os = "linux")]
-    pub async fn start_screencast_from_file(&self) {}
+    pub async fn start_screencast_from_file(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> Option<FrameRecv<gpui::DMABuffer>> {
+        let notifier = self.capture_notifier.clone();
+
+        let (cast, preview) = capture::video::linux::file::init_screencast(file_path, notifier)
+            .await
+            .ok()?;
+
+        let mut active_screencast = self.active_screencast.lock().unwrap();
+        *active_screencast = Some(cast);
+
+        Some(preview)
+    }
 
     #[cfg(target_os = "linux")]
     pub async fn stop_screencast(&self) {

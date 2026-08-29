@@ -6,12 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::DMABuffer;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Producer as _, Split as _},
 };
-use smol::channel::{self, Receiver, Sender};
 
 use ffmpeg_next::{
     codec, format, frame, media,
@@ -24,9 +22,10 @@ use crate::{
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::{
+            ActiveVideoStream,
             file::vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
-            screengrab::ScreencastPreview,
         },
+        wrapper::{DrmInfo, VAAPIFrame},
     },
 };
 
@@ -59,11 +58,16 @@ struct FileStreamerParams {
 }
 
 struct PlayingContext<const N: usize> {
+    seq: i64,
+
     path: String,
     dma_pool: VkDmaBufferPool<N>,
 
     scaler: ScalingContext,
     next_frame: Instant,
+
+    vaapi_cache: Vec<(gpui::DMABuffer, VAAPIFrame)>,
+
     encoder: VAAPIEncoder,
 }
 
@@ -117,8 +121,8 @@ impl FileStreamer {
         dst
     }
 
-    fn play<const N: usize>(&self, ctx: &mut PlayingContext<N>) {
-        let mut input = format::input(&ctx.path).expect("Failed to load memfile");
+    fn play<const N: usize>(&self, cx: &mut PlayingContext<N>) {
+        let mut input = format::input(&cx.path).expect("Failed to load memfile");
 
         let stream = input.streams().best(media::Type::Video).unwrap();
         let stream_index = stream.index();
@@ -144,17 +148,34 @@ impl FileStreamer {
             // when in the real pipeline we do GPU processing End-to-End
             while decoder.receive_frame(&mut decoded_frame).is_ok() {
                 let now = Instant::now();
-                if ctx.next_frame > now {
-                    thread::sleep(ctx.next_frame - now);
+                if cx.next_frame > now {
+                    thread::sleep(cx.next_frame - now);
                 }
 
-                ctx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
+                cx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
                 let data = Self::rgba_tightly_packed(&rgba_frame);
-                let buff = ctx.dma_pool.push_image(&data);
+
+                let buff = cx.dma_pool.push_image(&data);
+                let vaapi_frame = match cx.vaapi_cache.iter().position(|(dma, _)| dma == &buff) {
+                    Some(idx) => &mut cx.vaapi_cache[idx].1,
+                    None => {
+                        let idx = cx.vaapi_cache.len();
+                        let drm_info: DrmInfo = buff.clone().into();
+
+                        let vaapi_frame = cx.encoder.alloc_frame(&drm_info);
+
+                        cx.vaapi_cache.push((buff.clone(), vaapi_frame));
+                        &mut cx.vaapi_cache[idx].1
+                    }
+                };
+
                 self.params.preview_tx.send(buff);
+                cx.encoder.encode(vaapi_frame, cx.seq);
+
+                self.params.notifier.notify_screen();
 
                 let now = Instant::now();
-                ctx.next_frame = now + self.frametime;
+                cx.next_frame = now + self.frametime;
             }
         }
     }
@@ -189,7 +210,7 @@ impl FileStreamer {
         )
         .expect("Failed to create scaling context");
 
-        let dma_pool = VkDmaBufferPool::<12>::new(DmaBufferPoolOptions {
+        let dma_pool = VkDmaBufferPool::<6>::new(DmaBufferPoolOptions {
             width,
             height,
             vk_format: ash::vk::Format::R8G8B8A8_UNORM,
@@ -207,10 +228,12 @@ impl FileStreamer {
         });
 
         let mut ctx = PlayingContext {
+            seq: 0,
             path,
             scaler,
             dma_pool,
             encoder,
+            vaapi_cache: vec![],
             next_frame: Instant::now(),
         };
 
@@ -220,11 +243,11 @@ impl FileStreamer {
     }
 }
 
-pub struct ActiveScreencast {
+pub struct FileVideoStream {
     pub frame_pool: FramePool,
 }
 
-impl ActiveScreencast {
+impl FileVideoStream {
     pub fn close(self) {
         todo!()
     }
@@ -233,7 +256,7 @@ impl ActiveScreencast {
 pub async fn init_screencast(
     file_path: impl AsRef<Path>,
     notifier: CaptureNotifier,
-) -> anyhow::Result<(ActiveScreencast, ScreencastPreview)> {
+) -> anyhow::Result<(ActiveVideoStream, FrameRecv<gpui::DMABuffer>)> {
     let (preview_tx, preview_rx) = frame_channel();
 
     let ring = HeapRb::new(4);
@@ -262,9 +285,9 @@ pub async fn init_screencast(
     });
 
     Ok((
-        ActiveScreencast {
+        ActiveVideoStream::File(FileVideoStream {
             frame_pool: FramePool::new(empty_frames_prod, ready_frames_cons),
-        },
+        }),
         preview_rx,
     ))
 }
