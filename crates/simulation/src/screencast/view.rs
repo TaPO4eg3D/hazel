@@ -5,13 +5,13 @@ use std::{
     str::FromStr as _,
 };
 
-use capture::video::frames::FrameRecv;
+use capture::video::{frames::FrameRecv, linux::file::FileVideoStreamMode};
 use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, ParentElement as _, Render, Styled as _, Window,
     div, prelude::FluentBuilder, surface,
 };
-use gpui_component::{StyledExt as _, white};
+use gpui_component::{StyledExt as _, button::Button, white};
 use rpc::{
     client::ClientConnection,
     common::Empty,
@@ -107,7 +107,10 @@ impl ConnectionState {
         let streaming = self.streaming.clone();
 
         async move {
-            let Some(mut preview) = streaming.start_screencast_from_file(file_path).await else {
+            let Some(mut preview) = streaming
+                .start_screencast_from_file(FileVideoStreamMode::Manual, file_path)
+                .await
+            else {
                 panic!("Failed to start the file cast");
             };
 
@@ -172,6 +175,8 @@ pub struct ScreenCastView {
     last_frame: Instant,
     frametime: f64,
 
+    show_host: bool,
+
     _streaming_task: gpui::Task<()>,
 }
 
@@ -201,20 +206,20 @@ impl ScreenCastView {
                     .unwrap()
                     .await;
 
-                // cx.spawn({
-                //     let this = this.clone();
+                cx.spawn({
+                    let this = this.clone();
 
-                //     async move |cx| {
-                //         while let Some(frame) = preview.recv().await {
-                //             this.update(cx, |this, cx| {
-                //                 this.preview = Some(frame);
-                //                 cx.notify();
-                //             })
-                //             .ok();
-                //         }
-                //     }
-                // })
-                // .detach();
+                    async move |cx| {
+                        while let Some(frame) = preview.recv().await {
+                            this.update(cx, |this, cx| {
+                                this.preview = Some(frame);
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                })
+                .detach();
 
                 cx.spawn({
                     let this = this.clone();
@@ -245,6 +250,7 @@ impl ScreenCastView {
                 watch: None,
                 last_frame: Instant::now(),
                 frametime: 0.,
+                show_host: false,
                 _streaming_task: task,
             }
         })
@@ -254,44 +260,87 @@ impl ScreenCastView {
 impl Render for ScreenCastView {
     fn render(
         &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::prelude::Context<Self>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::prelude::Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
         let fps = 1000. / self.frametime;
 
         div()
             .v_flex()
             .size_full()
-            // Video block
+            .gap_2()
+            // Control panel
             .child(
                 div()
                     .flex()
-                    .size_full()
-                    // Preview of screen capture
-                    // .child(
-                    //     div()
-                    //         .size_full()
-                    //         .flex_col()
-                    //         .text_color(white())
-                    //         .child("HOST")
-                    //         .when_some(self.preview.clone(), |this, frame| {
-                    //             // this.child(surface(frame).size_full())
-                    //             this
-                    //         }),
-                    // )
-                    // Reciever
+                    .gap_2()
+                    .child(Button::new("auto").label("AUTO").on_click(cx.listener(
+                        |this, _, _, _| {
+                            this.host
+                                .streaming
+                                .set_file_stream_mode(FileVideoStreamMode::Auto(60.));
+                        },
+                    )))
+                    .child(Button::new("manual").label("MANUAL").on_click(cx.listener(
+                        |this, _, _, _| {
+                            this.host
+                                .streaming
+                                .set_file_stream_mode(FileVideoStreamMode::Manual);
+                        },
+                    )))
                     .child(
-                        div()
-                            .size_full()
-                            .flex_col()
-                            .text_color(white())
-                            .child(format!("FPS: {fps} [{}]", self.frametime))
-                            .when_some(self.watch.clone(), |this, frame| {
-                                this.child(surface(frame).size_full())
-                            }),
+                        Button::new("next")
+                            .label("NEXT FRAME")
+                            .on_click(cx.listener(|this, _, _, _| {
+                                this.host.streaming.next_file_stream_frame();
+                            })),
                     ),
             )
-            // Control panel
-            .child(div())
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(Button::new("host").label("HOST").on_click(cx.listener(
+                        |this, _, _, _| {
+                            this.show_host = true;
+                        },
+                    )))
+                    .child(Button::new("client").label("CLIENT").on_click(cx.listener(
+                        |this, _, _, _| {
+                            this.show_host = false;
+                        },
+                    ))),
+            )
+            // Video block
+            .child(
+                div().flex().size_full().child(
+                    div()
+                        .size_full()
+                        .flex_col()
+                        .text_color(white())
+                        .child(format!("FPS: {fps} [{}]", self.frametime))
+                        .when_else(
+                            self.show_host,
+                            {
+                                let frame = self.preview.clone();
+
+                                move |this| {
+                                    this.when_some(frame, |this, frame| {
+                                        this.child(surface(frame).size_full())
+                                    })
+                                }
+                            },
+                            {
+                                let frame = self.watch.clone();
+
+                                move |this| {
+                                    this.when_some(frame, |this, frame| {
+                                        this.child(surface(frame).size_full())
+                                    })
+                                }
+                            },
+                        ),
+                ),
+            )
     }
 }

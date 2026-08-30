@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crossbeam::channel;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
     traits::{Producer as _, Split as _},
@@ -49,7 +50,10 @@ pub struct FileStreamer {
 struct FileStreamerParams {
     fps: f64,
 
+    default_mode: FileVideoStreamMode,
+
     notifier: CaptureNotifier,
+    command_rx: Option<crossbeam::channel::Receiver<FileVideoStreamCommand>>,
 
     empty_frames_cons: Option<HeapCons<Vec<u8>>>,
     ready_frames_prod: Option<HeapProd<Vec<u8>>>,
@@ -66,6 +70,9 @@ struct PlayingContext<const N: usize> {
     scaler: ScalingContext,
     next_frame: Instant,
 
+    mode: FileVideoStreamMode,
+
+    command_rx: crossbeam::channel::Receiver<FileVideoStreamCommand>,
     vaapi_cache: Vec<(gpui::DMABuffer, VAAPIFrame)>,
 
     encoder: VAAPIEncoder,
@@ -136,6 +143,25 @@ impl FileStreamer {
                 continue;
             }
 
+            match cx.mode {
+                FileVideoStreamMode::Auto(_) => {
+                    if let Ok(cmd) = cx.command_rx.try_recv() {
+                        match cmd {
+                            FileVideoStreamCommand::SwitchMode(mode) => cx.mode = mode,
+                            FileVideoStreamCommand::NextFrame => {}
+                        }
+                    }
+                }
+                FileVideoStreamMode::Manual => {
+                    if let Ok(cmd) = cx.command_rx.recv() {
+                        match cmd {
+                            FileVideoStreamCommand::SwitchMode(mode) => cx.mode = mode,
+                            FileVideoStreamCommand::NextFrame => {}
+                        }
+                    }
+                }
+            }
+
             decoder.send_packet(&packet).unwrap();
 
             // Not really efficient but hey, we're testing stuff
@@ -143,14 +169,18 @@ impl FileStreamer {
             let mut rgba_frame = frame::Video::empty();
 
             // TODO: Fix this shitty loop.
-            // It don't yet know if it's okay for testing purposes
+            // I don't yet know if it's okay for testing purposes
             // but it feels very wrong to rely on CPU so heavily
             // when in the real pipeline we do GPU processing End-to-End
             while decoder.receive_frame(&mut decoded_frame).is_ok() {
-                let now = Instant::now();
-                if cx.next_frame > now {
-                    thread::sleep(cx.next_frame - now);
+                if matches!(cx.mode, FileVideoStreamMode::Auto(_)) {
+                    let now = Instant::now();
+
+                    if cx.next_frame > now {
+                        thread::sleep(cx.next_frame - now);
+                    }
                 }
+
                 let now = Instant::now();
 
                 cx.scaler.run(&decoded_frame, &mut rgba_frame).unwrap();
@@ -234,6 +264,8 @@ impl FileStreamer {
             scaler,
             dma_pool,
             encoder,
+            mode: self.params.default_mode,
+            command_rx: self.params.command_rx.take().unwrap(),
             vaapi_cache: vec![],
             next_frame: Instant::now(),
         };
@@ -244,11 +276,34 @@ impl FileStreamer {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum FileVideoStreamMode {
+    Auto(f64),
+    Manual,
+}
+
+#[derive(Clone, Copy)]
+pub enum FileVideoStreamCommand {
+    SwitchMode(FileVideoStreamMode),
+    NextFrame,
+}
+
 pub struct FileVideoStream {
+    command_tx: crossbeam::channel::Sender<FileVideoStreamCommand>,
     pub frame_pool: FramePool,
 }
 
 impl FileVideoStream {
+    pub fn set_mode(&self, mode: FileVideoStreamMode) {
+        let _ = self
+            .command_tx
+            .send(FileVideoStreamCommand::SwitchMode(mode));
+    }
+
+    pub fn next_frame(&self) {
+        let _ = self.command_tx.send(FileVideoStreamCommand::NextFrame);
+    }
+
     pub fn close(self) {
         todo!()
     }
@@ -256,6 +311,7 @@ impl FileVideoStream {
 
 pub async fn init_screencast(
     file_path: impl AsRef<Path>,
+    default_mode: FileVideoStreamMode,
     notifier: CaptureNotifier,
 ) -> anyhow::Result<(ActiveVideoStream, FrameRecv<gpui::DMABuffer>)> {
     let (preview_tx, preview_rx) = frame_channel();
@@ -266,6 +322,8 @@ pub async fn init_screencast(
     let ring = HeapRb::new(4);
     let (ready_frames_prod, ready_frames_cons) = ring.split();
 
+    let (command_tx, command_rx) = channel::bounded(1);
+
     for _ in 0..4 {
         _ = empty_frames_prod.try_push(vec![]);
     }
@@ -274,7 +332,9 @@ pub async fn init_screencast(
         file_path,
         FileStreamerParams {
             fps: DEFAULT_FRAMERATE as f64,
+            default_mode,
             notifier,
+            command_rx: Some(command_rx),
             empty_frames_cons: Some(empty_frames_cons),
             ready_frames_prod: Some(ready_frames_prod),
             preview_tx,
@@ -287,6 +347,7 @@ pub async fn init_screencast(
 
     Ok((
         ActiveVideoStream::File(FileVideoStream {
+            command_tx,
             frame_pool: FramePool::new(empty_frames_prod, ready_frames_cons),
         }),
         preview_rx,
