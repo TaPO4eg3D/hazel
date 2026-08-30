@@ -93,6 +93,11 @@ impl PendingFrame {
     }
 
     fn process(&mut self) -> bool {
+        // With this implemnation there's a high change of triggering
+        // FEC even we don't really need to.
+        //
+        // Add a some sort of frame deadline? Or is it better to trigger
+        // FEC but to deliver the frame as fast as possible?
         let total_processed = self.data_shards + self.recovery_shards;
         if total_processed < self.header.data_shards as usize {
             return false;
@@ -208,6 +213,7 @@ impl VideoStreamingClientState {
         } else {
             // All frames are claimed
             println!("Can't keep up with the frames");
+
             let frame = self
                 .pending_frames
                 .iter_mut()

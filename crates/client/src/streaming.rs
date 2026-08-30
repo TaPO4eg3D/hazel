@@ -29,7 +29,10 @@ use capture::{
 use capture::video::{
     self,
     frames::FrameRecv,
-    linux::ActiveVideoStream,
+    linux::{
+        ActiveVideoStream,
+        file::{FileVideoStream, FileVideoStreamMode},
+    },
     playback::{DecodingWorkerCommand, VideoPlaybackController},
 };
 
@@ -626,18 +629,34 @@ impl StreamingState {
     #[cfg(target_os = "linux")]
     pub async fn start_screencast_from_file(
         &self,
+        default_mode: FileVideoStreamMode,
         file_path: impl AsRef<Path>,
     ) -> Option<FrameRecv<gpui::DMABuffer>> {
         let notifier = self.capture_notifier.clone();
 
-        let (cast, preview) = capture::video::linux::file::init_screencast(file_path, notifier)
-            .await
-            .ok()?;
+        let (cast, preview) =
+            capture::video::linux::file::init_screencast(file_path, default_mode, notifier)
+                .await
+                .ok()?;
 
         let mut active_screencast = self.active_screencast.lock().unwrap();
         *active_screencast = Some(cast);
 
         Some(preview)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn set_file_stream_mode(&self, mode: FileVideoStreamMode) {
+        if let Some(ActiveVideoStream::File(stream)) = &*self.active_screencast.lock().unwrap() {
+            stream.set_mode(mode);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn next_file_stream_frame(&self) {
+        if let Some(ActiveVideoStream::File(stream)) = &*self.active_screencast.lock().unwrap() {
+            stream.next_frame();
+        }
     }
 
     #[cfg(target_os = "linux")]
