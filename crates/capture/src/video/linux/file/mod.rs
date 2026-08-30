@@ -201,6 +201,7 @@ impl FileStreamer {
                 };
 
                 self.params.preview_tx.send(buff);
+
                 cx.encoder.encode(vaapi_frame, cx.pts);
                 cx.pts += 1;
 

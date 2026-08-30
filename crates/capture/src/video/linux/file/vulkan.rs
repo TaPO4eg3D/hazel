@@ -13,16 +13,14 @@ use gpui::DMABufferPlane;
 struct DMAFrame {
     fd: OwnedFd,
 
+    upload_fence: vk::Fence,
     image: vk::Image,
-    image_memory: vk::DeviceMemory,
 
     /// A buffer which is used to copy image to the GPU
     buffer: vk::Buffer,
-    buffer_memory: vk::DeviceMemory,
+
     // Memory accessible from CPU
     buffer_mapped_memory: *mut c_void,
-
-    command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
 }
 
@@ -32,7 +30,7 @@ struct DMAFrame {
 /// On Pipewire it works in similar way. It cycles through a pool of
 /// pre-allocated DMA-BUFs
 pub struct VkDmaBufferPool<const POOL_SIZE: usize> {
-    entry: ash::Entry,
+    _entry: ash::Entry,
     instance: ash::Instance,
 
     device: ash::Device,
@@ -157,7 +155,7 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
             };
 
             let mut instance = Self {
-                entry,
+                _entry: entry,
                 instance,
                 physical_device,
                 device,
@@ -180,10 +178,6 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
 
     pub fn push_image(&mut self, image: &[u8]) -> gpui::DMABuffer {
         let frame = &mut self.frame_pool[self.frame_idx];
-
-        // Usually here comes the fencing, aka we're waiting all GPU work for this frame is done.
-        // But I am planning to allocate a huge pool, so there should be no need in that.
-        // Buuuut I leave this comment here just in case
 
         unsafe {
             ptr::copy_nonoverlapping(
@@ -301,8 +295,16 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
 
         unsafe {
             self.device
-                .queue_submit(self.queue, &[submit_info], vk::Fence::null())
-                .unwrap()
+                .queue_submit(self.queue, &[submit_info], frame.upload_fence)
+                .unwrap();
+
+            // I faced a bug where handoff to the encoder was too fast
+            // and the frame was only partially encoded.
+            // This line forces the CPU to wait GPU till the work completion
+            // Vulkan is hard...
+            self.device
+                .wait_for_fences(&[frame.upload_fence], true, u64::MAX)
+                .expect("Failed to wait for Vulkan upload");
         };
 
         self.frame_idx = (self.frame_idx + 1) % POOL_SIZE;
@@ -485,14 +487,19 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
                     .expect("Failed to allocate VkCommandBuffer")
             }[0];
 
+            let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+            let fence = unsafe {
+                self.device
+                    .create_fence(&fence_info, None)
+                    .expect("Failed to create upload fence")
+            };
+
             self.frame_pool.push(DMAFrame {
                 fd,
                 image,
-                image_memory,
                 buffer,
-                buffer_memory,
+                upload_fence: fence,
                 buffer_mapped_memory,
-                command_pool,
                 command_buffer,
             });
         }

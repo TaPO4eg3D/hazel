@@ -29,6 +29,8 @@ ringbuf = { workspace = true }
 tracy-client = { workspace = true }
 reed-solomon-simd = { workspace = true }
 
+log = { workspace = true }
+
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"
 

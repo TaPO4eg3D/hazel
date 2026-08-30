@@ -231,7 +231,7 @@ impl VideoStreamingClientState {
             self.last_frame = now;
 
             self.decoder.decode(&frame.data);
-            if let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
+            while let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
                 // TODO: Deregister the client if the sender is dead
                 _ = self.frame_tx.send_blocking(decoded_frame).is_err();
             }

@@ -1509,6 +1509,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_platform",
+ "log",
  "reed-solomon-simd",
  "ringbuf",
  "rmp-serde",

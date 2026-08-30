@@ -8,7 +8,7 @@ use std::{
 use capture::video::{frames::FrameRecv, linux::file::FileVideoStreamMode};
 use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, ParentElement as _, Render, Styled as _, Window,
+    App, AppContext, AsyncApp, Entity, ParentElement as _, Render, Styled as _, Window,
     div, prelude::FluentBuilder, surface,
 };
 use gpui_component::{StyledExt as _, button::Button, white};
@@ -260,7 +260,7 @@ impl ScreenCastView {
 impl Render for ScreenCastView {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::prelude::Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
         let fps = 1000. / self.frametime;
