@@ -216,9 +216,8 @@ impl VAAPIDecoder {
                     width,
                     height,
                     DrmFormat {
-                        // TODO: Format from layer is PER layer,
-                        // figure out how to handle it. For now it's fine
-                        // to hardcode, since VAAPI is almost always NV12
+                        // Format from layer is PER layer.
+                        // We explicetly produce NV12 during the encoding
                         code: DrmFourcc::Nv12,
                         modifier: DrmModifier::from(modifier),
                     },

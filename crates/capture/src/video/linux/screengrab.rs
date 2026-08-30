@@ -1,10 +1,4 @@
-use std::{
-    io::Cursor,
-    os::fd::OwnedFd,
-    sync::{Arc, Mutex},
-    task::{Poll, Waker},
-    thread,
-};
+use std::{io::Cursor, os::fd::OwnedFd, thread};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -45,7 +39,7 @@ use pipewire::{
 };
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
-    traits::{Consumer, Producer, Split},
+    traits::{Producer, Split},
 };
 
 use crate::{
@@ -54,7 +48,7 @@ use crate::{
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::ActiveVideoStream,
-        wrapper::{DrmFrame, DrmInfo, VAAPIFrame},
+        wrapper::{DrmInfo, VAAPIFrame},
     },
 };
 

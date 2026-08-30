@@ -1,12 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf, str::FromStr as _};
+use std::path::PathBuf;
 
-use client::{
-    gpui_tokio::{self},
-    streaming::StreamingState,
-};
+use client::gpui_tokio::{self};
 use gpui::WindowOptions;
 use gpui_platform::application;
-use rpc::models::markers::Id;
 use server::{config::Config, start_server};
 use tokio::runtime::Builder;
 

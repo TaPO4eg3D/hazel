@@ -29,10 +29,7 @@ use capture::{
 use capture::video::{
     self,
     frames::FrameRecv,
-    linux::{
-        ActiveVideoStream,
-        file::{FileVideoStream, FileVideoStreamMode},
-    },
+    linux::{ActiveVideoStream, file::FileVideoStreamMode},
     playback::{DecodingWorkerCommand, VideoPlaybackController},
 };
 
@@ -299,58 +296,61 @@ impl PacketSender {
             return false;
         };
 
-        let Some(mut frame) = screencast.get_frame_pool().try_get_frame() else {
-            return false;
-        };
+        let mut sent_frame = false;
+        let frame_pool = screencast.get_frame_pool();
 
-        let data_shards_len = ((frame.len() as f32) / shard_len as f32).ceil() as usize;
-        let rec_shards_len =
-            ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
+        while let Some(mut frame) = frame_pool.try_get_frame() {
+            sent_frame = true;
 
-        let data_size = frame.len();
-        let padding = (data_shards_len * shard_len) - frame.len();
+            let data_shards_len = ((frame.len() as f32) / shard_len as f32).ceil() as usize;
+            let rec_shards_len =
+                ((packet_loss / (1. - packet_loss)) * data_shards_len as f32).ceil() as usize;
 
-        frame.extend(std::iter::repeat_n(0, padding));
+            let data_size = frame.len();
+            let padding = (data_shards_len * shard_len) - frame.len();
 
-        // TODO: Fork this library? It allocates memory on every invocation,
-        // this kinda defeats the purpose of the dedicated frame pool
-        let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
-            .expect("Failed to initialize Reed Solomon Encoder");
+            frame.extend(std::iter::repeat_n(0, padding));
 
-        frame.chunks_exact(shard_len).for_each(|chunk| {
-            encoder
-                .add_original_shard(chunk)
-                .expect("All preparations done above, should not fail");
-        });
+            // TODO: Fork this library? It allocates memory on every invocation,
+            // this kinda defeats the purpose of the dedicated frame pool
+            let mut encoder = ReedSolomonEncoder::new(data_shards_len, rec_shards_len, shard_len)
+                .expect("Failed to initialize Reed Solomon Encoder");
 
-        let encoded = encoder.encode().expect("Should not fail");
-
-        let frame_chunks = frame
-            .chunks_exact(shard_len)
-            .chain(encoded.recovery_iter())
-            .enumerate()
-            .map(|(i, chunk)| BorrowedEncodedVideoFrameChunk {
-                header: StreamPacketHeader {
-                    seq: self.screen.seq,
-                    shard: i as u16,
-                    data_shards: data_shards_len as u16,
-                    shard_size: shard_len as u16,
-                    recovery_shards: rec_shards_len as u16,
-                    data_size: data_size as u64,
-                },
-                data: chunk,
+            frame.chunks_exact(shard_len).for_each(|chunk| {
+                encoder
+                    .add_original_shard(chunk)
+                    .expect("All preparations done above, should not fail");
             });
 
-        for frame_chunk in frame_chunks {
-            self.buf.clear();
-            to_udp_packet_bytes(&mut self.buf, user_id.value, &frame_chunk);
+            let encoded = encoder.encode().expect("Should not fail");
 
-            // TODO: Limit throughput, we don't want to spam packets way too fast?
-            _ = self.socket.send_to(&self.buf, addr);
-            self.last_send = Instant::now();
+            let frame_chunks = frame
+                .chunks_exact(shard_len)
+                .chain(encoded.recovery_iter())
+                .enumerate()
+                .map(|(i, chunk)| BorrowedEncodedVideoFrameChunk {
+                    header: StreamPacketHeader {
+                        seq: self.screen.seq,
+                        shard: i as u16,
+                        data_shards: data_shards_len as u16,
+                        shard_size: shard_len as u16,
+                        recovery_shards: rec_shards_len as u16,
+                        data_size: data_size as u64,
+                    },
+                    data: chunk,
+                });
+
+            for frame_chunk in frame_chunks {
+                self.buf.clear();
+                to_udp_packet_bytes(&mut self.buf, user_id.value, &frame_chunk);
+
+                // TODO: Limit throughput, we don't want to spam packets way too fast?
+                _ = self.socket.send_to(&self.buf, addr);
+                self.last_send = Instant::now();
+            }
         }
 
-        true
+        sent_frame
     }
 
     #[cfg(target_os = "linux")]

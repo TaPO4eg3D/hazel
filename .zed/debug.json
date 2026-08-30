@@ -5,15 +5,12 @@
 [
   {
     "adapter": "CodeLLDB",
-    "label": "cargo run -p hazel-server",
+    "label": "Server",
     "build": {
       "label": "cargo run -p hazel-server",
       "command": "cargo",
       "args": ["build", "--package", "hazel-server"],
-      "env": {
-        "RUSTC_TOOLCHAIN": "/home/tapo4eg3d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu",
-      },
-      "cwd": "/home/tapo4eg3d/Projects/hazel/crates/server",
+      "cwd": "$ZED_WORKTREE_ROOT/crates/simulation",
       "use_new_terminal": false,
       "allow_concurrent_runs": false,
       "reveal": "always",
@@ -25,6 +22,34 @@
       "save": "none",
       "hooks": [],
     },
+    "sourceLanguages": ["rust"],
+  },
+  {
+    "adapter": "CodeLLDB",
+    "label": "SIMULATION: Screencast from file",
+    "request": "launch",
+    "build": {
+      "label": "cargo run -p hazel-server",
+      "command": "cargo",
+      "args": ["build", "--package", "simulation"],
+      "cwd": "$ZED_WORKTREE_ROOT/crates/simulation",
+      "use_new_terminal": false,
+      "allow_concurrent_runs": false,
+      "reveal": "always",
+      "reveal_target": "dock",
+      "hide": "never",
+      "shell": "system",
+      "show_summary": false,
+      "show_command": false,
+      "save": "none",
+      "hooks": [],
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/simulation",
+    "args": [
+      "screen-cast",
+      "--mode", "file",
+      "--file", "/home/tapo4eg3d/Downloads/test.mov",
+    ],
     "sourceLanguages": ["rust"],
   },
 ]

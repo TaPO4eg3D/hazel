@@ -31,6 +31,8 @@ enum Scenarios {
 }
 
 fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error")).init();
+
     let cli = Cli::parse();
 
     match cli.scenarios {

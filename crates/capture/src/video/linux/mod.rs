@@ -24,7 +24,7 @@ impl ActiveVideoStream {
             Self::Screen(stream) => {
                 stream.close();
             }
-            Self::File(stream) => {}
+            Self::File(_stream) => {}
         }
     }
 }
