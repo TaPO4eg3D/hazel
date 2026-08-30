@@ -237,7 +237,13 @@ impl VideoStreamingClientState {
             }
 
             self.next_seq = chunk.header.seq + 1;
-            frame.reset();
+
+            // Reset all stale frames
+            for frame in self.pending_frames.iter_mut() {
+                if frame.in_constuction && frame.header.seq < self.next_seq {
+                    frame.reset();
+                }
+            }
         }
     }
 }
