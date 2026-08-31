@@ -1,4 +1,3 @@
-pub mod capture;
 pub mod linux;
 pub mod playback;
 
