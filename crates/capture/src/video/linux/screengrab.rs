@@ -102,10 +102,13 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 }
 
 struct EncodingState {
+    framerate: f64,
+
     encoder: VAAPIEncoder,
     vaapi_cache: Vec<(DrmInfo, VAAPIFrame)>,
 
     notifier: CaptureNotifier,
+    preview_tx: FrameSender<gpui::DMABuffer>,
 
     /// (seq, idx in vaapi_cache)
     last_frame: (u64, usize),
@@ -296,7 +299,9 @@ impl<'a> ScreencastStream<'a> {
         this.format
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
+
         *this.encoding_state.borrow_mut() = None;
+        this.framepacing_timer.update_timer(None, None);
 
         println!("Format updated: {:#?}", this.format);
 
@@ -393,7 +398,9 @@ impl<'a> ScreencastStream<'a> {
                 });
 
                 *state = Some(EncodingState {
+                    framerate: this.framerate,
                     encoder,
+                    preview_tx: this.preview_tx.clone(),
                     notifier: this.notifier.clone(),
                     vaapi_cache: vec![],
                     last_frame: (0, 0),
@@ -419,34 +426,37 @@ impl<'a> ScreencastStream<'a> {
             }
         };
 
-        this.preview_tx.send(DMABuffer {
-            fd: drm_info.fd as i32,
-            width: drm_info.width as u32,
-            height: drm_info.height as u32,
-            format: DrmFormat {
-                code: drm_info.format,
-                modifier: drm_info.modifier,
-            },
-            planes: smallvec![DMABufferPlane {
-                offset: drm_info.plane_offset as usize,
-                stride: drm_info.plane_stride as usize,
-            }],
-        });
-
         // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
-            let now = Instant::now();
-            let frametime = 1000. / this.framerate;
+            let start = Instant::now();
+            let frametime = Duration::from_secs_f64((1000. / this.framerate) / 1000.);
 
-            let delta = (now - state.last_frame_ts).as_secs_f64() * 1000.;
+            let delta = start - state.last_frame_ts;
             if delta >= frametime {
+                this.preview_tx.send(DMABuffer {
+                    fd: drm_info.fd as i32,
+                    width: drm_info.width as u32,
+                    height: drm_info.height as u32,
+                    format: DrmFormat {
+                        code: drm_info.format,
+                        modifier: drm_info.modifier,
+                    },
+                    planes: smallvec![DMABufferPlane {
+                        offset: drm_info.plane_offset as usize,
+                        stride: drm_info.plane_stride as usize,
+                    }],
+                });
+
                 state.encoder.encode(vaapi_frame, header.seq() as i64);
 
-                let next_invoke = Some(Duration::from_secs_f64(frametime / 1000.));
-                this.framepacing_timer.update_timer(next_invoke, None);
+                let now = Instant::now();
+                let delta = now - start;
 
-                state.last_frame_ts = Instant::now();
+                state.last_frame_ts = start;
+                this.framepacing_timer
+                    .update_timer(Some(frametime - delta), None);
+
                 this.notifier.notify_screen();
             }
 
@@ -536,26 +546,42 @@ pub async fn init_screencast(
                         return;
                     };
 
-                    let frametime = 1000. / 60.;
-                    let delta = (Instant::now() - state.last_frame_ts).as_secs_f64() * 1000.;
+                    let start = Instant::now();
+                    let frametime = Duration::from_secs_f64((1000. / state.framerate) / 1000.);
 
+                    let delta = start - state.last_frame_ts;
                     if delta < frametime {
-                        let next_invoke = Duration::from_secs_f64((frametime - delta) / 1000.);
-                        timer.update_timer(Some(next_invoke), None);
+                        timer.update_timer(Some(frametime - delta), None);
 
                         return;
                     }
 
                     let (seq, idx) = state.last_frame;
-                    let (_, vaapi_frame) = &mut state.vaapi_cache[idx];
+                    let (drm_info, vaapi_frame) = &mut state.vaapi_cache[idx];
+
+                    state.preview_tx.send(DMABuffer {
+                        fd: drm_info.fd as i32,
+                        width: drm_info.width as u32,
+                        height: drm_info.height as u32,
+                        format: DrmFormat {
+                            code: drm_info.format,
+                            modifier: drm_info.modifier,
+                        },
+                        planes: smallvec![DMABufferPlane {
+                            offset: drm_info.plane_offset as usize,
+                            stride: drm_info.plane_stride as usize,
+                        }],
+                    });
 
                     state.encoder.encode(vaapi_frame, seq as i64);
-                    state.last_frame_ts = Instant::now();
+
+                    let now = Instant::now();
+                    let delta = now - start;
+
+                    state.last_frame_ts = start;
+                    timer.update_timer(Some(frametime - delta), None);
 
                     state.notifier.notify_screen();
-
-                    let next_invoke = Some(Duration::from_secs_f64(frametime / 1000.));
-                    timer.update_timer(next_invoke, None);
                 }
             });
 

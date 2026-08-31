@@ -803,7 +803,6 @@ impl ServerConnectionState {
             while let Some(frame) = preview.recv().await {
                 this.update(cx, |this, cx| {
                     this.preview_frame = Some(frame);
-                    this.sync_server_state(cx);
 
                     cx.notify();
                 })
