@@ -16,6 +16,7 @@ struct FrameChannelInner<T> {
     closed: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct FrameSender<T> {
     inner: Arc<Mutex<FrameChannelInner<T>>>,
 }
