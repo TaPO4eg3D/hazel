@@ -200,7 +200,7 @@ impl VAAPIEncoder {
 
             // Make keyframes self-contained
             (*video_ctx).flags = AV_CODEC_FLAG_CLOSED_GOP as i32;
-            // Produce keyframe every two seconds.
+            // Produce keyframe every two seconds worth of frames
             // TODO: Move on fully on-demand IDR generation
             (*video_ctx).gop_size = framerate as i32 * 2;
             // B-Frames require buffering, disabling them
@@ -239,7 +239,7 @@ impl VAAPIEncoder {
         // Disable internal buffering in GPU
         encoder_options.set("async_depth", "1");
         // Always generate full IDR (a real random-access point, not just an I-frame)
-        encoder_options.set("force-idr", "1");
+        encoder_options.set("idr_interval", "0");
 
         let encoder = video
             .open_with(encoder_options)

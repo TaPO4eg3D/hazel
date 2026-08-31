@@ -1,4 +1,11 @@
-use std::{io::Cursor, os::fd::OwnedFd, thread};
+use std::{
+    cell::RefCell,
+    io::Cursor,
+    os::fd::OwnedFd,
+    rc::Rc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result as AResult;
 use ashpd::{
@@ -34,6 +41,7 @@ use pipewire::{
     self as pw,
     buffer::Buffer,
     core::CoreRc,
+    loop_::TimerSource,
     properties::properties,
     stream::{Stream, StreamListener, StreamRc},
 };
@@ -93,9 +101,25 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
     Pod::from_bytes(buffer).unwrap()
 }
 
-struct ScreencastStreamData {
-    encoder: Option<VAAPIEncoder>,
+struct EncodingState {
+    encoder: VAAPIEncoder,
+    vaapi_cache: Vec<(DrmInfo, VAAPIFrame)>,
 
+    notifier: CaptureNotifier,
+
+    /// (seq, idx in vaapi_cache)
+    last_frame: (u64, usize),
+    last_frame_ts: Instant,
+}
+
+type SharedEncodingState = Rc<RefCell<Option<EncodingState>>>;
+
+struct ScreencastStreamData<'a> {
+    framerate: f64,
+
+    framepacing_timer: TimerSource<'a>,
+
+    encoding_state: SharedEncodingState,
     notifier: CaptureNotifier,
     format: pw::spa::param::video::VideoInfoRaw,
 
@@ -103,17 +127,17 @@ struct ScreencastStreamData {
 
     empty_frame_queue: Option<HeapCons<Vec<u8>>>,
     ready_frame_queue: Option<HeapProd<Vec<u8>>>,
-
-    vaapi_cache: Vec<(DrmInfo, VAAPIFrame)>,
 }
 
-struct ScreencastStream {
+struct ScreencastStream<'a> {
     _stream: StreamRc,
-    _listener: StreamListener<ScreencastStreamData>,
+    _listener: StreamListener<ScreencastStreamData<'a>>,
 }
 
 struct ScreencastStreamParams {
+    framerate: f64,
     core: CoreRc,
+
     node_id: u32,
 
     notifier: CaptureNotifier,
@@ -124,9 +148,12 @@ struct ScreencastStreamParams {
     ready_frame_queue: HeapProd<Vec<u8>>,
 }
 
-impl ScreencastStream {
+impl<'a> ScreencastStream<'a> {
     fn new(
+        encoding_state: SharedEncodingState,
+        framepacing_timer: TimerSource<'a>,
         ScreencastStreamParams {
+            framerate,
             node_id,
             core,
             notifier,
@@ -147,16 +174,17 @@ impl ScreencastStream {
 
         let listener = stream
             .add_local_listener_with_user_data(ScreencastStreamData {
+                encoding_state,
+
+                framepacing_timer,
+                framerate,
                 preview_tx,
 
                 notifier,
 
-                encoder: None,
                 format: Default::default(),
                 empty_frame_queue: Some(empty_frame_queue),
                 ready_frame_queue: Some(ready_frame_queue),
-
-                vaapi_cache: vec![],
             })
             .param_changed(Self::on_param_changed)
             .process(Self::on_process)
@@ -268,7 +296,7 @@ impl ScreencastStream {
         this.format
             .parse(param)
             .expect("Failed to parse param changed to VideoInfoRaw");
-        this.encoder = None;
+        *this.encoding_state.borrow_mut() = None;
 
         println!("Format updated: {:#?}", this.format);
 
@@ -349,10 +377,11 @@ impl ScreencastStream {
         let width = this.format.size().width;
         let height = this.format.size().height;
 
-        let encoder = match this.encoder.as_mut() {
-            Some(encoder) => encoder,
+        let mut state = this.encoding_state.borrow_mut();
+        let state = match state.as_mut() {
+            Some(state) => state,
             None => {
-                this.encoder = Some(VAAPIEncoder::new(VAAPIEncoderParams {
+                let encoder = VAAPIEncoder::new(VAAPIEncoderParams {
                     height,
                     width,
 
@@ -361,24 +390,32 @@ impl ScreencastStream {
 
                     empty_frame_queue: this.empty_frame_queue.take().unwrap(),
                     ready_frame_queue: this.ready_frame_queue.take().unwrap(),
-                }));
+                });
 
-                this.encoder.as_mut().unwrap()
+                *state = Some(EncodingState {
+                    encoder,
+                    notifier: this.notifier.clone(),
+                    vaapi_cache: vec![],
+                    last_frame: (0, 0),
+                    last_frame_ts: Instant::now(),
+                });
+
+                state.as_mut().unwrap()
             }
         };
 
-        let vaapi_frame = match this
+        let (vaapi_frame, idx) = match state
             .vaapi_cache
             .iter()
             .position(|(info, _)| info == &drm_info)
         {
-            Some(idx) => &mut this.vaapi_cache[idx].1,
+            Some(idx) => (&mut state.vaapi_cache[idx].1, idx),
             None => {
-                let idx = this.vaapi_cache.len();
-                let vaapi_frame = encoder.alloc_frame(&drm_info);
+                let idx = state.vaapi_cache.len();
+                let vaapi_frame = state.encoder.alloc_frame(&drm_info);
 
-                this.vaapi_cache.push((drm_info, vaapi_frame));
-                &mut this.vaapi_cache[idx].1
+                state.vaapi_cache.push((drm_info, vaapi_frame));
+                (&mut state.vaapi_cache[idx].1, idx)
             }
         };
 
@@ -399,9 +436,21 @@ impl ScreencastStream {
         // `seq` advances on each frame, `pts` advances on
         // buffer update
         if let Some(header) = buffer.find_meta::<MetaHeader>() {
-            encoder.encode(vaapi_frame, header.seq() as i64);
+            let now = Instant::now();
+            let frametime = 1000. / this.framerate;
 
-            this.notifier.notify_screen();
+            let delta = (now - state.last_frame_ts).as_secs_f64() * 1000.;
+            if delta >= frametime {
+                state.encoder.encode(vaapi_frame, header.seq() as i64);
+
+                let next_invoke = Some(Duration::from_secs_f64(frametime / 1000.));
+                this.framepacing_timer.update_timer(next_invoke, None);
+
+                state.last_frame_ts = Instant::now();
+                this.notifier.notify_screen();
+            }
+
+            state.last_frame = (header.seq(), idx);
         }
     }
 
@@ -451,6 +500,7 @@ impl ScreenVideoStream {
 }
 
 pub async fn init_screencast(
+    framerate: f64,
     notifier: CaptureNotifier,
 ) -> AResult<(ActiveVideoStream, FrameRecv<gpui::DMABuffer>)> {
     let (_session, node_id, fd) = open_portal().await.expect("failed to open portal");
@@ -477,14 +527,51 @@ pub async fn init_screencast(
             let context = pw::context::ContextRc::new(&mainloop, None)?;
             let core = context.connect_fd_rc(fd, None)?;
 
-            let _stream = ScreencastStream::new(ScreencastStreamParams {
-                core,
-                node_id,
-                preview_tx,
-                notifier,
-                empty_frame_queue: emtpy_frame_queue_cons,
-                ready_frame_queue: ready_frame_queue_prod,
-            })
+            let encoding_state: SharedEncodingState = Rc::new(RefCell::new(None));
+            let framepacing_timer = mainloop.loop_().add_timer({
+                let encoding_state = encoding_state.clone();
+
+                move |timer, _| {
+                    let Some(state) = &mut *encoding_state.borrow_mut() else {
+                        return;
+                    };
+
+                    let frametime = 1000. / 60.;
+                    let delta = (Instant::now() - state.last_frame_ts).as_secs_f64() * 1000.;
+
+                    if delta < frametime {
+                        let next_invoke = Duration::from_secs_f64((frametime - delta) / 1000.);
+                        timer.update_timer(Some(next_invoke), None);
+
+                        return;
+                    }
+
+                    let (seq, idx) = state.last_frame;
+                    let (_, vaapi_frame) = &mut state.vaapi_cache[idx];
+
+                    state.encoder.encode(vaapi_frame, seq as i64);
+                    state.last_frame_ts = Instant::now();
+
+                    state.notifier.notify_screen();
+
+                    let next_invoke = Some(Duration::from_secs_f64(frametime / 1000.));
+                    timer.update_timer(next_invoke, None);
+                }
+            });
+
+            let _stream = ScreencastStream::new(
+                encoding_state,
+                framepacing_timer,
+                ScreencastStreamParams {
+                    framerate,
+                    core,
+                    node_id,
+                    preview_tx,
+                    notifier,
+                    empty_frame_queue: emtpy_frame_queue_cons,
+                    ready_frame_queue: ready_frame_queue_prod,
+                },
+            )
             .expect("Failed to create screencast stream");
 
             let _attached = pw_rx.attach(mainloop.loop_(), {

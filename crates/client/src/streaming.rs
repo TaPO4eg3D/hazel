@@ -616,7 +616,7 @@ impl StreamingState {
     pub async fn start_screencast(&self) -> Option<FrameRecv<gpui::DMABuffer>> {
         let notifier = self.capture_notifier.clone();
 
-        let (cast, preview) = capture::video::linux::screengrab::init_screencast(notifier)
+        let (cast, preview) = capture::video::linux::screengrab::init_screencast(60., notifier)
             .await
             .ok()?;
 
