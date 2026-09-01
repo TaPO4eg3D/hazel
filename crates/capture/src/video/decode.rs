@@ -13,7 +13,10 @@ use ffmpeg_next::{
 use gpui::{DMABuffer, DMABufferPlane};
 use smallvec::SmallVec;
 
-use crate::video::wrapper::GPUDevice;
+use crate::video::{
+    annex::{NalType, annex_b_nals},
+    wrapper::GPUDevice,
+};
 
 unsafe extern "C" fn vaapi_get_format(
     _ctx: *mut AVCodecContext,
@@ -51,6 +54,9 @@ pub struct VAAPIDecoder {
     drm_frames: Vec<Frame>,
 
     packet: *mut AVPacket,
+
+    had_pps: bool,
+    had_idr: bool,
 
     pub frame_queue: VecDeque<DMABuffer>,
 }
@@ -108,6 +114,8 @@ impl VAAPIDecoder {
                 drm_idx: 0,
                 drm_frames,
                 packet,
+                had_idr: false,
+                had_pps: false,
                 frame_queue: VecDeque::new(),
             }
         }
@@ -117,6 +125,22 @@ impl VAAPIDecoder {
     pub fn decode(&mut self, data: &[u8]) {
         unsafe {
             let mut offset = 0usize;
+
+            if !self.had_idr && !self.had_pps {
+                let nals = annex_b_nals(data);
+
+                for nal in nals {
+                    match nal.type_ {
+                        NalType::Idr => self.had_idr = true,
+                        NalType::Pps => self.had_pps = true,
+                        _ => {}
+                    }
+                }
+
+                if !self.had_idr && !self.had_pps {
+                    return;
+                }
+            }
 
             while offset < data.len() {
                 let mut poutbuf: *mut u8 = std::ptr::null_mut();
