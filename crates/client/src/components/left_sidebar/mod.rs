@@ -34,7 +34,7 @@ impl ControlPanel {
 }
 
 impl RenderOnce for ControlPanel {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_channel_name = {
             self.connection_state
                 .read(cx)
@@ -88,11 +88,9 @@ impl RenderOnce for ControlPanel {
                                 .on_click({
                                     let state = self.connection_state.clone();
 
-                                    move |_, _, cx| {
-                                        state.update(cx, |this, cx| {
-                                            this.leave_voice_channel(cx);
-                                        });
-                                    }
+                                    window.listener_for(&state, move |this, _, window, cx| {
+                                        this.leave_voice_channel(window, cx);
+                                    })
                                 }),
                         )
                     }),

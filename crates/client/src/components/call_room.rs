@@ -245,10 +245,38 @@ impl RenderOnce for ScreenSpace {
                         .when_some(state.watching_frame.as_ref(), |this, frame| {
                             this.child(surface(frame.clone()).size_full())
                         })
+                        .when(
+                            state.is_watching_stream() && state.watching_frame.is_none(),
+                            |this| {
+                                use gpui::px;
+                                use gpui_component::spinner::Spinner;
+
+                                this.child(
+                                    div()
+                                        .v_flex()
+                                        .size_full()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .justify_center()
+                                                .items_center()
+                                                .child(Spinner::new().with_size(px(64.))),
+                                        )
+                                        .child(
+                                            Label::new("Loading your stream...")
+                                                .mt_4()
+                                                .text_base()
+                                                .font_semibold(),
+                                        ),
+                                )
+                            },
+                        )
                     };
 
                     let is_stream_playing = cfg_select! {
-                        target_os = "linux" => state.is_stream_playing(),
+                        target_os = "linux" => state.is_streaming() || state.is_watching_stream(),
                         _ => false,
                     };
 
@@ -362,7 +390,7 @@ impl RenderOnce for ControlPanel {
                                 &self.streaming,
                                 |this, _, window, cx| {
                                     #[cfg(target_os = "linux")]
-                                    this.stop_screencast(window, cx);
+                                    cx.spawn_in(window, this.stop_screencast()).detach();
                                 },
                             )),
                     )

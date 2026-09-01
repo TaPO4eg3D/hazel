@@ -463,7 +463,7 @@ impl ServerConnectionState {
         .detach();
     }
 
-    pub fn leave_voice_channel(&mut self, cx: &mut Context<Self>) {
+    pub fn leave_voice_channel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let user_id = self.user_id;
         let Some(channel) = self.get_active_channel_mut() else {
             return;
@@ -474,12 +474,15 @@ impl ServerConnectionState {
 
         self.streaming.disconnect();
 
-        cx.spawn(async |this, cx| {
-            let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
-                return;
-            };
+        let rpc = self.rpc.clone();
+        let stop_screencast = self.stop_screencast();
+        let leave_screencast = self.leave_screencast(user_id);
 
-            let _ = LeaveVoiceChannel::execute(&connection, &Empty).await;
+        cx.spawn_in(window, async move |this, cx| {
+            stop_screencast(this.clone(), cx).await;
+            leave_screencast(this, cx).await;
+
+            let _ = LeaveVoiceChannel::execute(&rpc, &Empty).await;
         })
         .detach();
     }
@@ -747,50 +750,42 @@ impl ServerConnectionState {
     }
 
     #[cfg(target_os = "linux")]
-    async fn stop_screencast_inner(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext) {
-        let is_streaming = this
-            .read_with(cx, |this, _cx| this.screencast_preview_task.is_some())
-            .unwrap();
+    pub fn stop_screencast(
+        &self,
+    ) -> impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncWindowContext) + 'static {
+        let connection = self.rpc.clone();
+        let streaming = self.streaming.clone();
 
-        if !is_streaming {
-            return;
+        async move |this, cx| {
+            let is_streaming = this
+                .read_with(cx, |this, _cx| this.screencast_preview_task.is_some())
+                .unwrap();
+
+            if !is_streaming {
+                return;
+            }
+
+            streaming.stop_screencast().await;
+
+            this.update(cx, |this, _cx| {
+                this.preview_frame = None;
+                this.screencast_preview_task = None;
+            })
+            .ok();
+
+            if StopScreenCast::execute(&connection, &Empty).await.is_err() {
+                cx.window_handle()
+                    .update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(
+                                "Unable to stop the screencast, the server returned an error",
+                            ),
+                            cx,
+                        );
+                    })
+                    .ok();
+            };
         }
-
-        let Some((connection, streaming)) = this
-            .read_with(cx, |this, _cx| (this.rpc.clone(), this.streaming.clone()))
-            .ok()
-        else {
-            return;
-        };
-
-        streaming.stop_screencast().await;
-
-        this.update(cx, |this, _cx| {
-            this.preview_frame = None;
-            this.screencast_preview_task = None;
-        })
-        .ok();
-
-        if StopScreenCast::execute(&connection, &Empty).await.is_err() {
-            cx.window_handle()
-                .update(cx, |_, window, cx| {
-                    window.push_notification(
-                        Notification::error(
-                            "Unable to stop the screencast, the server returned an error",
-                        ),
-                        cx,
-                    );
-                })
-                .ok();
-        };
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn stop_screencast(&self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async |this, cx| {
-            Self::stop_screencast_inner(&this, cx).await
-        })
-        .detach();
     }
 
     #[cfg(target_os = "linux")]
@@ -812,16 +807,17 @@ impl ServerConnectionState {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn join_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| {
-            Self::stop_screencast_inner(&this, cx).await;
+    pub fn join_screencast(
+        &self,
+        user_id: UserId,
+    ) -> impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncWindowContext) + 'static {
+        let connection = self.rpc.clone();
+        let streaming = self.streaming.clone();
 
-            let Some((connection, streaming)) = this
-                .read_with(cx, |this, _cx| (this.rpc.clone(), this.streaming.clone()))
-                .ok()
-            else {
-                return;
-            };
+        let stop_screncast = self.stop_screencast();
+
+        async move |this, cx| {
+            stop_screncast(this.clone(), cx).await;
 
             match JoinScreenCast::execute(&connection, &JoinScreenCastRequest { user_id, mtu: 0 })
                 .await
@@ -863,18 +859,28 @@ impl ServerConnectionState {
                         .ok();
                 }
             }
-        })
-        .detach();
+        }
     }
 
     #[cfg(target_os = "linux")]
-    pub fn leave_screencast(&self, user_id: UserId, window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| {
-            let Some(connection) = this.read_with(cx, |this, _cx| this.rpc.clone()).ok() else {
-                return;
-            };
+    pub fn leave_screencast(
+        &self,
+        user_id: UserId,
+    ) -> impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncWindowContext) + 'static {
+        let rpc = self.rpc.clone();
 
-            if LeaveScreenCast::execute(&connection, &LeaveScreenCastRequest { user_id })
+        async move |this, cx| {
+            if let Ok(true) = this.read_with(cx, |this, _cx| this.watching_frame.is_none()) {
+                return;
+            }
+
+            this.update(cx, |this, _cx| {
+                this.watching_frame_task = None;
+                this.watching_frame = None;
+            })
+            .ok();
+
+            if LeaveScreenCast::execute(&rpc, &LeaveScreenCastRequest { user_id })
                 .await
                 .is_err()
             {
@@ -889,12 +895,16 @@ impl ServerConnectionState {
                     })
                     .ok();
             };
-        })
-        .detach();
+        }
     }
 
     #[cfg(target_os = "linux")]
-    pub fn is_stream_playing(&self) -> bool {
-        self.screencast_preview_task.is_some() || self.watching_frame_task.is_some()
+    pub fn is_streaming(&self) -> bool {
+        self.screencast_preview_task.is_some()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn is_watching_stream(&self) -> bool {
+        self.watching_frame_task.is_some()
     }
 }
