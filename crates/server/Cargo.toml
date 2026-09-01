@@ -10,7 +10,6 @@ log = { workspace = true }
 env_logger = { workspace = true }
 
 tokio = { workspace = true }
-futures = { workspace = true }
 sea-orm = { workspace = true }
 
 serde = { workspace = true }

@@ -38,6 +38,15 @@ impl SelectItem for StreamingQuality {
     }
 }
 
+impl From<StreamingQuality> for f64 {
+    fn from(value: StreamingQuality) -> Self {
+        match value {
+            StreamingQuality::LowLatency => 60.,
+            StreamingQuality::HighQuality => 30.,
+        }
+    }
+}
+
 struct CallRoomState {
     show_configuration: bool,
     select_state: Entity<SelectState<Vec<StreamingQuality>>>,
@@ -89,16 +98,16 @@ impl RenderOnce for CallRoom {
                         window.listener_for(
                             &self.streaming,
                             move |connection_state,
-                                  config: &Option<StreamingQuality>,
+                                  quality: &Option<StreamingQuality>,
                                   window,
                                   cx| {
                                 room_state.update(cx, |this, _cx| {
                                     this.show_configuration = false;
                                 });
 
-                                if config.is_some() {
+                                if let Some(quality) = *quality {
                                     #[cfg(target_os = "linux")]
-                                    connection_state.start_screencast(window, cx);
+                                    connection_state.start_screencast(quality.into(), window, cx);
                                 }
                             },
                         )
