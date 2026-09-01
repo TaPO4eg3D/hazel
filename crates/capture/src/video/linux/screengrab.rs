@@ -578,7 +578,11 @@ pub async fn init_screencast(
                     let delta = now - start;
 
                     state.last_frame_ts = start;
-                    timer.update_timer(Some(frametime - delta), None);
+                    if delta < frametime {
+                        timer.update_timer(Some(frametime - delta), None);
+                    } else {
+                        timer.update_timer(Some(frametime), None);
+                    }
 
                     state.notifier.notify_screen();
                 }

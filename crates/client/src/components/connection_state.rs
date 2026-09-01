@@ -39,7 +39,7 @@ use rpc::{
         },
     },
 };
-use smol::{channel, stream::StreamExt as _};
+use smol::stream::StreamExt as _;
 
 use crate::streaming::StreamingState;
 
@@ -213,6 +213,10 @@ pub struct ServerConnectionState {
     screencast_preview_task: Option<Task<()>>,
     watching_frame_task: Option<Task<()>>,
 
+    /// In future we will support multiple streams
+    /// at the same time. This field is to please API
+    active_stream_id: Option<UserId>,
+
     #[cfg(target_os = "linux")]
     pub preview_frame: Option<DMABuffer>,
     #[cfg(target_os = "linux")]
@@ -262,6 +266,8 @@ impl ServerConnectionState {
 
             is_playback_enabled: true,
             is_capture_enabled: true,
+
+            active_stream_id: None,
 
             streaming: Rc::new(StreamingState::new()),
             noise_reduction: NoiseReductionAlgorithm::RNNoise,
@@ -476,7 +482,7 @@ impl ServerConnectionState {
 
         let rpc = self.rpc.clone();
         let stop_screencast = self.stop_screencast();
-        let leave_screencast = self.leave_screencast(user_id);
+        let leave_screencast = self.leave_screencast();
 
         cx.spawn_in(window, async move |this, cx| {
             stop_screencast(this.clone(), cx).await;
@@ -815,9 +821,11 @@ impl ServerConnectionState {
         let streaming = self.streaming.clone();
 
         let stop_screncast = self.stop_screencast();
+        let leave_screencast = self.leave_screencast();
 
         async move |this, cx| {
             stop_screncast(this.clone(), cx).await;
+            leave_screencast(this.clone(), cx).await;
 
             match JoinScreenCast::execute(&connection, &JoinScreenCastRequest { user_id, mtu: 0 })
                 .await
@@ -827,6 +835,7 @@ impl ServerConnectionState {
 
                     let this = this.upgrade().unwrap();
                     this.update(cx, |this, cx| {
+                        this.active_stream_id = Some(user_id);
                         this.watching_frame_task = Some(cx.spawn(async move |this, cx| {
                             while let Some(frame) = frame_rx.recv().await {
                                 this.update(cx, |this, cx| {
@@ -865,22 +874,27 @@ impl ServerConnectionState {
     #[cfg(target_os = "linux")]
     pub fn leave_screencast(
         &self,
-        user_id: UserId,
     ) -> impl AsyncFnOnce(WeakEntity<Self>, &mut AsyncWindowContext) + 'static {
-        let rpc = self.rpc.clone();
+        let connection = self.rpc.clone();
+        let streaming = self.streaming.clone();
 
         async move |this, cx| {
-            if let Ok(true) = this.read_with(cx, |this, _cx| this.watching_frame.is_none()) {
+            let Ok((false, Some(user_id))) = this.read_with(cx, |this, _cx| {
+                (this.watching_frame.is_none(), this.active_stream_id)
+            }) else {
                 return;
-            }
+            };
 
             this.update(cx, |this, _cx| {
                 this.watching_frame_task = None;
                 this.watching_frame = None;
+                this.active_stream_id = None;
             })
             .ok();
 
-            if LeaveScreenCast::execute(&rpc, &LeaveScreenCastRequest { user_id })
+            streaming.unregister_video_stream(user_id);
+
+            if LeaveScreenCast::execute(&connection, &LeaveScreenCastRequest { user_id })
                 .await
                 .is_err()
             {

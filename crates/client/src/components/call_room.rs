@@ -358,11 +358,15 @@ impl ControlPanel {
 
 impl RenderOnce for ControlPanel {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
-        let (can_stream, is_streaming) = self.streaming.read_with(cx, |state, _| {
+        let (can_stream, is_streaming, is_watching) = self.streaming.read_with(cx, |state, _| {
             (
                 state.get_active_channel().is_some(),
                 cfg_select! {
-                    target_os = "linux" => state.preview_frame.is_some(),
+                    target_os = "linux" => state.is_streaming(),
+                    _ => false,
+                },
+                cfg_select! {
+                    target_os = "linux" => state.is_watching_stream(),
                     _ => false,
                 },
             )
@@ -376,46 +380,52 @@ impl RenderOnce for ControlPanel {
             .border_1()
             .w_full()
             .border_color(cx.theme().secondary)
-            .when_else(
-                is_streaming,
-                |this| {
-                    this.child(
-                        Button::new("stop-streaming")
-                            .icon(IconName::ScreenShare)
-                            .label("Stop streaming")
-                            .max_w_64()
-                            .w_full()
-                            .danger()
-                            .on_click(window.listener_for(
-                                &self.streaming,
-                                |this, _, window, cx| {
-                                    #[cfg(target_os = "linux")]
-                                    cx.spawn_in(window, this.stop_screencast()).detach();
-                                },
-                            )),
-                    )
-                },
-                |this| {
-                    this.child(
-                        Button::new("start-streaming")
-                            .icon(IconName::ScreenShare)
-                            .label("Share screen")
-                            .max_w_64()
-                            .w_full()
-                            .disabled(self.disabled)
-                            .when(!can_stream, |this| {
-                                this.disabled(!can_stream)
-                                    .tooltip("Join a voice channel first")
-                            })
-                            .when(can_stream, |this| {
-                                this.when_some(self.on_click, |this, on_click| {
-                                    this.on_click(on_click)
-                                })
-                            })
-                            .primary(),
-                    )
-                },
-            )
+            .when(is_streaming, |this| {
+                this.child(
+                    Button::new("stop-streaming")
+                        .icon(IconName::ScreenShare)
+                        .label("Stop streaming")
+                        .max_w_64()
+                        .w_full()
+                        .danger()
+                        .on_click(window.listener_for(&self.streaming, |this, _, window, cx| {
+                            #[cfg(target_os = "linux")]
+                            cx.spawn_in(window, this.stop_screencast()).detach();
+                        })),
+                )
+            })
+            .when(is_watching, |this| {
+                this.child(
+                    Button::new("stop-watching")
+                        .icon(IconName::ScreenShare)
+                        .label("Stop watching")
+                        .max_w_64()
+                        .w_full()
+                        .danger()
+                        .on_click(window.listener_for(&self.streaming, |this, _, window, cx| {
+                            #[cfg(target_os = "linux")]
+                            cx.spawn_in(window, this.leave_screencast()).detach();
+                        })),
+                )
+            })
+            .when(!is_streaming && !is_watching, |this| {
+                this.child(
+                    Button::new("start-streaming")
+                        .icon(IconName::ScreenShare)
+                        .label("Share screen")
+                        .max_w_64()
+                        .w_full()
+                        .disabled(self.disabled)
+                        .when(!can_stream, |this| {
+                            this.disabled(!can_stream)
+                                .tooltip("Join a voice channel first")
+                        })
+                        .when(can_stream, |this| {
+                            this.when_some(self.on_click, |this, on_click| this.on_click(on_click))
+                        })
+                        .primary(),
+                )
+            })
             .child(
                 Label::new(if is_streaming {
                     "Your screen preview is playing"
