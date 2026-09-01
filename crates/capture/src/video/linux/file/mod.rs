@@ -20,7 +20,6 @@ use ffmpeg_next::{
 use crate::{
     CaptureNotifier,
     video::{
-        decode::{VAAPIDecoder, VAAPIDecoderParams},
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::{
@@ -77,7 +76,6 @@ struct PlayingContext<const N: usize> {
     vaapi_cache: Vec<(gpui::DMABuffer, VAAPIFrame)>,
 
     encoder: VAAPIEncoder,
-    decoder: VAAPIDecoder,
 }
 
 impl FileStreamer {
@@ -261,15 +259,12 @@ impl FileStreamer {
             ready_frame_queue: self.params.ready_frames_prod.take().unwrap(),
         });
 
-        let decoder = VAAPIDecoder::new(VAAPIDecoderParams { width, height });
-
         let mut ctx = PlayingContext {
             pts: 0,
             path,
             scaler,
             dma_pool,
             encoder,
-            decoder,
             mode: self.params.default_mode,
             command_rx: self.params.command_rx.take().unwrap(),
             vaapi_cache: vec![],

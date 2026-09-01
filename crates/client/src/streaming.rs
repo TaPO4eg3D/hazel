@@ -686,6 +686,13 @@ impl StreamingState {
             )));
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn unregister_video_stream(&self, user_id: UserId) {
+        _ = self
+            .video_command_tx
+            .send(DecodingWorkerCommand::RemoveClient(user_id));
+    }
+
     pub fn add_voice_member(&self, shared: Weak<AudioStreamingClientSharedState>) {
         let shared = shared.upgrade().unwrap();
 

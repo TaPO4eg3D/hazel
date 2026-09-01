@@ -1,7 +1,6 @@
 use std::{collections::VecDeque, thread, time::Instant};
 
 use crossbeam::channel;
-use gpui::DMABuffer;
 use reed_solomon_simd::ReedSolomonDecoder;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
@@ -336,6 +335,11 @@ impl DecodingWorker {
         self.active_clients.push((user_id, client));
     }
 
+    fn remove_client(&mut self, user_id: UserId) {
+        self.active_clients
+            .retain(|(client_id, _)| client_id != &user_id);
+    }
+
     fn run(mut self) {
         loop {
             match self.command_rx.recv() {
@@ -343,7 +347,7 @@ impl DecodingWorker {
                     DecodingWorkerCommand::AddClient((user_id, frame_tx, params)) => {
                         self.add_client(user_id, frame_tx, params)
                     }
-                    DecodingWorkerCommand::RemoveClient(_) => todo!("Implement client removal"),
+                    DecodingWorkerCommand::RemoveClient(user_id) => self.remove_client(user_id),
                     DecodingWorkerCommand::ProcessFrameChunk => self.process_frame_chunk(),
                 },
                 // Err(RecvTimeoutError::Timeout) => {
