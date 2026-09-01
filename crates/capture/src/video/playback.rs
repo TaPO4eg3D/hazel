@@ -10,7 +10,10 @@ use ringbuf::{
 use rpc::models::{markers::UserId, voice_channels::VideoSessionParams};
 use streaming_common::{EncodedVideoBytes, OwnedEncodedVideoFrameChunk, StreamPacketHeader};
 
-use crate::video::decode::{VAAPIDecoder, VAAPIDecoderParams};
+use crate::video::{
+    decode::{VAAPIDecoder, VAAPIDecoderParams},
+    frames::FrameSender,
+};
 
 #[derive(Default)]
 struct Chunk {
@@ -92,6 +95,7 @@ impl PendingFrame {
         }
     }
 
+    #[hotpath::measure]
     fn process(&mut self) -> bool {
         // With this implemnation there's a high change of triggering
         // FEC even we don't really need to.
@@ -172,14 +176,14 @@ impl PendingFrame {
 
 struct VideoStreamingClientState {
     decoder: VAAPIDecoder,
-    frame_tx: smol::channel::Sender<DMABuffer>,
+    frame_tx: FrameSender<gpui::DMABuffer>,
     pending_frames: Vec<PendingFrame>,
     next_seq: u64,
     last_frame: Instant,
 }
 
 impl VideoStreamingClientState {
-    fn new(frame_tx: smol::channel::Sender<DMABuffer>, decoder: VAAPIDecoder) -> Self {
+    fn new(frame_tx: FrameSender<gpui::DMABuffer>, decoder: VAAPIDecoder) -> Self {
         let pending_frames = (0..4).map(|_| PendingFrame::default()).collect::<Vec<_>>();
 
         Self {
@@ -191,6 +195,7 @@ impl VideoStreamingClientState {
         }
     }
 
+    #[hotpath::measure]
     fn process_chunk(&mut self, chunk: &OwnedEncodedVideoFrameChunk) {
         // Do not process late chunks
         if chunk.header.seq < self.next_seq {
@@ -227,13 +232,10 @@ impl VideoStreamingClientState {
 
         frame.merge_chunk(chunk);
         if frame.process() {
-            let now = Instant::now();
-            self.last_frame = now;
-
             self.decoder.decode(&frame.data);
             while let Some(decoded_frame) = self.decoder.frame_queue.pop_front() {
                 // TODO: Deregister the client if the sender is dead
-                _ = self.frame_tx.send_blocking(decoded_frame).is_err();
+                self.frame_tx.send(decoded_frame);
             }
 
             self.next_seq = chunk.header.seq + 1;
@@ -244,12 +246,14 @@ impl VideoStreamingClientState {
                     frame.reset();
                 }
             }
+
+            self.last_frame = Instant::now();
         }
     }
 }
 
 pub enum DecodingWorkerCommand {
-    AddClient((UserId, smol::channel::Sender<DMABuffer>, VideoSessionParams)),
+    AddClient((UserId, FrameSender<gpui::DMABuffer>, VideoSessionParams)),
     RemoveClient(UserId),
     ProcessFrameChunk,
 }
@@ -287,7 +291,9 @@ impl DecodingWorker {
         };
 
         if !meta.parsed_correctly {
-            _ = self.used_chunks.try_push(chunk);
+            if self.used_chunks.try_push(chunk).is_err() {
+                println!("No no space for used chunks!");
+            }
 
             return;
         }
@@ -300,13 +306,15 @@ impl DecodingWorker {
             client.process_chunk(&chunk);
         }
 
-        _ = self.used_chunks.try_push(chunk);
+        if self.used_chunks.try_push(chunk).is_err() {
+            println!("No space for used chunks!");
+        }
     }
 
     fn add_client(
         &mut self,
         user_id: UserId,
-        frame_tx: smol::channel::Sender<DMABuffer>,
+        frame_tx: FrameSender<gpui::DMABuffer>,
         params: VideoSessionParams,
     ) {
         if self
@@ -359,20 +367,32 @@ impl VideoPlaybackController {
         self.command_tx.clone()
     }
 
+    #[hotpath::measure]
     pub fn process_frame(&mut self, user_id: UserId, chunk_bytes: EncodedVideoBytes<'_>) {
         if let Some(mut chunk) = self.used_chunks.try_pop() {
             let result = chunk_bytes.parse(&mut chunk);
 
-            _ = self.pending_chunks.try_push((
-                ChunkMetadata {
-                    user_id,
-                    parsed_correctly: result.is_ok(),
-                },
-                chunk,
-            ));
-            _ = self
+            if self
+                .pending_chunks
+                .try_push((
+                    ChunkMetadata {
+                        user_id,
+                        parsed_correctly: result.is_ok(),
+                    },
+                    chunk,
+                ))
+                .is_err()
+            {
+                println!("No space for pending chunks!");
+            }
+
+            if self
                 .command_tx
-                .send(DecodingWorkerCommand::ProcessFrameChunk);
+                .send(DecodingWorkerCommand::ProcessFrameChunk)
+                .is_err()
+            {
+                println!("No space for decoding commands!");
+            }
         }
     }
 }
@@ -393,13 +413,13 @@ pub fn init() -> VideoPlaybackController {
     let (command_tx, command_rx) = channel::bounded::<DecodingWorkerCommand>(8);
 
     thread::Builder::new()
-        .name("video-decoding-worker".to_string())
+        .name("video-decoding".to_string())
         .spawn(|| {
             let worker = DecodingWorker::new(command_rx, used_prod, pending_cons);
 
             worker.run();
         })
-        .expect("Unable to spawn video-decoding-worker");
+        .expect("Unable to spawn video-decoding worker");
 
     VideoPlaybackController {
         command_tx,

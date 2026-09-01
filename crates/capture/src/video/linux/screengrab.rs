@@ -19,7 +19,7 @@ use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use smallvec::smallvec;
 
 // TODO: Both should be configurable
-const DEFAULT_FRAMERATE: u32 = 60;
+const DEFAULT_FRAMERATE: u32 = 30;
 const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
 
 use gpui::{DMABuffer, DMABufferPlane};

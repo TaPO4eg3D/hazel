@@ -3,6 +3,23 @@ name = "simulation"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+hotpath = [
+    "hotpath/hotpath",
+    "capture/hotpath",
+    "client/hotpath",
+]
+hotpath-cpu = [
+    "hotpath/hotpath-cpu",
+    "capture/hotpath-cpu",
+    "client/hotpath-cpu",
+]
+hotpath-alloc = [
+    "hotpath/hotpath-alloc",
+    "capture/hotpath-alloc",
+    "client/hotpath-alloc",
+]
+
 [dependencies]
 clap = { version = "4.6.5", features = ["derive"] }
 
@@ -22,3 +39,4 @@ smol = { workspace = true }
 tokio = { workspace = true }
 
 rpc = { workspace = true }
+hotpath = { workspace = true }

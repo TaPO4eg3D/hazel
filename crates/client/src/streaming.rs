@@ -28,15 +28,12 @@ use capture::{
 #[cfg(target_os = "linux")]
 use capture::video::{
     self,
-    frames::FrameRecv,
+    frames::{FrameRecv, FrameSender},
     linux::{ActiveVideoStream, file::FileVideoStreamMode},
     playback::{DecodingWorkerCommand, VideoPlaybackController},
 };
 
 use crossbeam::channel;
-
-#[cfg(target_os = "linux")]
-use gpui::DMABuffer;
 
 use reed_solomon_simd::ReedSolomonEncoder;
 use ringbuf::traits::Consumer as _;
@@ -284,6 +281,7 @@ impl PacketSender {
     }
 
     #[cfg(target_os = "linux")]
+    #[hotpath::measure]
     fn try_send_frame(
         &mut self,
         user_id: UserId,
@@ -340,14 +338,23 @@ impl PacketSender {
                     data: chunk,
                 });
 
+            // Rate limit to roughly 1Gbit/sec
+            const RATE_BYTES_PER_SEC: f64 = 125_000_000.;
+
+            let packets_per_second = RATE_BYTES_PER_SEC / shard_len as f64;
+            let throttle = Duration::from_secs_f64(1. / packets_per_second);
+
             for frame_chunk in frame_chunks {
                 self.buf.clear();
                 to_udp_packet_bytes(&mut self.buf, user_id.value, &frame_chunk);
 
-                // TODO: Limit throughput, we don't want to spam packets way too fast?
                 _ = self.socket.send_to(&self.buf, addr);
                 self.last_send = Instant::now();
+
+                thread::sleep(throttle);
             }
+
+            self.screen.seq += 1;
         }
 
         sent_frame
@@ -360,9 +367,7 @@ impl PacketSender {
         };
 
         // TODO: Should be comming from the server (VideoSessionParams)
-        if self.try_send_frame(user_id, addr, 1280, 0.2) {
-            self.screen.seq += 1;
-        }
+        self.try_send_frame(user_id, addr, 1280, 0.2);
     }
 
     fn run(mut self) {
@@ -670,7 +675,7 @@ impl StreamingState {
     pub fn register_video_stream(
         &self,
         user_id: UserId,
-        frame_tx: smol::channel::Sender<DMABuffer>,
+        frame_tx: FrameSender<gpui::DMABuffer>,
         params: VideoSessionParams,
     ) {
         _ = self

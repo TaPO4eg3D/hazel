@@ -5,11 +5,14 @@ use std::{
     str::FromStr as _,
 };
 
-use capture::video::{frames::FrameRecv, linux::file::FileVideoStreamMode};
+use capture::video::{
+    frames::{FrameRecv, frame_channel},
+    linux::file::FileVideoStreamMode,
+};
 use client::{gpui_tokio::Tokio, streaming::StreamingState};
 use gpui::{
-    App, AppContext, AsyncApp, Entity, ParentElement as _, Render, Styled as _, Window,
-    div, prelude::FluentBuilder, surface,
+    App, AppContext, AsyncApp, Entity, ParentElement as _, Render, Styled as _, Window, div,
+    prelude::FluentBuilder, surface,
 };
 use gpui_component::{StyledExt as _, button::Button, white};
 use rpc::{
@@ -134,7 +137,7 @@ impl ConnectionState {
     pub fn join_screencast(
         &self,
         id: UserId,
-    ) -> impl Future<Output = smol::channel::Receiver<gpui::DMABuffer>> + use<> {
+    ) -> impl Future<Output = FrameRecv<gpui::DMABuffer>> + use<> {
         let rpc = self.rpc.clone();
         let streaming = self.streaming.clone();
 
@@ -149,7 +152,7 @@ impl ConnectionState {
             .await
             {
                 Ok(params) => {
-                    let (frame_tx, frame_rx) = smol::channel::bounded::<gpui::DMABuffer>(1);
+                    let (frame_tx, frame_rx) = frame_channel();
                     _ = RequestIDRFrame::execute(&rpc, &RequestIDRFramePayload { user_id: id })
                         .await;
 
@@ -199,7 +202,7 @@ impl ScreenCastView {
                     .unwrap()
                     .await;
 
-                let watch = this
+                let mut watch = this
                     .read_with(cx, |this: &ScreenCastView, _cx| {
                         this.client.join_screencast(host_id)
                     })
@@ -225,7 +228,7 @@ impl ScreenCastView {
                     let this = this.clone();
 
                     async move |cx| {
-                        while let Ok(frame) = watch.recv().await {
+                        while let Some(frame) = watch.recv().await {
                             this.update(cx, |this, cx| {
                                 this.watch = Some(frame);
 

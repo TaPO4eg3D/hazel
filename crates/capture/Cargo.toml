@@ -3,6 +3,11 @@ name = "capture"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-cpu = ["hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
+
 [dependencies]
 gpui = { workspace = true }
 
@@ -18,6 +23,7 @@ rpc = { workspace = true }
 reed-solomon-simd = { workspace = true }
 
 streaming_common = { workspace = true }
+hotpath = { workspace = true }
 
 nnnoiseless = "0.5.2"
 

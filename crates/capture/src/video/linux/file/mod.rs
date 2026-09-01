@@ -20,6 +20,7 @@ use ffmpeg_next::{
 use crate::{
     CaptureNotifier,
     video::{
+        decode::{VAAPIDecoder, VAAPIDecoderParams},
         encode::{VAAPIEncoder, VAAPIEncoderParams},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::{
@@ -32,8 +33,8 @@ use crate::{
 
 mod vulkan;
 
-const DEFAULT_FRAMERATE: u32 = 60;
-const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
+const DEFAULT_FRAMERATE: u32 = 30;
+const DEFAULT_BITRATE: u32 = 8 * 1000_u32.pow(2);
 
 // Streams a video file as a sequence of DMA-BUFs.
 // Main purpose is an emulation of zero-copy screencapturing
@@ -76,6 +77,7 @@ struct PlayingContext<const N: usize> {
     vaapi_cache: Vec<(gpui::DMABuffer, VAAPIFrame)>,
 
     encoder: VAAPIEncoder,
+    decoder: VAAPIDecoder,
 }
 
 impl FileStreamer {
@@ -259,12 +261,15 @@ impl FileStreamer {
             ready_frame_queue: self.params.ready_frames_prod.take().unwrap(),
         });
 
+        let decoder = VAAPIDecoder::new(VAAPIDecoderParams { width, height });
+
         let mut ctx = PlayingContext {
             pts: 0,
             path,
             scaler,
             dma_pool,
             encoder,
+            decoder,
             mode: self.params.default_mode,
             command_rx: self.params.command_rx.take().unwrap(),
             vaapi_cache: vec![],
@@ -342,9 +347,12 @@ pub async fn init_screencast(
         },
     );
 
-    thread::spawn(move || {
-        streamer.start_streaming();
-    });
+    thread::Builder::new()
+        .name("file-streamer".into())
+        .spawn(move || {
+            streamer.start_streaming();
+        })
+        .unwrap();
 
     Ok((
         ActiveVideoStream::File(FileVideoStream {

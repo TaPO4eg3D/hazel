@@ -4,7 +4,7 @@ use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use ffmpeg_next::{
     Frame, codec, decoder,
     ffi::{
-        AV_HWFRAME_MAP_DIRECT, AV_HWFRAME_MAP_READ, AVCodecContext, AVCodecID,
+        AV_EF_IGNORE_ERR, AV_HWFRAME_MAP_DIRECT, AV_HWFRAME_MAP_READ, AVCodecContext, AVCodecID,
         AVCodecParserContext, AVDRMFrameDescriptor, AVPacket, AVPixelFormat, EAGAIN,
         av_frame_unref, av_hwframe_map, av_packet_alloc, av_packet_free, av_parser_close,
         av_parser_init, av_parser_parse2, avcodec_receive_frame, avcodec_send_packet,
@@ -80,6 +80,7 @@ impl VAAPIDecoder {
             (*ctx).width = params.width as i32;
             (*ctx).height = params.height as i32;
             (*ctx).sw_pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
+            (*ctx).err_recognition = AV_EF_IGNORE_ERR;
 
             (*ctx).get_format = Some(vaapi_get_format);
         }
@@ -112,6 +113,7 @@ impl VAAPIDecoder {
         }
     }
 
+    #[hotpath::measure]
     pub fn decode(&mut self, data: &[u8]) {
         unsafe {
             let mut offset = 0usize;
