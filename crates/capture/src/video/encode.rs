@@ -63,6 +63,7 @@ impl VAAPIEncoder {
         VAAPIFrame::new(drm_frame, self.hw_frame_ctx.clone())
     }
 
+    #[hotpath::measure]
     pub fn encode(&mut self, hw_frame: &mut VAAPIFrame, pts: i64) {
         unsafe {
             (*hw_frame.av_frame).pts = pts;
@@ -100,7 +101,7 @@ impl VAAPIEncoder {
                 }
 
                 let Some(mut frame) = self.empty_frame_queue.try_pop() else {
-                    log::debug!("Can't claim an empty frame!");
+                    print!("Can't claim an empty frame!");
 
                     continue;
                 };
@@ -113,7 +114,7 @@ impl VAAPIEncoder {
 
                 frame.extend_from_slice(buf);
                 if self.ready_frame_queue.try_push(frame).is_err() {
-                    log::debug!("No space for the encoded frame!");
+                    print!("No space for the encoded frame!");
                 }
 
                 // Unref the packet to release the encoded bitstream buffer.
@@ -210,8 +211,6 @@ impl VAAPIEncoder {
             (*video_ctx).bit_rate = bitrate as i64;
             (*video_ctx).rc_max_rate = bitrate as i64;
             (*video_ctx).rc_min_rate = bitrate as i64;
-
-            (*video_ctx).rc_buffer_size = (bitrate / framerate) as i32;
 
             (*video_ctx).pix_fmt =
                 std::mem::transmute::<i32, AVPixelFormat>((*filter_output).format);

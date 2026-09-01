@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-profiling = ["tracy-client/enable"]
+hotpath = ["hotpath/hotpath"]
+hotpath-cpu = ["hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
 
 [dependencies]
 rpc = { workspace = true }
@@ -26,10 +28,10 @@ bytes = { workspace = true }
 atomic_float = { workspace = true }
 crossbeam = { workspace = true }
 ringbuf = { workspace = true }
-tracy-client = { workspace = true }
 reed-solomon-simd = { workspace = true }
 
 log = { workspace = true }
+hotpath = { workspace = true }
 
 rust-embed = "8.11.0"
 unicode-segmentation = "1.12.0"

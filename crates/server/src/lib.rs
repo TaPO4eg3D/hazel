@@ -50,5 +50,7 @@ pub async fn start_server(config: Config) {
         .await;
     });
 
-    open_udp_socket(state, &config.udp_addr).await.unwrap();
+    tokio::spawn(async move {
+        open_udp_socket(state, &config.udp_addr).await.unwrap();
+    });
 }

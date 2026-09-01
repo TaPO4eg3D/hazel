@@ -1,8 +1,10 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Poll, Waker},
 };
+
+use hotpath::wrap::std::sync::Mutex;
 
 use ringbuf::{
     HeapCons, HeapProd,
@@ -17,7 +19,7 @@ struct FrameChannelInner<T> {
 }
 
 #[derive(Clone)]
-pub(crate) struct FrameSender<T> {
+pub struct FrameSender<T> {
     inner: Arc<Mutex<FrameChannelInner<T>>>,
 }
 
@@ -95,13 +97,16 @@ impl<T> FrameRecv<T> {
 /// Mainly used for previews.
 ///
 /// Note: Should be generic and not tied to frames?
-pub(crate) fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
-    let inner = Arc::new(Mutex::new(FrameChannelInner {
-        frame: None,
-        waker: None,
+pub fn frame_channel<T>() -> (FrameSender<T>, FrameRecv<T>) {
+    let inner = Arc::new(hotpath::mutex!(
+        std::sync::Mutex::new(FrameChannelInner {
+            frame: None,
+            waker: None,
 
-        closed: false,
-    }));
+            closed: false,
+        }),
+        label = "frame_channel"
+    ));
 
     (
         FrameSender {

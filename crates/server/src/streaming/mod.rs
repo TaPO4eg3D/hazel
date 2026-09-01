@@ -9,32 +9,22 @@ use streaming_common::{UDPPacket, UDPPayloadType};
 // TODO: Somehow implement authorized socket communication.
 // Currenlty it is possible to do quite nasty stuff
 pub async fn open_udp_socket(app_state: AppState, udp_addr: &str) -> AResult<()> {
-    const BUF_SIZE: usize = 4096;
-
     let socket = UdpSocket::bind(udp_addr)
         .await
         .expect("Failed to bind a UDP socket");
 
-    // Two seconds of dual channel 48kHz if we don't
-    // count the size of UDPPacket header
-    let mut buf = BytesMut::with_capacity(4800 * 4);
-
     loop {
-        buf.clear();
-        buf.resize(BUF_SIZE, 0);
-
-        let (bytes_read, addr) = socket.recv_from(&mut buf).await?;
+        let mut buf = BytesMut::with_capacity(4096);
+        let (bytes_read, addr) = socket.recv_buf_from(&mut buf).await?;
 
         if bytes_read == 0 {
             continue;
         }
-        buf.truncate(bytes_read);
 
-        // To parse data but keep original bytes intact
-        let buf = buf.split().freeze();
+        let buf = buf.split_to(bytes_read).freeze();
+        let mut parse_bytes = buf.clone();
 
-        let mut _buf = buf.clone();
-        let Ok(packet) = UDPPacket::parse(&mut _buf) else {
+        let Ok(packet) = UDPPacket::parse(&mut parse_bytes) else {
             continue;
         };
 

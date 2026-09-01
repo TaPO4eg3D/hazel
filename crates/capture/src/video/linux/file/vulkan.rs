@@ -176,6 +176,7 @@ impl<const POOL_SIZE: usize> VkDmaBufferPool<POOL_SIZE> {
         }
     }
 
+    #[hotpath::measure]
     pub fn push_image(&mut self, image: &[u8]) -> gpui::DMABuffer {
         let frame = &mut self.frame_pool[self.frame_idx];
 

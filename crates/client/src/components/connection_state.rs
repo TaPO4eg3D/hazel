@@ -8,7 +8,7 @@ use atomic_enum::atomic_enum;
 use capture::audio::{AudioDevice, playback::AudioStreamingClientSharedState};
 
 #[cfg(target_os = "linux")]
-use capture::video::frames::FrameRecv;
+use capture::video::frames::{FrameRecv, frame_channel};
 
 use gpui::{
     AppContext, AsyncApp, AsyncWindowContext, Context, Entity, SharedString, Subscription, Task,
@@ -827,12 +827,12 @@ impl ServerConnectionState {
                 .await
             {
                 Ok(params) => {
-                    let (frame_tx, frame_rx) = channel::bounded::<DMABuffer>(1);
+                    let (frame_tx, mut frame_rx) = frame_channel();
 
                     let this = this.upgrade().unwrap();
                     this.update(cx, |this, cx| {
                         this.watching_frame_task = Some(cx.spawn(async move |this, cx| {
-                            while let Ok(frame) = frame_rx.recv().await {
+                            while let Some(frame) = frame_rx.recv().await {
                                 this.update(cx, |this, cx| {
                                     this.watching_frame = Some(frame);
 
@@ -843,10 +843,10 @@ impl ServerConnectionState {
                         }));
                     });
 
+                    streaming.register_video_stream(user_id, frame_tx, params);
+
                     _ = RequestIDRFrame::execute(&connection, &RequestIDRFramePayload { user_id })
                         .await;
-
-                    streaming.register_video_stream(user_id, frame_tx, params);
                 }
                 Err(err) => {
                     println!("Error: {err:?}");
