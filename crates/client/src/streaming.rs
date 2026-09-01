@@ -618,12 +618,13 @@ impl StreamingState {
     }
 
     #[cfg(target_os = "linux")]
-    pub async fn start_screencast(&self) -> Option<FrameRecv<gpui::DMABuffer>> {
+    pub async fn start_screencast(&self, framerate: f64) -> Option<FrameRecv<gpui::DMABuffer>> {
         let notifier = self.capture_notifier.clone();
 
-        let (cast, preview) = capture::video::linux::screengrab::init_screencast(30., notifier)
-            .await
-            .ok()?;
+        let (cast, preview) =
+            capture::video::linux::screengrab::init_screencast(framerate, notifier)
+                .await
+                .ok()?;
 
         let mut active_screencast = self.active_screencast.lock().unwrap();
         *active_screencast = Some(cast);

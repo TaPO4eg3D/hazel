@@ -18,9 +18,8 @@ use ashpd::{
 use drm_fourcc::{DrmFormat, DrmFourcc, DrmModifier};
 use smallvec::smallvec;
 
-// TODO: Both should be configurable
-const DEFAULT_FRAMERATE: u32 = 30;
-const DEFAULT_BITRATE: u32 = 16 * 1000_u32.pow(2);
+// TODO: Should be configurable
+const DEFAULT_BITRATE: u32 = 8 * 1000_u32.pow(2);
 
 use gpui::{DMABuffer, DMABufferPlane};
 use libspa::{
@@ -390,7 +389,7 @@ impl<'a> ScreencastStream<'a> {
                     height,
                     width,
 
-                    framerate: DEFAULT_FRAMERATE,
+                    framerate: this.framerate as u32,
                     bitrate: DEFAULT_BITRATE,
 
                     empty_frame_queue: this.empty_frame_queue.take().unwrap(),

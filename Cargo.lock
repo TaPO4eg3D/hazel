@@ -7830,7 +7830,6 @@ dependencies = [
  "chrono",
  "dashmap",
  "env_logger",
- "futures",
  "hmac 0.12.1",
  "log",
  "rmp-serde",
