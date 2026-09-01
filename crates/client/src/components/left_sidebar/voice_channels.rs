@@ -201,7 +201,11 @@ impl RenderOnce for VoiceMemberComponent {
                                                 &self.connection_state,
                                                 move |this, _, window, cx| {
                                                     #[cfg(target_os = "linux")]
-                                                    this.join_screencast(user_id, window, cx);
+                                                    cx.spawn_in(
+                                                        window,
+                                                        this.join_screencast(user_id),
+                                                    )
+                                                    .detach();
                                                 },
                                             )),
                                     )
