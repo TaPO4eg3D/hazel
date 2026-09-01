@@ -3,6 +3,8 @@ pub mod playback;
 
 pub mod frames;
 
+mod annex;
+
 mod decode;
 mod encode;
 
