@@ -20,13 +20,13 @@ use ffmpeg_next::{
 use crate::{
     CaptureNotifier,
     video::{
-        encode::{VAAPIEncoder, VAAPIEncoderParams},
+        encode::{EncoderParams, VAAPIEncoder},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::{
             ActiveVideoStream,
             file::vulkan::{DmaBufferPoolOptions, VkDmaBufferPool},
         },
-        wrapper::{DrmInfo, VAAPIFrame},
+        wrapper::{DrmInfo, VaapiFrame},
     },
 };
 
@@ -73,7 +73,7 @@ struct PlayingContext<const N: usize> {
     mode: FileVideoStreamMode,
 
     command_rx: crossbeam::channel::Receiver<FileVideoStreamCommand>,
-    vaapi_cache: Vec<(gpui::DMABuffer, VAAPIFrame)>,
+    vaapi_cache: Vec<(gpui::DMABuffer, VaapiFrame)>,
 
     encoder: VAAPIEncoder,
 }
@@ -248,7 +248,7 @@ impl FileStreamer {
             vk_format: ash::vk::Format::R8G8B8A8_UNORM,
         });
 
-        let encoder = VAAPIEncoder::new(VAAPIEncoderParams {
+        let encoder = VAAPIEncoder::new(EncoderParams {
             height,
             width,
 

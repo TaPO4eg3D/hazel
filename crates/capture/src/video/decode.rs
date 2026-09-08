@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 
 use crate::video::{
     annex::{NalType, annex_b_nals},
-    wrapper::GPUDevice,
+    wrapper::{GpuDeviceCtx, VaapiDeviceCtx},
 };
 
 unsafe extern "C" fn vaapi_get_format(
@@ -43,7 +43,7 @@ pub struct VAAPIDecoderParams {
 }
 
 pub struct VAAPIDecoder {
-    _device: GPUDevice,
+    _device: VaapiDeviceCtx,
 
     decoder: decoder::Video,
     parser: *mut AVCodecParserContext,
@@ -77,12 +77,12 @@ impl VAAPIDecoder {
         let codec = decoder::find(codec::Id::H264).unwrap();
 
         let mut decoder = codec::Context::new_with_codec(codec).decoder();
-        let device = GPUDevice::new().expect("Failed to open GPU Device");
+        let device_ctx = VaapiDeviceCtx::new().expect("Failed to open GPU Device");
 
         unsafe {
             let ctx = decoder.as_mut_ptr();
 
-            (*ctx).hw_device_ctx = device.clone().into_raw();
+            (*ctx).hw_device_ctx = device_ctx.clone().into_raw();
             (*ctx).width = params.width as i32;
             (*ctx).height = params.height as i32;
             (*ctx).sw_pix_fmt = AVPixelFormat::AV_PIX_FMT_NV12;
@@ -107,7 +107,7 @@ impl VAAPIDecoder {
                 .collect::<Vec<_>>();
 
             Self {
-                _device: device,
+                _device: device_ctx,
                 decoder,
                 parser,
                 hw_frame: Frame::empty(),

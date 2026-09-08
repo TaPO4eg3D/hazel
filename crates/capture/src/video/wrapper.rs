@@ -1,5 +1,6 @@
 use std::{
     ffi::{CString, c_int, c_uint, c_void},
+    ops::Deref,
     ptr,
 };
 
@@ -8,33 +9,67 @@ use ffmpeg_next::{
     Rational,
     ffi::{
         AV_HWFRAME_MAP_READ, AV_OPT_SEARCH_CHILDREN, AVBufferRef, AVBufferSrcParameters,
-        AVDRMFrameDescriptor, AVFilter, AVFilterContext, AVFilterGraph, AVFilterInOut, AVFrame,
-        AVHWFramesContext, AVOptionType, AVPixelFormat, av_buffer_create, av_buffer_default_free,
-        av_buffer_ref, av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
+        AVDRMFrameDescriptor, AVFILTER_FLAG_HWDEVICE, AVFilter, AVFilterContext, AVFilterGraph,
+        AVFilterInOut, AVFrame, AVHWDeviceType, AVHWFramesContext, AVOptionType, AVPixelFormat,
+        AVVulkanDeviceContext, av_buffer_create, av_buffer_default_free, av_buffer_ref,
+        av_buffer_unref, av_buffersrc_parameters_alloc, av_buffersrc_parameters_set,
         av_frame_alloc, av_frame_free, av_free, av_hwdevice_ctx_create, av_hwframe_ctx_alloc,
         av_hwframe_ctx_init, av_hwframe_map, av_mallocz, av_opt_set_array, av_strdup,
         avfilter_get_by_name, avfilter_graph_alloc, avfilter_graph_alloc_filter,
-        avfilter_graph_config, avfilter_graph_free, avfilter_graph_parse_ptr, avfilter_init_str,
-        avfilter_inout_alloc, avfilter_inout_free,
+        avfilter_graph_config, avfilter_graph_free, avfilter_graph_segment_apply,
+        avfilter_graph_segment_create_filters, avfilter_graph_segment_free,
+        avfilter_graph_segment_parse, avfilter_init_str, avfilter_inout_alloc, avfilter_inout_free,
+        avfilter_link,
     },
 };
 
-pub(crate) struct GPUDevice(*mut AVBufferRef);
+macro_rules! impl_gpu_device_ctx {
+    ($struct:ident, $device_type:expr) => {
+        impl $struct {
+            pub(crate) fn new() -> Option<Self> {
+                Some(Self(GpuDeviceCtx::new($device_type)?))
+            }
 
-impl GPUDevice {
-    pub(crate) fn new() -> Option<Self> {
+            pub(crate) unsafe fn into_raw(self) -> *mut AVBufferRef {
+                unsafe { self.0.into_raw() }
+            }
+        }
+
+        impl Deref for $struct {
+            type Target = GpuDeviceCtx;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+}
+
+#[derive(Clone)]
+pub(crate) struct VulkanDeviceCtx(GpuDeviceCtx);
+
+#[derive(Clone)]
+pub(crate) struct VaapiDeviceCtx(GpuDeviceCtx);
+
+impl_gpu_device_ctx!(VulkanDeviceCtx, AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN);
+impl_gpu_device_ctx!(VaapiDeviceCtx, AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI);
+
+pub(crate) struct GpuDeviceCtx(*mut AVBufferRef);
+
+impl GpuDeviceCtx {
+    fn new(type_: AVHWDeviceType) -> Option<Self> {
         let mut device_context: *mut AVBufferRef = std::ptr::null_mut();
 
         unsafe {
             let err = av_hwdevice_ctx_create(
                 &raw mut device_context,
-                ffmpeg_next::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+                type_,
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 0,
             );
 
-            let device = GPUDevice(device_context);
+            let device = GpuDeviceCtx(device_context);
             if err < 0 {
                 // `device` will be unreffed by impl Drop
                 return None;
@@ -56,13 +91,13 @@ impl GPUDevice {
     }
 }
 
-impl Clone for GPUDevice {
+impl Clone for GpuDeviceCtx {
     fn clone(&self) -> Self {
-        unsafe { GPUDevice(av_buffer_ref(self.0 as *const _)) }
+        unsafe { GpuDeviceCtx(av_buffer_ref(self.0 as *const _)) }
     }
 }
 
-impl Drop for GPUDevice {
+impl Drop for GpuDeviceCtx {
     fn drop(&mut self) {
         unsafe {
             if !self.0.is_null() {
@@ -85,7 +120,7 @@ impl Drop for HWFrameContextBuilder {
 }
 
 impl HWFrameContextBuilder {
-    pub(crate) fn new(device: &GPUDevice) -> Option<Self> {
+    pub(crate) fn new(device: &GpuDeviceCtx) -> Option<Self> {
         unsafe {
             let frame_ctx = av_hwframe_ctx_alloc(device.as_ptr());
 
@@ -100,7 +135,7 @@ impl HWFrameContextBuilder {
     pub(crate) fn build(self) -> Option<HWFrameContext> {
         unsafe {
             let ptr = self.0;
-            // Prevent the builder's Drop from unreffing — ownership transfers
+            // Prevent the builder's Drop from unreffing. Ownership transfers
             // to HWFrameContext (or we unref on error below).
             std::mem::forget(self);
 
@@ -424,10 +459,11 @@ impl Graph {
 
 pub(crate) struct Parser<'a> {
     graph: &'a Graph,
+
     inputs: *mut AVFilterInOut,
     outputs: *mut AVFilterInOut,
 
-    gpu_device: Option<GPUDevice>,
+    gpu_device: Option<GpuDeviceCtx>,
 }
 
 impl<'a> Parser<'a> {
@@ -489,44 +525,115 @@ impl<'a> Parser<'a> {
         self
     }
 
-    pub(crate) fn with_gpu_device(mut self, gpu_device: GPUDevice) -> Self {
-        self.gpu_device = Some(gpu_device);
+    pub(crate) fn with_gpu_device(mut self, gpu_device: &GpuDeviceCtx) -> Self {
+        self.gpu_device = Some(gpu_device.clone());
         self
     }
 
-    pub(crate) fn parse(mut self, spec: &str) -> Option<()> {
+    pub(crate) fn parse(mut self, spec: &str) {
         unsafe {
             let spec = CString::new(spec).unwrap();
 
-            let result = avfilter_graph_parse_ptr(
-                self.graph.0,
-                spec.as_ptr(),
-                &mut self.inputs,
-                &mut self.outputs,
-                ptr::null_mut(),
+            let mut seg = ptr::null_mut();
+            let result = avfilter_graph_segment_parse(self.graph.0, spec.as_ptr(), 0, &mut seg);
+            assert!(
+                result >= 0,
+                "Failed to parse segments: {}",
+                ffmpeg_next::Error::from(result)
             );
+
+            let result = avfilter_graph_segment_create_filters(seg, 0);
+            assert!(
+                result >= 0,
+                "Failed to create segment filters: {}",
+                ffmpeg_next::Error::from(result)
+            );
+
+            if let Some(device) = self.gpu_device.as_ref() {
+                let chains = std::slice::from_raw_parts_mut((*seg).chains, (*seg).nb_chains);
+
+                for chain in chains {
+                    let filter_params =
+                        std::slice::from_raw_parts_mut((**chain).filters, (**chain).nb_filters);
+
+                    for params in filter_params {
+                        let ctx = (**params).filter;
+                        if ctx.is_null() {
+                            continue;
+                        }
+
+                        let uses_hw_device = ((*(*ctx).filter).flags & AVFILTER_FLAG_HWDEVICE) != 0;
+                        if !uses_hw_device {
+                            continue;
+                        }
+
+                        (*ctx).hw_device_ctx = device.clone().into_raw();
+
+                        let device_ref = (*ctx).hw_device_ctx;
+                        assert!(!device_ref.is_null());
+
+                        let device_ctx = (*device_ref)
+                            .data
+                            .cast::<ffmpeg_next::ffi::AVHWDeviceContext>();
+                        assert!(!device_ctx.is_null());
+
+                        // Parser is also used by VAAPI, so check the device type first.
+                        if (*device_ctx).type_ == AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN {
+                            let vulkan_ctx = (*device_ctx).hwctx.cast::<AVVulkanDeviceContext>();
+                            assert!(!vulkan_ctx.is_null());
+
+                            eprintln!("Vulkan queue_flags: {:#x}", (*vulkan_ctx).queue_flags);
+                        }
+                    }
+                }
+            }
+
+            let mut conversion_input = ptr::null_mut();
+            let mut conversion_output = ptr::null_mut();
+
+            let result =
+                avfilter_graph_segment_apply(seg, 0, &mut conversion_input, &mut conversion_output);
+
+            assert!(
+                result >= 0,
+                "Failed to apply filter segment: {}",
+                ffmpeg_next::Error::from(result)
+            );
+
+            let source_output = self.outputs;
+            let sink_input = self.inputs;
+
+            let result = avfilter_link(
+                (*source_output).filter_ctx,
+                (*source_output).pad_idx as c_uint,
+                (*conversion_input).filter_ctx,
+                (*conversion_input).pad_idx as c_uint,
+            );
+            assert!(
+                result >= 0,
+                "Failed to link Source to conversion filter: {}",
+                ffmpeg_next::Error::from(result),
+            );
+
+            let result = avfilter_link(
+                (*conversion_output).filter_ctx,
+                (*conversion_output).pad_idx as c_uint,
+                (*sink_input).filter_ctx,
+                (*sink_input).pad_idx as c_uint,
+            );
+            assert!(
+                result >= 0,
+                "Failed to link conversion filter to Sink: {}",
+                ffmpeg_next::Error::from(result),
+            );
+
+            avfilter_inout_free(&mut conversion_input);
+            avfilter_inout_free(&mut conversion_output);
 
             avfilter_inout_free(&mut self.inputs);
             avfilter_inout_free(&mut self.outputs);
 
-            match result {
-                n if n >= 0 => {
-                    // Filters that create HW frames ('hwupload', 'hwmap', ...) need
-                    // AVBufferRef in their hw_device_ctx. Unfortunately, there is no
-                    // simple API to do that for filters created by avfilter_graph_parse_ptr().
-                    // The code below is inspired by wf-recorder
-                    if let Some(device) = self.gpu_device {
-                        for i in 0..(*self.graph.0).nb_filters {
-                            let item = *(*self.graph.0).filters.add(i as usize);
-
-                            (*item).hw_device_ctx = device.clone().into_raw();
-                        }
-                    }
-
-                    Some(())
-                }
-                _ => None,
-            }
+            avfilter_graph_segment_free(&mut seg);
         }
     }
 }
@@ -627,13 +734,37 @@ impl DrmFrame {
     }
 }
 
-#[allow(dead_code)]
-pub struct VAAPIFrame {
+macro_rules! impl_gpu_frame {
+    ($struct:ident, $format:expr) => {
+        impl $struct {
+            pub fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
+                Self(GpuFrame::new($format, drm_frame, hw_frames_ctx))
+            }
+        }
+
+        impl Deref for $struct {
+            type Target = GpuFrame;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+}
+
+pub struct VaapiFrame(GpuFrame);
+pub struct VulkanFrame(GpuFrame);
+
+impl_gpu_frame!(VulkanFrame, AVPixelFormat::AV_PIX_FMT_VULKAN);
+impl_gpu_frame!(VaapiFrame, AVPixelFormat::AV_PIX_FMT_VAAPI);
+
+pub struct GpuFrame {
     pub(crate) av_frame: *mut AVFrame,
+    #[expect(dead_code)]
     drm_frame: DrmFrame,
 }
 
-impl Drop for VAAPIFrame {
+impl Drop for GpuFrame {
     fn drop(&mut self) {
         unsafe {
             av_frame_free(&raw mut self.av_frame);
@@ -641,15 +772,15 @@ impl Drop for VAAPIFrame {
     }
 }
 
-impl VAAPIFrame {
-    pub(crate) fn new(drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
+impl GpuFrame {
+    fn new(format: AVPixelFormat, drm_frame: DrmFrame, hw_frames_ctx: HWFrameContext) -> Self {
         unsafe {
             let vaapi_frame = av_frame_alloc();
             if vaapi_frame.is_null() {
-                panic!("Unable to allocate VAAPI Frame");
+                panic!("Unable to allocate GPU Frame");
             }
 
-            (*vaapi_frame).format = AVPixelFormat::AV_PIX_FMT_VAAPI as i32;
+            (*vaapi_frame).format = format as i32;
             (*vaapi_frame).hw_frames_ctx = hw_frames_ctx.clone().into_raw();
 
             let err = av_hwframe_map(vaapi_frame, drm_frame.av_frame, AV_HWFRAME_MAP_READ as i32);

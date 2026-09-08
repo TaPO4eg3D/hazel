@@ -52,10 +52,10 @@ use ringbuf::{
 use crate::{
     CaptureNotifier,
     video::{
-        encode::{VAAPIEncoder, VAAPIEncoderParams},
+        encode::{EncoderParams, VulkanEncoder},
         frames::{FramePool, FrameRecv, FrameSender, frame_channel},
         linux::ActiveVideoStream,
-        wrapper::{DrmInfo, VAAPIFrame},
+        wrapper::{DrmInfo, VulkanFrame},
     },
 };
 
@@ -103,8 +103,8 @@ fn make_pod(buffer: &mut Vec<u8>, object: pw::spa::pod::Object) -> &Pod {
 struct EncodingState {
     framerate: f64,
 
-    encoder: VAAPIEncoder,
-    vaapi_cache: Vec<(DrmInfo, VAAPIFrame)>,
+    encoder: VulkanEncoder,
+    frame_cache: Vec<(DrmInfo, VulkanFrame)>,
 
     notifier: CaptureNotifier,
     preview_tx: FrameSender<gpui::DMABuffer>,
@@ -385,7 +385,7 @@ impl<'a> ScreencastStream<'a> {
         let state = match state.as_mut() {
             Some(state) => state,
             None => {
-                let encoder = VAAPIEncoder::new(VAAPIEncoderParams {
+                let encoder = VulkanEncoder::new(EncoderParams {
                     height,
                     width,
 
@@ -401,7 +401,7 @@ impl<'a> ScreencastStream<'a> {
                     encoder,
                     preview_tx: this.preview_tx.clone(),
                     notifier: this.notifier.clone(),
-                    vaapi_cache: vec![],
+                    frame_cache: vec![],
                     last_frame: (0, 0),
                     last_frame_ts: Instant::now(),
                 });
@@ -411,17 +411,17 @@ impl<'a> ScreencastStream<'a> {
         };
 
         let (vaapi_frame, idx) = match state
-            .vaapi_cache
+            .frame_cache
             .iter()
             .position(|(info, _)| info == &drm_info)
         {
-            Some(idx) => (&mut state.vaapi_cache[idx].1, idx),
+            Some(idx) => (&mut state.frame_cache[idx].1, idx),
             None => {
-                let idx = state.vaapi_cache.len();
+                let idx = state.frame_cache.len();
                 let vaapi_frame = state.encoder.alloc_frame(&drm_info);
 
-                state.vaapi_cache.push((drm_info, vaapi_frame));
-                (&mut state.vaapi_cache[idx].1, idx)
+                state.frame_cache.push((drm_info, vaapi_frame));
+                (&mut state.frame_cache[idx].1, idx)
             }
         };
 
@@ -556,7 +556,7 @@ pub async fn init_screencast(
                     }
 
                     let (seq, idx) = state.last_frame;
-                    let (drm_info, vaapi_frame) = &mut state.vaapi_cache[idx];
+                    let (drm_info, vaapi_frame) = &mut state.frame_cache[idx];
 
                     state.preview_tx.send(DMABuffer {
                         fd: drm_info.fd as i32,
