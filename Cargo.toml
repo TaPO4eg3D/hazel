@@ -36,7 +36,16 @@ atomic_float = "1.1.0"
 ringbuf = "0.5"
 smol = "2.0.2"
 reed-solomon-simd = "3.1.0"
-ffmpeg-next = "9.0.0"
+
+# Custom fork of ffmpeg-next to build the custom fork of ffmpeg...
+ffmpeg-next = { git = "https://github.com/TaPO4eg3D/rust-ffmpeg.git", features = [
+    "build",
+    "non-exhaustive-enums",
+    "build-nvidia",
+    "build-vulkan",
+    # TODO: Do not build on windows
+    "build-vaapi",
+] }
 
 # UI
 gpui = { branch = "linux-dma-buf-support", git = "https://github.com/TaPO4eg3D/zed.git", features = [
@@ -82,6 +91,9 @@ features = ["derive"]
 inherits = "release"
 debug = true
 
-# Fix building Opus crate on modern CMAKE
 [patch.crates-io]
-audiopus_sys = { git = 'https://github.com/sevenc-nanashi/audiopus_sys', rev = '00e9d16' }
+# Fix building Opus crate on modern CMAKE
+audiopus_sys = { git = "https://github.com/sevenc-nanashi/audiopus_sys", rev = '00e9d16' }
+# Custom version of ffmpeg-sys-next that supports FFMPEG configuration
+# + fixes the build from source. ENVs are located in .cargo/config.toml
+ffmpeg-sys-next = { git = "https://github.com/TaPO4eg3D/rust-ffmpeg-sys.git" }

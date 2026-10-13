@@ -1,0 +1,3 @@
+[env]
+FFMPEG_REPO_URL = "https://github.com/TaPO4eg3D/ffmpeg-hazel.git"
+FFMPEG_OVERRIDE_BRANCH = "master"

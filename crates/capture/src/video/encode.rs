@@ -339,9 +339,7 @@ impl VulkanEncoder {
             .output("in", &source_filter, 0)
             .input("out", &sink_filter, 0)
             .with_gpu_device(&device)
-            // Awful hack with changing widht/height but otherwise scaling end up not in Vulkan shader but
-            // in libswscaler which does not support conversion from RGB to NV12 (LIKE WHAT IN THE ACTUAL FUCK)
-            .parse("[in]setparams=colorspace=smpte170m:range=full,scale_vulkan=w=iw-1:h=ih-1:format=nv12:out_range=full[out]");
+            .parse("[in]setparams=colorspace=smpte170m:range=full,scale_vulkan=w=iw:h=ih:format=nv12:out_range=full[out]");
 
         graph.config().expect("Failed to configure the graph");
 
